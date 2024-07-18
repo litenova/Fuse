@@ -5,6 +5,7 @@ REM Define variables
 set "TEMP_PUBLISH_DIR=%~dp0temp_publish"
 set "INSTALL_DIR=C:\Program Files\FuseTool"
 set "TOOL_NAME=fuse.exe"
+set "PROJECT_DIR=%~dp0src\Fuse.Cli"
 
 REM Check for administrative privileges
 net session >nul 2>&1
@@ -26,7 +27,7 @@ if exist "%TEMP_PUBLISH_DIR%" (
 
 REM Publish the application as a single file to the temporary directory
 echo Publishing the Fuse tool to a temporary directory...
-dotnet publish -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:PublishTrimmed=true -o "%TEMP_PUBLISH_DIR%"
+dotnet publish "%PROJECT_DIR%" -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:PublishTrimmed=true -o "%TEMP_PUBLISH_DIR%"
 if %ERRORLEVEL% NEQ 0 (
     echo Publish failed. Exiting script.
     pause
