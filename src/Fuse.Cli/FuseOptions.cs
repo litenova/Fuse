@@ -66,7 +66,7 @@ public sealed class FuseOptions
     /// <summary>
     /// Indicates whether to perform aggressive minification.
     /// </summary>
-    public bool AggressiveMinification { get; init; } = false;
+    public bool AggressiveMinification { get; init; } = true;
 
     /// <summary>
     /// Indicates whether to include metadata in the output.
@@ -77,4 +77,14 @@ public sealed class FuseOptions
     /// Indicates whether to use condensing.
     /// </summary>
     public bool UseCondensing { get; init; } = true;
+
+    /// <summary>
+    /// Removes all using statements from C# files.
+    /// </summary>
+    public bool RemoveAllUsings { get; init; } = false;
+
+    /// <summary>
+    /// Removes the namespace declaration from C# files.
+    /// </summary>
+    public bool RemoveNamespaceDeclaration { get; init; } = false;
 }

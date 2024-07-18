@@ -141,8 +141,11 @@ public sealed class FuseService
                 var fileInfo = new FileInfo(file);
                 var sb = new StringBuilder();
 
-                // Add file name at the start of the line
-                sb.Append($"{file}: ");
+                // Get relative path
+                var relativePath = Path.GetRelativePath(_options.SourceDirectory, file);
+
+                // Add relative file path at the start of the line
+                sb.Append($"{relativePath}: ");
 
                 if (_options.IncludeMetadata)
                 {
@@ -161,13 +164,13 @@ public sealed class FuseService
                         processedContent = Regex.Replace(processedContent, @"@code\s*{([^}]*)}", match =>
                         {
                             var code = match.Groups[1].Value;
-                            code = CSharpMinifier.Minify(code);
+                            code = CSharpMinifier.Minify(code, aggressiveMinification: _options.AggressiveMinification);
                             return $"@code{{{code}}}";
                         });
                     }
                     else if (extension == ".cs")
                     {
-                        processedContent = CSharpMinifier.Minify(processedContent);
+                        processedContent = CSharpMinifier.Minify(processedContent, _options.AggressiveMinification, _options.RemoveAllUsings, _options.RemoveNamespaceDeclaration);
                     }
                 }
 

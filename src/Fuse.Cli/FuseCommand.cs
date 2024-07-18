@@ -78,6 +78,16 @@ public sealed class FuseCommand(ILogger<FuseService> logger)
         () => true,
         "Whether to apply line condensing to the output file.");
 
+    private readonly Option<bool> _removeAllUsingsOption = new(
+        "--remove-all-usings",
+        () => false,
+        "Remove all using statements from C# files.");
+
+    private readonly Option<bool> _removeNamespaceOption = new(
+        "--remove-namespace",
+        () => false,
+        "Remove namespace declarations from C# files.");
+
     public RootCommand CreateRootCommand()
     {
         var rootCommand = new RootCommand("Fuse - A tool to combine and process files in a directory.");
@@ -96,6 +106,8 @@ public sealed class FuseCommand(ILogger<FuseService> logger)
         rootCommand.AddOption(_aggressiveMinificationOption);
         rootCommand.AddOption(_includeMetadataOption);
         rootCommand.AddOption(_condensingOption);
+        rootCommand.AddOption(_removeAllUsingsOption);
+        rootCommand.AddOption(_removeNamespaceOption);
 
         rootCommand.SetHandler(ExecuteAsync);
 
@@ -127,7 +139,9 @@ public sealed class FuseCommand(ILogger<FuseService> logger)
             IgnoreBinaryFiles = context.ParseResult.GetValueForOption(_ignoreBinaryOption),
             AggressiveMinification = context.ParseResult.GetValueForOption(_aggressiveMinificationOption),
             IncludeMetadata = context.ParseResult.GetValueForOption(_includeMetadataOption),
-            UseCondensing = context.ParseResult.GetValueForOption(_condensingOption)
+            UseCondensing = context.ParseResult.GetValueForOption(_condensingOption),
+            RemoveAllUsings = context.ParseResult.GetValueForOption(_removeAllUsingsOption),
+            RemoveNamespaceDeclaration = context.ParseResult.GetValueForOption(_removeNamespaceOption)
         };
 
         Console.WriteLine("Starting Fuse process...");
