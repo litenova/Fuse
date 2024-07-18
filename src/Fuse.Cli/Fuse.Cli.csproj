@@ -7,7 +7,7 @@
         <Nullable>enable</Nullable>
         <AssemblyName>fuse</AssemblyName>
         <Version>1.0.0</Version>
-        <Authors>A. Shafie, Mansour Damanpak</Authors>
+        <Authors>A. Shafie</Authors>
         <Product>Fuse</Product>
         <Description>A flexible file combining tool for developers</Description>
     </PropertyGroup>
