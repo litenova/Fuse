@@ -16,8 +16,11 @@ public static class ProjectTemplateRegistry
         );
 
         builder[ProjectTemplate.DotNet] = (
-            [".cs", ".xaml", ".cshtml", ".csproj", ".config", ".json", ".xml", ".resx", ".razor", ".json", ".md", ".txt"],
-            ["bin", "obj", ".vs", "packages", "node_modules", ".git"]
+            [
+                ".cs", ".xaml", ".cshtml", ".csproj", ".config", ".json", ".xml", ".resx", ".razor", ".json", ".md", ".txt", ".props", ".targets", ".yml", ".yaml", ".scriban", ".bat", ".sh", ".ps1",
+                ".cmd", ".nuspec"
+            ],
+            ["bin", "obj", ".vs", ".git", ".idea"]
         );
 
         builder[ProjectTemplate.Java] = (

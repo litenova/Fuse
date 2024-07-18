@@ -11,8 +11,6 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "solution-items", "solution-
 		install_fuse_win64.bat = install_fuse_win64.bat
 	EndProjectSection
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Fuse.Core", "src\Fuse.Core\Fuse.Core.csproj", "{A17294B8-CBE5-4C9D-AA80-B70733A7A9C6}"
-EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -20,16 +18,11 @@ Global
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{7DEAFDF9-67A4-49AF-BDF6-FD75564EAEB8} = {63412BD6-618C-432C-B8A8-DB293EFEF995}
-		{A17294B8-CBE5-4C9D-AA80-B70733A7A9C6} = {63412BD6-618C-432C-B8A8-DB293EFEF995}
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
 		{7DEAFDF9-67A4-49AF-BDF6-FD75564EAEB8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{7DEAFDF9-67A4-49AF-BDF6-FD75564EAEB8}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7DEAFDF9-67A4-49AF-BDF6-FD75564EAEB8}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{7DEAFDF9-67A4-49AF-BDF6-FD75564EAEB8}.Release|Any CPU.Build.0 = Release|Any CPU
-		{A17294B8-CBE5-4C9D-AA80-B70733A7A9C6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{A17294B8-CBE5-4C9D-AA80-B70733A7A9C6}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{A17294B8-CBE5-4C9D-AA80-B70733A7A9C6}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{A17294B8-CBE5-4C9D-AA80-B70733A7A9C6}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

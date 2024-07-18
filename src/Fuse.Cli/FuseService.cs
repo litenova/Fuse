@@ -1,109 +1,120 @@
 using System.Collections.Concurrent;
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 
 namespace Fuse.Cli;
 
-public sealed class FuseService(FuseOptions options, ILogger<FuseService> logger)
+public sealed class FuseService
 {
+    private readonly FuseOptions _options;
+    private readonly ILogger<FuseService> _logger;
+
+    public FuseService(FuseOptions options, ILogger<FuseService> logger)
+    {
+        _options = options;
+        _logger = logger;
+    }
+
     public async Task FuseAsync(CancellationToken cancellationToken = default)
     {
-        logger.LogInformation("Processing directory: {SourceDirectory}", options.SourceDirectory);
-
-        if (!Directory.Exists(options.SourceDirectory))
+        _logger.LogInformation("Processing directory: {SourceDirectory}", _options.SourceDirectory);
+        if (!Directory.Exists(_options.SourceDirectory))
         {
-            logger.LogError("The directory {SourceDirectory} does not exist.", options.SourceDirectory);
+            _logger.LogError("The directory {SourceDirectory} does not exist.", _options.SourceDirectory);
             return;
         }
 
         var (extensions, excludeFolders) = GetExtensionsAndExclusions();
-
         SetupOutputPath();
 
-        var outputFilePath = Path.Combine(options.OutputDirectory, options.OutputFileName ?? $"Fuse_{Path.GetFileName(options.SourceDirectory)}_{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.txt");
-
-        logger.LogInformation("Output file: {OutputFilePath}", outputFilePath);
+        var outputFilePath = Path.Combine(_options.OutputDirectory, _options.OutputFileName ?? $"Fuse_{Path.GetFileName(_options.SourceDirectory)}_{DateTime.Now:yyyyMMddHHmmss}.txt");
+        _logger.LogInformation("Output file: {OutputFilePath}", outputFilePath);
 
         try
         {
-            logger.LogInformation("Searching for files...");
+            _logger.LogInformation("Searching for files...");
             var files = GetFiles(extensions, excludeFolders);
-            logger.LogInformation("Found {FileCount} files.", files.Count);
+            _logger.LogInformation("Found {FileCount} files.", files.Count);
 
-            if (File.Exists(outputFilePath) && !options.Overwrite)
+            if (File.Exists(outputFilePath) && !_options.Overwrite)
             {
-                logger.LogWarning("The file {OutputFilePath} already exists and overwrite is set to false. Operation aborted.", outputFilePath);
+                _logger.LogWarning("The file {OutputFilePath} already exists and overwrite is set to false. Operation aborted.", outputFilePath);
                 return;
             }
 
             await CombineFilesAsync(files, outputFilePath, cancellationToken);
 
-            logger.LogInformation("Completed: Combined file content has been written to {OutputFilePath}", outputFilePath);
+            if (_options.UseCondensing)
+            {
+                ApplyLineCondensing(outputFilePath);
+            }
+
+            _logger.LogInformation("Completed: Combined file content has been written to {OutputFilePath}", outputFilePath);
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "An error occurred while processing files.");
+            _logger.LogError(ex, "An error occurred while processing files.");
         }
     }
 
     private void SetupOutputPath()
     {
-        if (options.OutputDirectory == Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments) &&
-            options.SourceDirectory == Directory.GetCurrentDirectory())
+        if (_options.OutputDirectory == Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments) &&
+            _options.SourceDirectory == Directory.GetCurrentDirectory())
         {
-            options.OutputDirectory = options.OutputDirectory;
+            _options.OutputDirectory = _options.OutputDirectory;
         }
 
-        if (!Directory.Exists(options.OutputDirectory))
+        if (!Directory.Exists(_options.OutputDirectory))
         {
-            Directory.CreateDirectory(options.OutputDirectory);
+            Directory.CreateDirectory(_options.OutputDirectory);
         }
     }
 
     private (string[] Extensions, string[] ExcludeDirectories) GetExtensionsAndExclusions()
     {
-        if (options.Template.HasValue)
+        if (_options.Template.HasValue)
         {
-            var (defaultExtensions, defaultExcludeDirectories) = ProjectTemplateRegistry.GetTemplate(options.Template.Value);
+            var (defaultExtensions, defaultExcludeDirectories) = ProjectTemplateRegistry.GetTemplate(_options.Template.Value);
             return (
-                options.IncludeExtensions ?? defaultExtensions,
-                options.ExcludeDirectories ?? defaultExcludeDirectories
+                _options.IncludeExtensions ?? defaultExtensions,
+                _options.ExcludeDirectories ?? defaultExcludeDirectories
             );
         }
         else
         {
             return (
-                options.IncludeExtensions ?? ["*"], // Include all files if no extensions specified
-                options.ExcludeDirectories ?? []
+                _options.IncludeExtensions ?? ["*"],
+                _options.ExcludeDirectories ?? []
             );
         }
     }
 
     private List<string> GetFiles(string[] extensions, string[] excludeFolders)
     {
-        var option = options.Recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
-
-        return Directory.EnumerateFiles(options.SourceDirectory, "*.*", option)
+        var option = _options.Recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
+        return Directory.EnumerateFiles(_options.SourceDirectory, "*.*", option)
             .AsParallel()
-            .Where(file => extensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase))
+            .Where(file => extensions.Contains("*") || extensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase))
             .Where(file => !IsInExcludedFolder(file, excludeFolders))
             .Where(IsFileSizeAcceptable)
-            .Where(file => !options.IgnoreBinaryFiles || !IsBinaryFile(file))
+            .Where(file => !_options.IgnoreBinaryFiles || !IsBinaryFile(file))
             .ToList();
     }
 
     private bool IsInExcludedFolder(string filePath, string[] excludeFolders)
     {
-        var relativePath = Path.GetRelativePath(options.SourceDirectory, filePath);
+        var relativePath = Path.GetRelativePath(_options.SourceDirectory, filePath);
         var pathParts = relativePath.Split(Path.DirectorySeparatorChar);
         return pathParts.Any(part => excludeFolders.Contains(part, StringComparer.OrdinalIgnoreCase));
     }
 
     private bool IsFileSizeAcceptable(string filePath)
     {
-        if (options.MaxFileSizeKB == 0) return true;
+        if (_options.MaxFileSizeKB == 0) return true;
         var fileInfo = new FileInfo(filePath);
-        return fileInfo.Length <= options.MaxFileSizeKB * 1024;
+        return fileInfo.Length <= _options.MaxFileSizeKB * 1024;
     }
 
     private bool IsBinaryFile(string filePath)
@@ -117,12 +128,10 @@ public sealed class FuseService(FuseOptions options, ILogger<FuseService> logger
 
     private async Task CombineFilesAsync(List<string> files, string outputFilePath, CancellationToken cancellationToken)
     {
-        logger.LogInformation("Combining files...");
+        _logger.LogInformation("Combining files...");
         var processedFiles = 0;
-
         await using var outputStream = new FileStream(outputFilePath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 4096, useAsync: true);
         await using var writer = new StreamWriter(outputStream, Encoding.UTF8);
-
         var contentQueue = new ConcurrentQueue<string?>();
         var writingTask = WriteContentAsync(writer, contentQueue, cancellationToken);
 
@@ -131,23 +140,53 @@ public sealed class FuseService(FuseOptions options, ILogger<FuseService> logger
             {
                 var fileInfo = new FileInfo(file);
                 var sb = new StringBuilder();
-                sb.AppendLine($"--- {file} ---");
-                sb.AppendLine($"Size: {fileInfo.Length} bytes | Created: {fileInfo.CreationTime:yyyy-MM-dd HH:mm:ss} | Modified: {fileInfo.LastWriteTime:yyyy-MM-dd HH:mm:ss}");
-                sb.AppendLine();
+
+                // Add file name at the start of the line
+                sb.Append($"{file}: ");
+
+                if (_options.IncludeMetadata)
+                {
+                    sb.Append($"[Size: {fileInfo.Length} bytes | Created: {fileInfo.CreationTime:yyyy-MM-dd HH:mm:ss} | Modified: {fileInfo.LastWriteTime:yyyy-MM-dd HH:mm:ss}] ");
+                }
 
                 var content = await File.ReadAllTextAsync(file, ct);
-                var processedContent = options.TrimContent ? TrimFileContent(content) : content;
+                var processedContent = _options.TrimContent ? TrimFileContent(content) : content;
+
+                if (_options.AggressiveMinification)
+                {
+                    var extension = Path.GetExtension(file).ToLowerInvariant();
+                    if (extension == ".razor")
+                    {
+                        processedContent = RazorMinifier.Minify(processedContent);
+                        processedContent = Regex.Replace(processedContent, @"@code\s*{([^}]*)}", match =>
+                        {
+                            var code = match.Groups[1].Value;
+                            code = CSharpMinifier.Minify(code);
+                            return $"@code{{{code}}}";
+                        });
+                    }
+                    else if (extension == ".cs")
+                    {
+                        processedContent = CSharpMinifier.Minify(processedContent);
+                    }
+                }
+
                 sb.Append(processedContent);
                 sb.AppendLine();
-                sb.AppendLine();
-
                 contentQueue.Enqueue(sb.ToString());
-
                 Interlocked.Increment(ref processedFiles);
             });
 
         contentQueue.Enqueue(null); // Signal end of processing
         await writingTask;
+    }
+
+    private void ApplyLineCondensing(string filePath)
+    {
+        _logger.LogInformation("Applying line condensing...");
+        var lines = File.ReadAllLines(filePath);
+        var condensedLines = lines.Where(line => !string.IsNullOrWhiteSpace(line));
+        File.WriteAllLines(filePath, condensedLines);
     }
 
     private async Task WriteContentAsync(StreamWriter writer, ConcurrentQueue<string?> contentQueue, CancellationToken cancellationToken)

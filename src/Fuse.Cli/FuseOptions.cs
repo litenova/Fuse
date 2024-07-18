@@ -62,4 +62,19 @@ public sealed class FuseOptions
     /// Gets or sets a value indicating whether to ignore binary files.
     /// </summary>
     public bool IgnoreBinaryFiles { get; init; } = true;
+
+    /// <summary>
+    /// Indicates whether to perform aggressive minification.
+    /// </summary>
+    public bool AggressiveMinification { get; init; } = false;
+
+    /// <summary>
+    /// Indicates whether to include metadata in the output.
+    /// </summary>
+    public bool IncludeMetadata { get; init; } = false;
+
+    /// <summary>
+    /// Indicates whether to use condensing.
+    /// </summary>
+    public bool UseCondensing { get; init; } = true;
 }

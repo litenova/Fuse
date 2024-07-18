@@ -63,6 +63,21 @@ public sealed class FuseCommand(ILogger<FuseService> logger)
         () => true,
         "Whether to ignore binary files.");
 
+    private readonly Option<bool> _aggressiveMinificationOption = new(
+        "--aggressive-minify",
+        () => true,
+        "Whether to aggressively minify .cs and .razor files, removing most whitespace including newlines.");
+
+    private readonly Option<bool> _includeMetadataOption = new(
+        "--include-metadata",
+        () => false,
+        "Whether to include file metadata in the output file.");
+
+    private readonly Option<bool> _condensingOption = new(
+        "--condense",
+        () => true,
+        "Whether to apply line condensing to the output file.");
+
     public RootCommand CreateRootCommand()
     {
         var rootCommand = new RootCommand("Fuse - A tool to combine and process files in a directory.");
@@ -78,6 +93,9 @@ public sealed class FuseCommand(ILogger<FuseService> logger)
         rootCommand.AddOption(_trimOption);
         rootCommand.AddOption(_maxFileSizeOption);
         rootCommand.AddOption(_ignoreBinaryOption);
+        rootCommand.AddOption(_aggressiveMinificationOption);
+        rootCommand.AddOption(_includeMetadataOption);
+        rootCommand.AddOption(_condensingOption);
 
         rootCommand.SetHandler(ExecuteAsync);
 
@@ -106,7 +124,10 @@ public sealed class FuseCommand(ILogger<FuseService> logger)
             Recursive = context.ParseResult.GetValueForOption(_recursiveOption),
             TrimContent = context.ParseResult.GetValueForOption(_trimOption),
             MaxFileSizeKB = context.ParseResult.GetValueForOption(_maxFileSizeOption),
-            IgnoreBinaryFiles = context.ParseResult.GetValueForOption(_ignoreBinaryOption)
+            IgnoreBinaryFiles = context.ParseResult.GetValueForOption(_ignoreBinaryOption),
+            AggressiveMinification = context.ParseResult.GetValueForOption(_aggressiveMinificationOption),
+            IncludeMetadata = context.ParseResult.GetValueForOption(_includeMetadataOption),
+            UseCondensing = context.ParseResult.GetValueForOption(_condensingOption)
         };
 
         Console.WriteLine("Starting Fuse process...");
