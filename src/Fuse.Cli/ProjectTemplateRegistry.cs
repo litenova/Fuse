@@ -18,7 +18,7 @@ public static class ProjectTemplateRegistry
         builder[ProjectTemplate.DotNet] = (
             [
                 ".cs", ".xaml", ".cshtml", ".csproj", ".config", ".json", ".xml", ".resx", ".razor", ".json", ".md", ".txt", ".props", ".targets", ".yml", ".yaml", ".scriban", ".bat", ".sh", ".ps1",
-                ".cmd", ".nuspec"
+                ".cmd", ".nuspec", ".scss", ".css", ".html", ".htm", ".sql"
             ],
             ["bin", "obj", ".vs", ".git", ".idea"]
         );

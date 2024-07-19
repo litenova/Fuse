@@ -63,11 +63,6 @@ public sealed class FuseCommand(ILogger<FuseService> logger)
         () => true,
         "Whether to ignore binary files.");
 
-    private readonly Option<bool> _aggressiveMinificationOption = new(
-        "--aggressive-minify",
-        () => true,
-        "Whether to aggressively minify .cs and .razor files, removing most whitespace including newlines.");
-
     private readonly Option<bool> _includeMetadataOption = new(
         "--include-metadata",
         () => false,
@@ -78,15 +73,14 @@ public sealed class FuseCommand(ILogger<FuseService> logger)
         () => true,
         "Whether to apply line condensing to the output file.");
 
-    private readonly Option<bool> _removeAllUsingsOption = new(
-        "--remove-all-usings",
-        () => false,
-        "Remove all using statements from C# files.");
-
-    private readonly Option<bool> _removeNamespaceOption = new(
-        "--remove-namespace",
-        () => false,
-        "Remove namespace declarations from C# files.");
+    private readonly Option<bool> _removeCSharpNamespaceDeclarations = new("--remove-csharp-namespaces", () => false, "Remove namespace declarations from C# files.");
+    private readonly Option<bool> _removeCSharpCommentsOption = new("--remove-csharp-comments", () => false, "Remove comments from C# files.");
+    private readonly Option<bool> _removeCSharpRegionsOption = new("--remove-csharp-regions", () => false, "Remove #region and #endregion directives from C# files.");
+    private readonly Option<bool> _removeCSharpUsingsOption = new("--remove-csharp-usings", () => false, "Remove all using statements from C# files.");
+    private readonly Option<bool> _minifyXmlFilesOption = new("--minify-xml-files", () => false, "Minify XML files, including .csproj files.");
+    private readonly Option<bool> _aggressiveCSharpReductionOption = new("--aggressive-csharp-reduction", () => false, "Aggressively reduce C# code size while maintaining logic.");
+    private readonly Option<bool> _minifyHtmlAndRazorOption = new("--minify-html-razor", () => false, "Minify HTML and Razor syntax in .cshtml and .razor files.");
+    private readonly Option<bool> _comprehensiveCSharpMinificationOption = new("--comprehensive-csharp-minify", () => false, "Apply all C# minification options.");
 
     public RootCommand CreateRootCommand()
     {
@@ -103,11 +97,16 @@ public sealed class FuseCommand(ILogger<FuseService> logger)
         rootCommand.AddOption(_trimOption);
         rootCommand.AddOption(_maxFileSizeOption);
         rootCommand.AddOption(_ignoreBinaryOption);
-        rootCommand.AddOption(_aggressiveMinificationOption);
         rootCommand.AddOption(_includeMetadataOption);
         rootCommand.AddOption(_condensingOption);
-        rootCommand.AddOption(_removeAllUsingsOption);
-        rootCommand.AddOption(_removeNamespaceOption);
+        rootCommand.AddOption(_removeCSharpNamespaceDeclarations);
+        rootCommand.AddOption(_removeCSharpCommentsOption);
+        rootCommand.AddOption(_removeCSharpRegionsOption);
+        rootCommand.AddOption(_removeCSharpUsingsOption);
+        rootCommand.AddOption(_minifyXmlFilesOption);
+        rootCommand.AddOption(_aggressiveCSharpReductionOption);
+        rootCommand.AddOption(_minifyHtmlAndRazorOption);
+        rootCommand.AddOption(_comprehensiveCSharpMinificationOption);
 
         rootCommand.SetHandler(ExecuteAsync);
 
@@ -137,12 +136,26 @@ public sealed class FuseCommand(ILogger<FuseService> logger)
             TrimContent = context.ParseResult.GetValueForOption(_trimOption),
             MaxFileSizeKB = context.ParseResult.GetValueForOption(_maxFileSizeOption),
             IgnoreBinaryFiles = context.ParseResult.GetValueForOption(_ignoreBinaryOption),
-            AggressiveMinification = context.ParseResult.GetValueForOption(_aggressiveMinificationOption),
             IncludeMetadata = context.ParseResult.GetValueForOption(_includeMetadataOption),
             UseCondensing = context.ParseResult.GetValueForOption(_condensingOption),
-            RemoveAllUsings = context.ParseResult.GetValueForOption(_removeAllUsingsOption),
-            RemoveNamespaceDeclaration = context.ParseResult.GetValueForOption(_removeNamespaceOption)
+            RemoveCSharpNamespaceDeclarations = context.ParseResult.GetValueForOption(_removeCSharpNamespaceDeclarations),
+            RemoveCSharpComments = context.ParseResult.GetValueForOption(_removeCSharpCommentsOption),
+            RemoveCSharpRegions = context.ParseResult.GetValueForOption(_removeCSharpRegionsOption),
+            RemoveCSharpUsings = context.ParseResult.GetValueForOption(_removeCSharpUsingsOption),
+            MinifyXmlFiles = context.ParseResult.GetValueForOption(_minifyXmlFilesOption),
+            AggressiveCSharpReduction = context.ParseResult.GetValueForOption(_aggressiveCSharpReductionOption),
+            MinifyHtmlAndRazor = context.ParseResult.GetValueForOption(_minifyHtmlAndRazorOption),
+            ComprehensiveCSharpMinification = context.ParseResult.GetValueForOption(_comprehensiveCSharpMinificationOption)
         };
+
+        if (options.ComprehensiveCSharpMinification)
+        {
+            options.RemoveCSharpNamespaceDeclarations = true;
+            options.RemoveCSharpComments = true;
+            options.RemoveCSharpRegions = true;
+            options.RemoveCSharpUsings = true;
+            options.AggressiveCSharpReduction = true;
+        }
 
         Console.WriteLine("Starting Fuse process...");
 

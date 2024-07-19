@@ -64,11 +64,6 @@ public sealed class FuseOptions
     public bool IgnoreBinaryFiles { get; init; } = true;
 
     /// <summary>
-    /// Indicates whether to perform aggressive minification.
-    /// </summary>
-    public bool AggressiveMinification { get; init; } = true;
-
-    /// <summary>
     /// Indicates whether to include metadata in the output.
     /// </summary>
     public bool IncludeMetadata { get; init; } = false;
@@ -78,13 +73,19 @@ public sealed class FuseOptions
     /// </summary>
     public bool UseCondensing { get; init; } = true;
 
-    /// <summary>
-    /// Removes all using statements from C# files.
-    /// </summary>
-    public bool RemoveAllUsings { get; init; } = false;
+    public bool RemoveCSharpNamespaceDeclarations { get; set; } = false;
 
-    /// <summary>
-    /// Removes the namespace declaration from C# files.
-    /// </summary>
-    public bool RemoveNamespaceDeclaration { get; init; } = false;
+    public bool RemoveCSharpComments { get; set; } = false;
+
+    public bool RemoveCSharpRegions { get; set; } = false;
+
+    public bool RemoveCSharpUsings { get; set; } = false;
+
+    public bool MinifyXmlFiles { get; init; } = true;
+
+    public bool MinifyHtmlAndRazor { get; init; } = true;
+
+    public bool AggressiveCSharpReduction { get; set; } = false;
+
+    public bool ComprehensiveCSharpMinification { get; init; }
 }

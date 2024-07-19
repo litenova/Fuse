@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text;
 using System.Text.RegularExpressions;
+using Fuse.Cli.Minifiers;
 using Microsoft.Extensions.Logging;
 
 namespace Fuse.Cli;
@@ -56,6 +57,52 @@ public sealed class FuseService
         {
             _logger.LogError(ex, "An error occurred while processing files.");
         }
+    }
+
+    private async Task CombineFilesAsync(List<string> files, string outputFilePath, CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Combining files...");
+        var processedFiles = 0;
+
+        await using var outputStream = new FileStream(outputFilePath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 4096, useAsync: true);
+        await using var writer = new StreamWriter(outputStream, Encoding.UTF8);
+
+        var contentQueue = new ConcurrentQueue<string?>();
+        var writingTask = WriteContentAsync(writer, contentQueue, cancellationToken);
+
+        await Parallel.ForEachAsync(files, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount, CancellationToken = cancellationToken }, async (file, ct) =>
+        {
+            var fileInfo = new FileInfo(file);
+            var sb = new StringBuilder();
+            var relativePath = Path.GetRelativePath(_options.SourceDirectory, file);
+
+            // Ultra-compact start marker
+            sb.Append($"<|{relativePath}|>");
+
+            if (_options.IncludeMetadata)
+            {
+                sb.Append($"[Size: {fileInfo.Length} bytes | Created: {fileInfo.CreationTime:yyyy-MM-dd HH:mm:ss} | Modified: {fileInfo.LastWriteTime:yyyy-MM-dd HH:mm:ss}] ");
+            }
+
+            var content = await File.ReadAllTextAsync(file, ct);
+            var processedContent = _options.TrimContent ? TrimFileContent(content) : content;
+
+            processedContent = ApplyNonInvasiveMinification(processedContent, Path.GetExtension(file).ToLowerInvariant());
+
+            sb.Append(processedContent);
+            // Ultra-compact start marker
+            sb.Append($"<|{relativePath}|>");
+
+            contentQueue.Enqueue(sb.ToString());
+            Interlocked.Increment(ref processedFiles);
+
+            _logger.LogDebug($"Processed file: {relativePath}");
+        });
+
+        contentQueue.Enqueue(null);
+        await writingTask;
+
+        _logger.LogInformation($"Processed {processedFiles} files.");
     }
 
     private void SetupOutputPath()
@@ -126,62 +173,56 @@ public sealed class FuseService
         return bytes.Any(b => b == 0);
     }
 
-    private async Task CombineFilesAsync(List<string> files, string outputFilePath, CancellationToken cancellationToken)
+    private string ApplyNonInvasiveMinification(string content, string fileExtension)
     {
-        _logger.LogInformation("Combining files...");
-        var processedFiles = 0;
-        await using var outputStream = new FileStream(outputFilePath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 4096, useAsync: true);
-        await using var writer = new StreamWriter(outputStream, Encoding.UTF8);
-        var contentQueue = new ConcurrentQueue<string?>();
-        var writingTask = WriteContentAsync(writer, contentQueue, cancellationToken);
+        switch (fileExtension)
+        {
+            case ".cs":
+            case ".cshtml":
+            case ".razor":
+                return ApplyCSharpMinification(content, fileExtension);
+            case ".html":
+                return HtmlMinifier.Minify(content);
+            case ".css":
+                return CssMinifier.Minify(content);
+            case ".scss":
+                return ScssMinifier.Minify(content);
+            case ".js":
+                return JavaScriptMinifier.Minify(content);
+            case ".json":
+                return JsonMinifier.Minify(content);
+            case ".xml":
+            case ".targets":
+            case ".props":
+            case ".csproj":
+                return XmlMinifier.Minify(content);
+            case ".md":
+                return MarkdownMinifier.Minify(content);
+            default:
+                return content;
+        }
+    }
 
-        await Parallel.ForEachAsync(files, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount, CancellationToken = cancellationToken },
-            async (file, ct) =>
-            {
-                var fileInfo = new FileInfo(file);
-                var sb = new StringBuilder();
+    private string ApplyCSharpMinification(string content, string fileExtension)
+    {
+        bool isRazorFile = fileExtension == ".cshtml" || fileExtension == ".razor";
 
-                // Get relative path
-                var relativePath = Path.GetRelativePath(_options.SourceDirectory, file);
+        // First, apply Razor-specific minification if it's a Razor file
+        if (isRazorFile && _options.MinifyHtmlAndRazor)
+        {
+            content = RazorMinifier.Minify(content);
+        }
 
-                // Add relative file path at the start of the line
-                sb.Append($"{relativePath}: ");
+        // Then apply C# minification
+        content = CSharpMinifier.Minify(content, _options);
 
-                if (_options.IncludeMetadata)
-                {
-                    sb.Append($"[Size: {fileInfo.Length} bytes | Created: {fileInfo.CreationTime:yyyy-MM-dd HH:mm:ss} | Modified: {fileInfo.LastWriteTime:yyyy-MM-dd HH:mm:ss}] ");
-                }
+        // Finally, apply HTML minification for Razor files
+        if (isRazorFile && _options.MinifyHtmlAndRazor)
+        {
+            content = RazorMinifier.Minify(content);
+        }
 
-                var content = await File.ReadAllTextAsync(file, ct);
-                var processedContent = _options.TrimContent ? TrimFileContent(content) : content;
-
-                if (_options.AggressiveMinification)
-                {
-                    var extension = Path.GetExtension(file).ToLowerInvariant();
-                    if (extension == ".razor")
-                    {
-                        processedContent = RazorMinifier.Minify(processedContent);
-                        processedContent = Regex.Replace(processedContent, @"@code\s*{([^}]*)}", match =>
-                        {
-                            var code = match.Groups[1].Value;
-                            code = CSharpMinifier.Minify(code, aggressiveMinification: _options.AggressiveMinification);
-                            return $"@code{{{code}}}";
-                        });
-                    }
-                    else if (extension == ".cs")
-                    {
-                        processedContent = CSharpMinifier.Minify(processedContent, _options.AggressiveMinification, _options.RemoveAllUsings, _options.RemoveNamespaceDeclaration);
-                    }
-                }
-
-                sb.Append(processedContent);
-                sb.AppendLine();
-                contentQueue.Enqueue(sb.ToString());
-                Interlocked.Increment(ref processedFiles);
-            });
-
-        contentQueue.Enqueue(null); // Signal end of processing
-        await writingTask;
+        return content;
     }
 
     private void ApplyLineCondensing(string filePath)
