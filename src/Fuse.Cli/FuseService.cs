@@ -121,21 +121,30 @@ public sealed class FuseService
 
     private (string[] Extensions, string[] ExcludeDirectories) GetExtensionsAndExclusions()
     {
+        string[] extensions = ["*"];
+        string[] excludeDirectories = [];
+
         if (_options.Template.HasValue)
         {
-            var (defaultExtensions, defaultExcludeDirectories) = ProjectTemplateRegistry.GetTemplate(_options.Template.Value);
-            return (
-                _options.IncludeExtensions ?? defaultExtensions,
-                _options.ExcludeDirectories ?? defaultExcludeDirectories
-            );
+            (extensions, excludeDirectories) = ProjectTemplateRegistry.GetTemplate(_options.Template.Value);
+
+            if (_options.ExcludeExtensions != null)
+            {
+                extensions = extensions.Except(_options.ExcludeExtensions).ToArray();
+            }
+
+            if (_options.IncludeExtensions != null)
+            {
+                extensions = extensions.Concat(_options.IncludeExtensions).ToArray();
+            }
+
+            if (_options.ExcludeDirectories != null)
+            {
+                excludeDirectories = excludeDirectories.Concat(_options.ExcludeDirectories).ToArray();
+            }
         }
-        else
-        {
-            return (
-                _options.IncludeExtensions ?? ["*"],
-                _options.ExcludeDirectories ?? []
-            );
-        }
+
+        return (extensions, excludeDirectories);
     }
 
     private List<string> GetFiles(string[] extensions, string[] excludeFolders)

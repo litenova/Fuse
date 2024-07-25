@@ -29,6 +29,11 @@ public sealed class FuseOptions
     public string[]? IncludeExtensions { get; init; }
 
     /// <summary>
+    /// The extensions to include in the processing.
+    /// </summary>
+    public string[]? ExcludeExtensions { get; init; }
+
+    /// <summary>
     /// Gets or sets the directories to exclude from processing.
     /// </summary>
     public string[]? ExcludeDirectories { get; init; }

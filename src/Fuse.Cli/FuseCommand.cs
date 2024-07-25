@@ -26,13 +26,17 @@ public sealed class FuseCommand(ILogger<FuseService> logger)
         ["--template", "-t"],
         "Project template to use.");
 
-    private readonly Option<string?> _extensionsOption = new(
-        ["--extensions", "-e"],
+    private readonly Option<string?> _includeExtensionsOption = new(
+        ["--include-extensions", "-ie"],
         "Comma-separated list of file extensions to include in the processing.");
 
-    private readonly Option<string?> _excludeOption = new(
-        ["--exclude", "-x"],
+    private readonly Option<string?> _excludeDirectoriesOption = new(
+        ["--exclude-directories", "--exclude-dirs", "-xd"],
         "Comma-separated list of directories to exclude from processing.");
+
+    private readonly Option<string?> _excludeExtensionsOption = new(
+        ["--exclude-extensions", "-xe"],
+        "Comma-separated list of file extensions to exclude from processing.");
 
     private readonly Option<string?> _nameOption = new(
         ["--name", "-n"],
@@ -89,8 +93,8 @@ public sealed class FuseCommand(ILogger<FuseService> logger)
         rootCommand.AddOption(_directoryOption);
         rootCommand.AddOption(_outputOption);
         rootCommand.AddOption(_templateOption);
-        rootCommand.AddOption(_extensionsOption);
-        rootCommand.AddOption(_excludeOption);
+        rootCommand.AddOption(_includeExtensionsOption);
+        rootCommand.AddOption(_excludeDirectoriesOption);
         rootCommand.AddOption(_nameOption);
         rootCommand.AddOption(_overwriteOption);
         rootCommand.AddOption(_recursiveOption);
@@ -107,6 +111,7 @@ public sealed class FuseCommand(ILogger<FuseService> logger)
         rootCommand.AddOption(_aggressiveCSharpReductionOption);
         rootCommand.AddOption(_minifyHtmlAndRazorOption);
         rootCommand.AddOption(_comprehensiveCSharpMinificationOption);
+        rootCommand.AddOption(_excludeExtensionsOption);
 
         rootCommand.SetHandler(ExecuteAsync);
 
@@ -128,8 +133,8 @@ public sealed class FuseCommand(ILogger<FuseService> logger)
             SourceDirectory = sourceDirectory.FullName,
             OutputDirectory = outputDirectory.FullName,
             Template = context.ParseResult.GetValueForOption(_templateOption),
-            IncludeExtensions = context.ParseResult.GetValueForOption(_extensionsOption)?.Split(',', StringSplitOptions.RemoveEmptyEntries),
-            ExcludeDirectories = context.ParseResult.GetValueForOption(_excludeOption)?.Split(',', StringSplitOptions.RemoveEmptyEntries),
+            IncludeExtensions = context.ParseResult.GetValueForOption(_includeExtensionsOption)?.Split(',', StringSplitOptions.RemoveEmptyEntries),
+            ExcludeDirectories = context.ParseResult.GetValueForOption(_excludeDirectoriesOption)?.Split(',', StringSplitOptions.RemoveEmptyEntries),
             OutputFileName = context.ParseResult.GetValueForOption(_nameOption),
             Overwrite = context.ParseResult.GetValueForOption(_overwriteOption),
             Recursive = context.ParseResult.GetValueForOption(_recursiveOption),
@@ -145,7 +150,8 @@ public sealed class FuseCommand(ILogger<FuseService> logger)
             MinifyXmlFiles = context.ParseResult.GetValueForOption(_minifyXmlFilesOption),
             AggressiveCSharpReduction = context.ParseResult.GetValueForOption(_aggressiveCSharpReductionOption),
             MinifyHtmlAndRazor = context.ParseResult.GetValueForOption(_minifyHtmlAndRazorOption),
-            ComprehensiveCSharpMinification = context.ParseResult.GetValueForOption(_comprehensiveCSharpMinificationOption)
+            ComprehensiveCSharpMinification = context.ParseResult.GetValueForOption(_comprehensiveCSharpMinificationOption),
+            ExcludeExtensions = context.ParseResult.GetValueForOption(_excludeExtensionsOption)?.Split(',', StringSplitOptions.RemoveEmptyEntries)
         };
 
         if (options.ComprehensiveCSharpMinification)
