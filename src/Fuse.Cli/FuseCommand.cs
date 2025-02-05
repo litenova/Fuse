@@ -163,29 +163,48 @@ public sealed class FuseCommand(ILogger<FuseService> logger)
             options.AggressiveCSharpReduction = true;
         }
 
-        Console.WriteLine("Starting Fuse process...");
+        Console.WriteLine($"Processing files from: {sourceDirectory.FullName}");
+        Console.WriteLine($"Template: {options.Template?.ToString() ?? "Generic"}");
 
+        var startTime = DateTime.Now;
         var processor = new FuseService(options, logger);
         await processor.FuseAsync();
 
-        Console.WriteLine("Process completed successfully!");
+        var outputFile = new FileInfo(Path.Combine(options.OutputDirectory,
+            options.OutputFileName ?? $"Fuse_{Path.GetFileName(options.SourceDirectory)}_{DateTime.Now:yyyyMMddHHmmss}.txt"));
 
-        PrintSummary(options);
+        var duration = DateTime.Now - startTime;
+
+        if (outputFile.Exists)
+        {
+            Console.WriteLine($"\nCompleted in {duration.TotalSeconds:F1}s");
+            Console.WriteLine($"Output: {outputFile.FullName}");
+            Console.WriteLine($"Size: {FormatFileSize(outputFile.Length)}");
+
+            if (options.ComprehensiveCSharpMinification)
+            {
+                Console.WriteLine("Note: Comprehensive C# minification was applied");
+            }
+        }
+        else
+        {
+            Console.WriteLine("\nOperation completed but no output file was generated.");
+            Console.WriteLine($"Elapsed time: {duration.TotalSeconds:F1}s");
+        }
     }
 
-    private static void PrintSummary(FuseOptions options)
+    private static string FormatFileSize(long bytes)
     {
-        Console.WriteLine("\nSummary of options used:");
-        Console.WriteLine($"Source Directory: {options.SourceDirectory}");
-        Console.WriteLine($"Output Directory: {options.OutputDirectory}");
-        Console.WriteLine($"Template: {options.Template}");
-        Console.WriteLine($"Include Extensions: {(options.IncludeExtensions != null ? string.Join(", ", options.IncludeExtensions) : "Default")}");
-        Console.WriteLine($"Exclude Directories: {(options.ExcludeDirectories != null ? string.Join(", ", options.ExcludeDirectories) : "None")}");
-        Console.WriteLine($"Output File Name: {options.OutputFileName ?? "Auto-generated"}");
-        Console.WriteLine($"Overwrite: {options.Overwrite}");
-        Console.WriteLine($"Recursive: {options.Recursive}");
-        Console.WriteLine($"Trim Content: {options.TrimContent}");
-        Console.WriteLine($"Max File Size (KB): {options.MaxFileSizeKB}");
-        Console.WriteLine($"Ignore Binary Files: {options.IgnoreBinaryFiles}");
+        string[] sizes = { "B", "KB", "MB", "GB" };
+        int order = 0;
+        double size = bytes;
+
+        while (size >= 1024 && order < sizes.Length - 1)
+        {
+            order++;
+            size /= 1024;
+        }
+
+        return $"{size:F2} {sizes[order]}";
     }
 }
