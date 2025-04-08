@@ -26,7 +26,7 @@ public sealed class FuseService
             return;
         }
 
-        var (extensions, excludeFolders) = GetExtensionsAndExclusions();
+        var (extensions, excludeFolders, excludePatterns) = GetExtensionsAndExclusions();
         SetupOutputPath();
 
         var outputFilePath = Path.Combine(_options.OutputDirectory, _options.OutputFileName ?? $"Fuse_{Path.GetFileName(_options.SourceDirectory)}_{DateTime.Now:yyyyMMddHHmmss}.txt");
@@ -35,7 +35,7 @@ public sealed class FuseService
         try
         {
             _logger.LogInformation("Searching for files...");
-            var files = GetFiles(extensions, excludeFolders);
+            var files = GetFiles(extensions, excludeFolders, excludePatterns);
             _logger.LogInformation("Found {FileCount} files.", files.Count);
 
             if (File.Exists(outputFilePath) && !_options.Overwrite)
@@ -119,14 +119,16 @@ public sealed class FuseService
         }
     }
 
-    private (string[] Extensions, string[] ExcludeDirectories) GetExtensionsAndExclusions()
+    private (string[] Extensions, string[] ExcludeDirectories, string[] ExcludePatterns) GetExtensionsAndExclusions()
     {
         string[] extensions = ["*"];
         string[] excludeDirectories = [];
+        string[] excludePatterns = [];
 
         if (_options.Template.HasValue)
         {
             (extensions, excludeDirectories) = ProjectTemplateRegistry.GetTemplate(_options.Template.Value);
+            excludePatterns = ProjectTemplateRegistry.GetExcludedPatterns(_options.Template.Value);
 
             if (_options.ExcludeExtensions != null)
             {
@@ -144,10 +146,10 @@ public sealed class FuseService
             }
         }
 
-        return (extensions, excludeDirectories);
+        return (extensions, excludeDirectories, excludePatterns);
     }
 
-    private List<string> GetFiles(string[] extensions, string[] excludeFolders)
+    private List<string> GetFiles(string[] extensions, string[] excludeFolders, string[] excludePatterns)
     {
         var option = _options.Recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
         return Directory.EnumerateFiles(_options.SourceDirectory, "*.*", option)
@@ -156,6 +158,7 @@ public sealed class FuseService
             .Where(file => !IsInExcludedFolder(file, excludeFolders))
             .Where(IsFileSizeAcceptable)
             .Where(file => !_options.IgnoreBinaryFiles || !IsBinaryFile(file))
+            .Where(file => !excludePatterns.Any(pattern => Regex.IsMatch(file, pattern)))
             .ToList();
     }
 

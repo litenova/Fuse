@@ -5,10 +5,12 @@ namespace Fuse.Cli;
 public static class ProjectTemplateRegistry
 {
     private static readonly ImmutableDictionary<ProjectTemplate, (string[] Extensions, string[] ExcludeFolders)> TemplateDefaults;
+    private static readonly ImmutableDictionary<ProjectTemplate, string[]> ExcludedPatterns;
 
     static ProjectTemplateRegistry()
     {
         var builder = ImmutableDictionary.CreateBuilder<ProjectTemplate, (string[] Extensions, string[] ExcludeFolders)>();
+        var patternsBuilder = ImmutableDictionary.CreateBuilder<ProjectTemplate, string[]>();
 
         builder[ProjectTemplate.Generic] = (
             [".txt", ".md", ".json", ".xml", ".yaml", ".yml"],
@@ -22,6 +24,28 @@ public static class ProjectTemplateRegistry
             ],
             ["bin", "obj", ".vs", ".git", ".idea"]
         );
+
+        // Add patterns to exclude for DotNet - specifically the generated SpecFlow/ReqnRoll files
+        patternsBuilder[ProjectTemplate.DotNet] = [
+            "*.feature.cs", // Exclude generated feature files from SpecFlow/ReqnRoll
+            "*Steps.g.cs", // Exclude generated step files
+            "*.AssemblyHooks.cs", // Exclude assembly hook files from SpecFlow/ReqnRoll
+            "*.g.cs", // Exclude any generated C# files
+            "*.g.i.cs", // Exclude designer generated code
+            "*.Designer.cs", // Exclude designer generated code
+            "*.designer.cs", // Exclude designer generated code (lowercase variant)
+            "*_i.c", // Exclude COM interop files
+            "*.generated.cs", // Exclude other generated code
+            "TemporaryGeneratedFile_*.cs", // Exclude temporary generated files
+            "*.Cache.cs", // Exclude cache files
+            "*.cache", // Exclude other cache files
+            "*.resources", // Exclude resource files
+            "*.baml", // Exclude compiled XAML
+            "ServiceReference.cs", // Exclude service reference code
+            "Reference.cs", // Exclude reference classes
+            "AssemblyInfo.cs", // Exclude assembly info files
+            "*.xsd.cs" // Exclude XML schema generated code
+        ];
 
         builder[ProjectTemplate.Java] = (
             [".java", ".gradle", ".xml", ".properties", ".jar", ".jsp", ".jspx", ".class"],
@@ -134,8 +158,12 @@ public static class ProjectTemplateRegistry
         );
 
         TemplateDefaults = builder.ToImmutable();
+        ExcludedPatterns = patternsBuilder.ToImmutable();
     }
 
     public static (string[] Extensions, string[] ExcludeFolders) GetTemplate(ProjectTemplate template) =>
         TemplateDefaults.TryGetValue(template, out var defaults) ? defaults : TemplateDefaults[ProjectTemplate.Generic];
+
+    public static string[] GetExcludedPatterns(ProjectTemplate template) =>
+        ExcludedPatterns.TryGetValue(template, out var patterns) ? patterns : Array.Empty<string>();
 }
