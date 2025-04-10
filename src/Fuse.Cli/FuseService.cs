@@ -158,7 +158,7 @@ public sealed class FuseService
             .Where(file => !IsInExcludedFolder(file, excludeFolders))
             .Where(IsFileSizeAcceptable)
             .Where(file => !_options.IgnoreBinaryFiles || !IsBinaryFile(file))
-            .Where(file => !excludePatterns.Any(pattern => Regex.IsMatch(file, pattern)))
+            .Where(file => !IsExcludedByPattern(file, excludePatterns))
             .ToList();
     }
 
@@ -183,6 +183,35 @@ public sealed class FuseService
         int bytesToRead = Math.Min(512, (int)stream.Length);
         byte[] bytes = reader.ReadBytes(bytesToRead);
         return bytes.Any(b => b == 0);
+    }
+
+    private bool IsExcludedByPattern(string filePath, string[] excludePatterns)
+    {
+        if (excludePatterns == null || excludePatterns.Length == 0)
+            return false;
+
+        string fileName = Path.GetFileName(filePath);
+
+        foreach (var pattern in excludePatterns)
+        {
+            // Convert glob pattern to regex pattern
+            // Escape special regex characters except * and ?
+            string regexPattern = "^" + Regex.Escape(pattern)
+                .Replace("\\*", ".*")
+                .Replace("\\?", ".") + "$";
+
+            try
+            {
+                if (Regex.IsMatch(fileName, regexPattern))
+                    return true;
+            }
+            catch (RegexParseException ex)
+            {
+                _logger.LogWarning("Invalid regex pattern: {Pattern}. Error: {Error}", pattern, ex.Message);
+            }
+        }
+
+        return false;
     }
 
     private string ApplyNonInvasiveMinification(string content, string fileExtension)
