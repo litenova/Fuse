@@ -38,6 +38,10 @@ public sealed class FuseCommand(ILogger<FuseService> logger)
         ["--exclude-extensions", "-xe"],
         "Comma-separated list of file extensions to exclude from processing.");
 
+    private readonly Option<string?> _excludeFolderOption = new(
+        ["--exclude-folder", "-xf"],
+        "Specific folder name to exclude from processing (can be used multiple times).");
+
     private readonly Option<string?> _nameOption = new(
         ["--name", "-n"],
         "Name of the output file (without extension).");
@@ -112,6 +116,7 @@ public sealed class FuseCommand(ILogger<FuseService> logger)
         rootCommand.AddOption(_minifyHtmlAndRazorOption);
         rootCommand.AddOption(_comprehensiveCSharpMinificationOption);
         rootCommand.AddOption(_excludeExtensionsOption);
+        rootCommand.AddOption(_excludeFolderOption);
 
         rootCommand.SetHandler(ExecuteAsync);
 
@@ -134,7 +139,9 @@ public sealed class FuseCommand(ILogger<FuseService> logger)
             OutputDirectory = outputDirectory.FullName,
             Template = context.ParseResult.GetValueForOption(_templateOption),
             IncludeExtensions = context.ParseResult.GetValueForOption(_includeExtensionsOption)?.Split(',', StringSplitOptions.RemoveEmptyEntries),
-            ExcludeDirectories = context.ParseResult.GetValueForOption(_excludeDirectoriesOption)?.Split(',', StringSplitOptions.RemoveEmptyEntries),
+            ExcludeDirectories = MergeExcludedDirectories(
+                context.ParseResult.GetValueForOption(_excludeDirectoriesOption)?.Split(',', StringSplitOptions.RemoveEmptyEntries),
+                context.ParseResult.GetValueForOption(_excludeFolderOption)),
             OutputFileName = context.ParseResult.GetValueForOption(_nameOption),
             Overwrite = context.ParseResult.GetValueForOption(_overwriteOption),
             Recursive = context.ParseResult.GetValueForOption(_recursiveOption),
@@ -206,5 +213,26 @@ public sealed class FuseCommand(ILogger<FuseService> logger)
         }
 
         return $"{size:F2} {sizes[order]}";
+    }
+
+    private static string[]? MergeExcludedDirectories(string[]? excludeDirectories, string? excludeFolder)
+    {
+        if (excludeDirectories == null && excludeFolder == null)
+        {
+            return null;
+        }
+
+        var mergedList = new List<string>();
+        if (excludeDirectories != null)
+        {
+            mergedList.AddRange(excludeDirectories);
+        }
+
+        if (!string.IsNullOrEmpty(excludeFolder))
+        {
+            mergedList.Add(excludeFolder);
+        }
+
+        return mergedList.ToArray();
     }
 }
