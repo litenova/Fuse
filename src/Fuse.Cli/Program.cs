@@ -1,4 +1,6 @@
-﻿using System.CommandLine;
+﻿// src/Fuse.Cli/Program.cs
+
+using CliFx;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -8,15 +10,16 @@ public class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        // Configure services
         var services = new ServiceCollection()
             .AddLogging(builder => builder.AddConsole())
-            .AddTransient<FuseCommand>()
             .BuildServiceProvider();
 
-        var logger = services.GetRequiredService<ILogger<FuseService>>();
-        var fuseCommand = new FuseCommand(logger);
-        var rootCommand = fuseCommand.CreateRootCommand();
-
-        return await rootCommand.InvokeAsync(args);
+        // Run the application with CliFx
+        return await new CliApplicationBuilder()
+            .AddCommandsFromThisAssembly()
+            .UseTypeActivator(type => ActivatorUtilities.CreateInstance(services, type))
+            .Build()
+            .RunAsync(args);
     }
 }
