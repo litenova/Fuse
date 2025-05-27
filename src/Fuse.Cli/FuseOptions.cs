@@ -92,5 +92,5 @@ public sealed class FuseOptions
 
     public bool AggressiveCSharpReduction { get; set; } = false;
 
-    public bool ComprehensiveCSharpMinification { get; set; }
+    public bool ApplyAllOptions { get; set; }
 }

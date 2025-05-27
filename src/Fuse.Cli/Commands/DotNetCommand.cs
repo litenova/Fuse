@@ -1,4 +1,3 @@
-// src/Fuse.Cli/Commands/DotNetCommand.cs
 using CliFx.Attributes;
 using CliFx.Infrastructure;
 
@@ -29,14 +28,14 @@ public class DotNetCommand : RootCommand
     [CommandOption("minify-razor", Description = "Minify HTML and Razor syntax in .cshtml and .razor files.")]
     public bool MinifyRazor { get; set; } = true;
 
-    [CommandOption("comprehensive", Description = "Apply all C# minification options.")]
-    public bool ComprehensiveMinification { get; set; } = false;
+    [CommandOption("all", Description = "Apply all C# minification options.")]
+    public bool ApplyAllOptions { get; set; } = false;
 
     // Override the base ExecuteAsync to add .NET specific messaging
     public override async ValueTask ExecuteAsync(IConsole console)
     {
         await console.Output.WriteLineAsync("Processing .NET project...");
-        if (ComprehensiveMinification)
+        if (ApplyAllOptions)
         {
             await console.Output.WriteLineAsync("Using comprehensive C# minification");
         }
@@ -50,19 +49,19 @@ public class DotNetCommand : RootCommand
     {
         // Get the base options from the parent class
         var options = base.CreateOptions();
-        
+
         // Always set template to DotNet
         options.Template = ProjectTemplate.DotNet;
-        
+
         // Set .NET specific options
-        options.RemoveCSharpNamespaceDeclarations = RemoveNamespaces || ComprehensiveMinification;
-        options.RemoveCSharpComments = RemoveComments || ComprehensiveMinification;
-        options.RemoveCSharpRegions = RemoveRegions || ComprehensiveMinification;
-        options.RemoveCSharpUsings = RemoveUsings || ComprehensiveMinification;
+        options.RemoveCSharpNamespaceDeclarations = RemoveNamespaces || ApplyAllOptions;
+        options.RemoveCSharpComments = RemoveComments || ApplyAllOptions;
+        options.RemoveCSharpRegions = RemoveRegions || ApplyAllOptions;
+        options.RemoveCSharpUsings = RemoveUsings || ApplyAllOptions;
         options.MinifyXmlFiles = MinifyXml;
-        options.AggressiveCSharpReduction = AggressiveMinify || ComprehensiveMinification;
+        options.AggressiveCSharpReduction = AggressiveMinify || ApplyAllOptions;
         options.MinifyHtmlAndRazor = MinifyRazor;
-        options.ComprehensiveCSharpMinification = ComprehensiveMinification;
+        options.ApplyAllOptions = ApplyAllOptions;
 
         // Modify the output filename if not explicitly set
         if (options.OutputFileName == null)
