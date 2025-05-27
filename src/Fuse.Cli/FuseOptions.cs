@@ -21,7 +21,7 @@ public sealed class FuseOptions
     /// <summary>
     /// Gets or sets the optional project template to use.
     /// </summary>
-    public ProjectTemplate? Template { get; init; }
+    public ProjectTemplate? Template { get; set; }
 
     /// <summary>
     /// Gets or sets the custom file extensions to include.
@@ -41,7 +41,7 @@ public sealed class FuseOptions
     /// <summary>
     /// Gets or sets the name of the output file (without extension).
     /// </summary>
-    public string? OutputFileName { get; init; }
+    public string? OutputFileName { get; set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether to overwrite the output file if it exists.
@@ -86,11 +86,11 @@ public sealed class FuseOptions
 
     public bool RemoveCSharpUsings { get; set; } = false;
 
-    public bool MinifyXmlFiles { get; init; } = true;
+    public bool MinifyXmlFiles { get; set; } = true;
 
-    public bool MinifyHtmlAndRazor { get; init; } = true;
+    public bool MinifyHtmlAndRazor { get; set; } = true;
 
     public bool AggressiveCSharpReduction { get; set; } = false;
 
-    public bool ComprehensiveCSharpMinification { get; init; }
+    public bool ComprehensiveCSharpMinification { get; set; }
 }

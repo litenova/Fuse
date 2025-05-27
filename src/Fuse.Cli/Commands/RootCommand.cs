@@ -1,20 +1,17 @@
-// src/Fuse.Cli/Commands/FuseCommand.cs
-
 using CliFx;
 using CliFx.Attributes;
 using CliFx.Infrastructure;
 using Fuse.Cli.Infrastructure;
 
-namespace Fuse.Cli;
+namespace Fuse.Cli.Commands;
 
 [Command(Description = "A tool to combine and process files in a directory.")]
-public class FuseCommand : ICommand
+public class RootCommand : ICommand
 {
-    // Source directory
+    // Common base options
     [CommandOption("directory", 'd', Description = "Path to the directory to process.")]
     public string SourceDirectory { get; set; } = Directory.GetCurrentDirectory();
 
-    // Output directory
     [CommandOption("output", 'o', Description = "Path to the output directory where the combined file will be saved.")]
     public string OutputDirectory { get; set; } = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
 
@@ -66,37 +63,17 @@ public class FuseCommand : ICommand
     [CommandOption("condense", Description = "Whether to apply line condensing to the output file.")]
     public bool UseCondensing { get; set; } = true;
 
-    public async ValueTask ExecuteAsync(IConsole console)
+    // Standard processing implementation
+    public virtual async ValueTask ExecuteAsync(IConsole console)
     {
         // Create a logger that uses the CliFx console
         var logger = new CliFxLogger<FuseService>(console);
 
-        // Parse string options into arrays
-        string[]? includeExtensions = IncludeExtensionsString?.Split(',', StringSplitOptions.RemoveEmptyEntries);
-        string[]? excludeDirectories = ExcludeDirectoriesString?.Split(',', StringSplitOptions.RemoveEmptyEntries);
-        string[]? excludeExtensions = ExcludeExtensionsString?.Split(',', StringSplitOptions.RemoveEmptyEntries);
-
         // Create options
-        var options = new FuseOptions
-        {
-            SourceDirectory = SourceDirectory,
-            OutputDirectory = OutputDirectory,
-            Template = Template,
-            IncludeExtensions = includeExtensions,
-            ExcludeDirectories = excludeDirectories,
-            ExcludeExtensions = excludeExtensions,
-            OutputFileName = OutputFileName,
-            Overwrite = Overwrite,
-            Recursive = Recursive,
-            TrimContent = TrimContent,
-            MaxFileSizeKB = MaxFileSizeKB,
-            IgnoreBinaryFiles = IgnoreBinaryFiles,
-            IncludeMetadata = IncludeMetadata,
-            UseCondensing = UseCondensing
-        };
+        var options = CreateOptions();
 
         await console.Output.WriteLineAsync($"Processing files from: {SourceDirectory}");
-        await console.Output.WriteLineAsync($"Template: {Template?.ToString() ?? "Generic"}");
+        await console.Output.WriteLineAsync($"Template: {options.Template?.ToString() ?? "Generic"}");
 
         var startTime = DateTime.Now;
         var service = new FuseService(options, logger);
@@ -119,7 +96,35 @@ public class FuseCommand : ICommand
         }
     }
 
-    private static string FormatFileSize(long bytes)
+    // Helper method to create FuseOptions object - virtual so it can be overridden
+    protected virtual FuseOptions CreateOptions()
+    {
+        // Parse string options into arrays
+        string[]? includeExtensions = IncludeExtensionsString?.Split(',', StringSplitOptions.RemoveEmptyEntries);
+        string[]? excludeDirectories = ExcludeDirectoriesString?.Split(',', StringSplitOptions.RemoveEmptyEntries);
+        string[]? excludeExtensions = ExcludeExtensionsString?.Split(',', StringSplitOptions.RemoveEmptyEntries);
+
+        return new FuseOptions
+        {
+            SourceDirectory = SourceDirectory,
+            OutputDirectory = OutputDirectory,
+            Template = Template,
+            IncludeExtensions = includeExtensions,
+            ExcludeDirectories = excludeDirectories,
+            ExcludeExtensions = excludeExtensions,
+            OutputFileName = OutputFileName,
+            Overwrite = Overwrite,
+            Recursive = Recursive,
+            TrimContent = TrimContent,
+            MaxFileSizeKB = MaxFileSizeKB,
+            IgnoreBinaryFiles = IgnoreBinaryFiles,
+            IncludeMetadata = IncludeMetadata,
+            UseCondensing = UseCondensing
+        };
+    }
+
+    // Helper method to format file sizes
+    protected static string FormatFileSize(long bytes)
     {
         string[] sizes = { "B", "KB", "MB", "GB" };
         int order = 0;
