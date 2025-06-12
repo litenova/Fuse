@@ -27,7 +27,7 @@ if exist "%TEMP_PUBLISH_DIR%" (
 
 REM Publish the application as a single file to the temporary directory
 echo Publishing the Fuse tool to a temporary directory...
-dotnet publish "%PROJECT_DIR%" -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:PublishTrimmed=true -o "%TEMP_PUBLISH_DIR%"
+dotnet publish "%PROJECT_DIR%" -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o "%TEMP_PUBLISH_DIR%"
 if %ERRORLEVEL% NEQ 0 (
     echo Publish failed. Exiting script.
     pause

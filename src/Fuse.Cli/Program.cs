@@ -18,6 +18,7 @@ public class Program
         // Run the application with CliFx
         return await new CliApplicationBuilder()
             .AddCommandsFromThisAssembly()
+            .SetExecutableName("fuse")
             .UseTypeActivator(type => ActivatorUtilities.CreateInstance(services, type))
             .Build()
             .RunAsync(args);
