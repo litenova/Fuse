@@ -25,5 +25,6 @@ public enum ProjectTemplate
     Clojure,
     Haskell,
     Erlang,
-    Elixir
+    Elixir,
+    Infrastructure
 }

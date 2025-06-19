@@ -69,6 +69,13 @@ public class DotNetCommand : RootCommand
             options.OutputFileName = $"Fuse_DotNet_{Path.GetFileName(options.SourceDirectory)}_{DateTime.Now:yyyyMMddHHmmss}";
         }
 
+        // Ensure .txt extension is present
+        else if (!options.OutputFileName.EndsWith(".txt", StringComparison.OrdinalIgnoreCase))
+        {
+            options.OutputFileName = $"{options.OutputFileName}.txt";
+        }
+
+
         return options;
     }
 }

@@ -26,25 +26,26 @@ public static class ProjectTemplateRegistry
         );
 
         // Add patterns to exclude for DotNet - specifically the generated SpecFlow/ReqnRoll files
-        patternsBuilder[ProjectTemplate.DotNet] = [
-            "*.feature.cs", // Exclude generated feature files from SpecFlow/ReqnRoll
-            "*Steps.g.cs", // Exclude generated step files
-            "*.AssemblyHooks.cs", // Exclude assembly hook files from SpecFlow/ReqnRoll
-            "*.g.cs", // Exclude any generated C# files
-            "*.g.i.cs", // Exclude designer generated code
-            "*.Designer.cs", // Exclude designer generated code
-            "*.designer.cs", // Exclude designer generated code (lowercase variant)
-            "*_i.c", // Exclude COM interop files
-            "*.generated.cs", // Exclude other generated code
+        patternsBuilder[ProjectTemplate.DotNet] =
+        [
+            "*.feature.cs",                // Exclude generated feature files from SpecFlow/ReqnRoll
+            "*Steps.g.cs",                 // Exclude generated step files
+            "*.AssemblyHooks.cs",          // Exclude assembly hook files from SpecFlow/ReqnRoll
+            "*.g.cs",                      // Exclude any generated C# files
+            "*.g.i.cs",                    // Exclude designer generated code
+            "*.Designer.cs",               // Exclude designer generated code
+            "*.designer.cs",               // Exclude designer generated code (lowercase variant)
+            "*_i.c",                       // Exclude COM interop files
+            "*.generated.cs",              // Exclude other generated code
             "TemporaryGeneratedFile_*.cs", // Exclude temporary generated files
-            "*.Cache.cs", // Exclude cache files
-            "*.cache", // Exclude other cache files
-            "*.resources", // Exclude resource files
-            "*.baml", // Exclude compiled XAML
-            "ServiceReference.cs", // Exclude service reference code
-            "Reference.cs", // Exclude reference classes
-            "AssemblyInfo.cs", // Exclude assembly info files
-            "*.xsd.cs" // Exclude XML schema generated code
+            "*.Cache.cs",                  // Exclude cache files
+            "*.cache",                     // Exclude other cache files
+            "*.resources",                 // Exclude resource files
+            "*.baml",                      // Exclude compiled XAML
+            "ServiceReference.cs",         // Exclude service reference code
+            "Reference.cs",                // Exclude reference classes
+            "AssemblyInfo.cs",             // Exclude assembly info files
+            "*.xsd.cs"                     // Exclude XML schema generated code
         ];
 
         builder[ProjectTemplate.Java] = (
@@ -156,6 +157,63 @@ public static class ProjectTemplateRegistry
             [".ex", ".exs", ".eex", ".leex", "mix.exs"],
             ["_build", "deps", ".git"]
         );
+
+        builder[ProjectTemplate.Infrastructure] = (
+
+            // Extensions to include
+            [
+                ".tf",         // Terraform files
+                ".tfvars",     // Terraform variables
+                ".yaml",       // Kubernetes/Helm manifests
+                ".yml",        // Kubernetes/Helm manifests
+                ".json",       // Configuration files
+                ".md",         // Documentation
+                ".sh",         // Shell scripts
+                ".ps1",        // PowerShell scripts
+                ".hcl",        // HashiCorp configuration files
+                ".tpl",        // Template files
+                ".env",        // Environment files
+                ".properties", // Properties files
+                ".conf",       // Configuration files
+                ".config"      // Configuration files
+            ],
+
+            // Directories to exclude
+            [
+                ".terraform",    // Terraform working directory
+                "node_modules",  // NPM packages
+                ".git",          // Git repository
+                ".vs",           // Visual Studio files
+                ".idea",         // IntelliJ files
+                "bin",           // Binary files
+                "obj",           // Object files
+                "dist",          // Distribution files
+                "build",         // Build artifacts
+                ".pytest_cache", // Python cache
+                "__pycache__",   // Python cache
+                "tmp",           // Temporary files
+                "temp",          // Temporary files
+                "logs"           // Log files
+            ]
+        );
+
+        // Patterns to exclude for Infrastructure - specifically Terraform and related files
+        patternsBuilder[ProjectTemplate.Infrastructure] =
+        [
+            "*.tfstate",          // Terraform state files
+            "*.tfstate.backup",   // Terraform state backups
+            "*.tfplan",           // Terraform plan files
+            "*.tfvars.json",      // Terraform variable files in JSON
+            "override.tf",        // Terraform override files
+            "override.tf.json",   // Terraform override files in JSON
+            "*_override.tf",      // Terraform override files
+            "*_override.tf.json", // Terraform override files in JSON
+            ".terraformrc",       // Terraform CLI config
+            "terraform.rc",       // Terraform CLI config
+            "crash.log",          // Terraform crash logs
+            "crash.*.log",        // Terraform crash logs
+            ".terraform.lock.hcl" // Terraform dependency lock file
+        ];
 
         TemplateDefaults = builder.ToImmutable();
         ExcludedPatterns = patternsBuilder.ToImmutable();
