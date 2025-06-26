@@ -63,19 +63,6 @@ public class DotNetCommand : RootCommand
         options.MinifyHtmlAndRazor = MinifyRazor;
         options.ApplyAllOptions = ApplyAllOptions;
 
-        // Modify the output filename if not explicitly set
-        if (options.OutputFileName == null)
-        {
-            options.OutputFileName = $"Fuse_DotNet_{Path.GetFileName(options.SourceDirectory)}_{DateTime.Now:yyyyMMddHHmmss}";
-        }
-
-        // Ensure .txt extension is present
-        else if (!options.OutputFileName.EndsWith(".txt", StringComparison.OrdinalIgnoreCase))
-        {
-            options.OutputFileName = $"{options.OutputFileName}.txt";
-        }
-
-
         return options;
     }
 }

@@ -27,9 +27,10 @@ public sealed class FuseService
         }
 
         var (extensions, excludeFolders, excludePatterns) = GetExtensionsAndExclusions();
+
         SetupOutputPath();
 
-        var outputFilePath = Path.Combine(_options.OutputDirectory, _options.OutputFileName ?? $"Fuse_{Path.GetFileName(_options.SourceDirectory)}_{DateTime.Now:yyyyMMddHHmmss}.txt");
+        var outputFilePath = Path.Combine(_options.OutputDirectory, _options.OutputFileName ?? throw new InvalidOperationException("Output file name must be specified."));
         _logger.LogInformation("Output file: {OutputFilePath}", outputFilePath);
 
         try
@@ -90,6 +91,7 @@ public sealed class FuseService
             processedContent = ApplyNonInvasiveMinification(processedContent, Path.GetExtension(file).ToLowerInvariant());
 
             sb.Append(processedContent);
+
             // Ultra-compact start marker
             sb.Append($"<|{relativePath}|>");
 
@@ -171,7 +173,11 @@ public sealed class FuseService
 
     private bool IsFileSizeAcceptable(string filePath)
     {
-        if (_options.MaxFileSizeKB == 0) return true;
+        if (_options.MaxFileSizeKB == 0)
+        {
+            return true;
+        }
+
         var fileInfo = new FileInfo(filePath);
         return fileInfo.Length <= _options.MaxFileSizeKB * 1024;
     }
@@ -188,7 +194,9 @@ public sealed class FuseService
     private bool IsExcludedByPattern(string filePath, string[] excludePatterns)
     {
         if (excludePatterns == null || excludePatterns.Length == 0)
+        {
             return false;
+        }
 
         string fileName = Path.GetFileName(filePath);
 
@@ -203,7 +211,9 @@ public sealed class FuseService
             try
             {
                 if (Regex.IsMatch(fileName, regexPattern))
+                {
                     return true;
+                }
             }
             catch (RegexParseException ex)
             {
@@ -280,7 +290,11 @@ public sealed class FuseService
         {
             while (contentQueue.TryDequeue(out var content))
             {
-                if (content == null) return; // End of processing
+                if (content == null)
+                {
+                    return; // End of processing
+                }
+
                 await writer.WriteAsync(content);
             }
 

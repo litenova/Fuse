@@ -19,45 +19,35 @@ public class CliFxLogger<T> : ILogger<T>
     public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
     {
         if (!IsEnabled(logLevel))
+        {
             return;
+        }
 
         var message = formatter(state, exception);
-        ConsoleColor originalColor;
+        var originalColor = _console.ForegroundColor;
 
         switch (logLevel)
         {
             case LogLevel.Critical:
             case LogLevel.Error:
-                originalColor = _console.ForegroundColor;
                 _console.ForegroundColor = ConsoleColor.Red;
                 _console.Output.WriteLine($"ERROR: {message}");
-                _console.ForegroundColor = originalColor;
                 break;
             case LogLevel.Warning:
-                originalColor = _console.ForegroundColor;
                 _console.ForegroundColor = ConsoleColor.Yellow;
                 _console.Output.WriteLine($"WARNING: {message}");
-                _console.ForegroundColor = originalColor;
                 break;
             case LogLevel.Information:
                 _console.Output.WriteLine(message);
                 break;
             case LogLevel.Debug:
             case LogLevel.Trace:
-                originalColor = _console.ForegroundColor;
                 _console.ForegroundColor = ConsoleColor.Gray;
                 _console.Output.WriteLine($"DEBUG: {message}");
-                _console.ForegroundColor = originalColor;
                 break;
         }
 
-        if (exception != null && logLevel >= LogLevel.Error)
-        {
-            originalColor = _console.ForegroundColor;
-            _console.ForegroundColor = ConsoleColor.Red;
-            _console.Output.WriteLine(exception.ToString());
-            _console.ForegroundColor = originalColor;
-        }
+        _console.ForegroundColor = originalColor;
     }
 
     public bool IsEnabled(LogLevel logLevel) => logLevel >= _minLevel;
