@@ -249,6 +249,9 @@ public sealed class FuseService
                 return XmlMinifier.Minify(content);
             case ".md":
                 return MarkdownMinifier.Minify(content);
+            case ".yml":
+            case ".yaml":
+                return YamlMinifier.Minify(content);
             default:
                 return content;
         }
