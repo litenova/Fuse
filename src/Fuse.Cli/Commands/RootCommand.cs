@@ -77,11 +77,13 @@ public class RootCommand : ICommand
 
         var startTime = DateTime.Now;
         var service = new FuseService(options, logger);
+
+        options.OutputFileName = $"Fuse_{Path.GetFileName(options.SourceDirectory)}_{DateTime.Now:yyyyMMddHHmmss}.txt";
+        var outputFile = new FileInfo(Path.Combine(options.OutputDirectory, options.OutputFileName));
+
         await service.FuseAsync();
 
         var duration = DateTime.Now - startTime;
-        var outputFile = new FileInfo(Path.Combine(options.OutputDirectory,
-            options.OutputFileName ?? $"Fuse_{Path.GetFileName(options.SourceDirectory)}_{DateTime.Now:yyyyMMddHHmmss}.txt"));
 
         if (outputFile.Exists)
         {
