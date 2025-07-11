@@ -93,4 +93,9 @@ public sealed class FuseOptions
     public bool AggressiveCSharpReduction { get; set; } = false;
 
     public bool ApplyAllOptions { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether to exclude test project directories.
+    /// </summary>
+    public bool ExcludeTestProjects { get; set; } = false;
 }

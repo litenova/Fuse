@@ -158,6 +158,7 @@ public sealed class FuseService
             .AsParallel()
             .Where(file => extensions.Contains("*") || extensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase))
             .Where(file => !IsInExcludedFolder(file, excludeFolders))
+            .Where(file => !_options.ExcludeTestProjects || !IsInTestProjectFolder(file))
             .Where(IsFileSizeAcceptable)
             .Where(file => !_options.IgnoreBinaryFiles || !IsBinaryFile(file))
             .Where(file => !IsExcludedByPattern(file, excludePatterns))
@@ -169,6 +170,49 @@ public sealed class FuseService
         var relativePath = Path.GetRelativePath(_options.SourceDirectory, filePath);
         var pathParts = relativePath.Split(Path.DirectorySeparatorChar);
         return pathParts.Any(part => excludeFolders.Contains(part, StringComparer.OrdinalIgnoreCase));
+    }
+
+    private bool IsInTestProjectFolder(string filePath)
+    {
+        // Common test project directory suffixes
+        var testProjectSuffixes = new[]
+        {
+            "UnitTests",
+            "Tests",
+            "IntegrationTests",
+            "Specs",
+            "Test",
+            "Testing",
+            "FunctionalTests",
+            "AcceptanceTests",
+            "EndToEndTests",
+            "E2ETests",
+            "TestProject",
+            "TestSuite",
+            "TestLib",
+            "TestData",
+            "TestFramework",
+            "TestUtils",
+            "TestUtilities",
+            "TestHelper",
+            "TestHelpers",
+            "TestCommon",
+            "TestShared",
+            "TestSupport",
+            "Benchmark",
+            "Benchmarks",
+            "Performance",
+            "PerformanceTests",
+            "LoadTests",
+            "StressTests"
+        };
+
+        var relativePath = Path.GetRelativePath(_options.SourceDirectory, filePath);
+        var pathParts = relativePath.Split(Path.DirectorySeparatorChar);
+
+        return pathParts.Any(part =>
+            testProjectSuffixes.Any(suffix =>
+                part.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)));
     }
 
     private bool IsFileSizeAcceptable(string filePath)

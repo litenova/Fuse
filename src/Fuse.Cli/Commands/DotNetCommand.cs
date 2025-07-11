@@ -31,6 +31,9 @@ public class DotNetCommand : RootCommand
     [CommandOption("all", Description = "Apply all C# minification options.")]
     public bool ApplyAllOptions { get; set; } = false;
 
+    [CommandOption("exclude-test-projects", Description = "Exclude directories that contain test projects (UnitTests, Tests, IntegrationTests, Specs, etc.).")]
+    public bool ExcludeTestProjects { get; set; } = false;
+
     // Override the base ExecuteAsync to add .NET specific messaging
     public override async ValueTask ExecuteAsync(IConsole console)
     {
@@ -62,6 +65,7 @@ public class DotNetCommand : RootCommand
         options.AggressiveCSharpReduction = AggressiveMinify || ApplyAllOptions;
         options.MinifyHtmlAndRazor = MinifyRazor;
         options.ApplyAllOptions = ApplyAllOptions;
+        options.ExcludeTestProjects = ExcludeTestProjects;
 
         return options;
     }
