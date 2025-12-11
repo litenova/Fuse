@@ -1,6 +1,8 @@
 # Fuse
 
-Fuse is a flexible file combining tool for developers, designed to streamline the process of merging multiple files from a project directory into a single output file. It offers a wide range of customization options to suit various project types and developer preferences.
+Fuse is a flexible file combining tool for developers, designed to streamline the process of merging multiple files from
+a project directory into a single output file. It offers a wide range of customization options to suit various project
+types and developer preferences.
 
 ## Table of Contents
 
@@ -49,9 +51,11 @@ fuse [options]
 - `--overwrite, -w`: Whether to overwrite the output file if it already exists (default: true).
 - `--recursive, -r`: Whether to search recursively through subdirectories (default: true).
 - `--trim`: Whether to trim leading and trailing whitespace from each line in the file contents (default: true).
-- `--max-file-size <size>`: Maximum file size in KB to process. Files larger than this will be skipped. Set to 0 for unlimited size (default: 10240).
+- `--max-file-size <size>`: Maximum file size in KB to process. Files larger than this will be skipped. Set to 0 for
+  unlimited size (default: 10240).
 - `--ignore-binary`: Whether to ignore binary files (default: true).
-- `--aggressive-minify`: Whether to aggressively minify .cs and .razor files, removing most whitespace including newlines (default: false).
+- `--aggressive-minify`: Whether to aggressively minify .cs and .razor files, removing most whitespace including
+  newlines (default: false).
 - `--include-metadata`: Whether to include file metadata in the output file (default: false).
 - `--condense`: Whether to apply line condensing to the output file (default: true).
 

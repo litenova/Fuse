@@ -1,4 +1,4 @@
-namespace Fuse.Cli;
+namespace Fuse.Core;
 
 public enum ProjectTemplate
 {

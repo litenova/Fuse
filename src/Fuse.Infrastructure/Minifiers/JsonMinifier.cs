@@ -2,7 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
-namespace Fuse.Cli.Minifiers;
+namespace Fuse.Infrastructure.Minifiers;
 
 public static class JsonMinifier
 {
@@ -12,7 +12,7 @@ public static class JsonMinifier
         try
         {
             // Remove comments first
-            string cleanContent = RemoveComments(content);
+            var cleanContent = RemoveComments(content);
 
             // Remove trailing commas
             cleanContent = RemoveTrailingCommas(cleanContent);
@@ -50,13 +50,13 @@ public static class JsonMinifier
         var result = content;
 
         // Remove all types of whitespace except within strings
-        bool inString = false;
-        bool escaped = false;
+        var inString = false;
+        var escaped = false;
         var sb = new StringBuilder();
 
-        for (int i = 0; i < result.Length; i++)
+        for (var i = 0; i < result.Length; i++)
         {
-            char c = result[i];
+            var c = result[i];
 
             if (c == '"' && !escaped)
             {

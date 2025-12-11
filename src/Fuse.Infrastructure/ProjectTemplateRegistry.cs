@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
+using Fuse.Core;
 
-namespace Fuse.Cli;
+namespace Fuse.Infrastructure;
 
 public static class ProjectTemplateRegistry
 {
@@ -219,9 +220,13 @@ public static class ProjectTemplateRegistry
         ExcludedPatterns = patternsBuilder.ToImmutable();
     }
 
-    public static (string[] Extensions, string[] ExcludeFolders) GetTemplate(ProjectTemplate template) =>
-        TemplateDefaults.TryGetValue(template, out var defaults) ? defaults : TemplateDefaults[ProjectTemplate.Generic];
+    public static (string[] Extensions, string[] ExcludeFolders) GetTemplate(ProjectTemplate template)
+    {
+        return TemplateDefaults.TryGetValue(template, out var defaults) ? defaults : TemplateDefaults[ProjectTemplate.Generic];
+    }
 
-    public static string[] GetExcludedPatterns(ProjectTemplate template) =>
-        ExcludedPatterns.TryGetValue(template, out var patterns) ? patterns : Array.Empty<string>();
+    public static string[] GetExcludedPatterns(ProjectTemplate template)
+    {
+        return ExcludedPatterns.TryGetValue(template, out var patterns) ? patterns : Array.Empty<string>();
+    }
 }

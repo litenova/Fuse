@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace Fuse.Cli.Minifiers;
+namespace Fuse.Infrastructure.Minifiers;
 
 public static class JavaScriptMinifier
 {

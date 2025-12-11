@@ -1,26 +1,31 @@
 using System.Collections.Concurrent;
 using System.Text;
 using System.Text.RegularExpressions;
-using Fuse.Cli.Minifiers;
+using Fuse.Core;
+using Fuse.Core.Abstractions;
+using Fuse.Infrastructure;
+using Fuse.Infrastructure.Minifiers;
 using Microsoft.Extensions.Logging;
 
 namespace Fuse.Cli;
 
-public sealed class FuseService
+public sealed class FuseService : IFuseService
 {
-    private readonly FuseOptions _options;
+    private readonly IFileSystem _fileSystem;
     private readonly ILogger<FuseService> _logger;
+    private FuseOptions _options = new();
 
-    public FuseService(FuseOptions options, ILogger<FuseService> logger)
+    public FuseService(ILogger<FuseService> logger, IFileSystem fileSystem)
     {
-        _options = options;
         _logger = logger;
+        _fileSystem = fileSystem;
     }
 
-    public async Task FuseAsync(CancellationToken cancellationToken = default)
+    public async Task FuseAsync(FuseOptions options, CancellationToken cancellationToken = default)
     {
+        _options = options;
         _logger.LogInformation("Processing directory: {SourceDirectory}", _options.SourceDirectory);
-        if (!Directory.Exists(_options.SourceDirectory))
+        if (!_fileSystem.DirectoryExists(_options.SourceDirectory))
         {
             _logger.LogError("The directory {SourceDirectory} does not exist.", _options.SourceDirectory);
             return;
@@ -30,7 +35,8 @@ public sealed class FuseService
 
         SetupOutputPath();
 
-        var outputFilePath = Path.Combine(_options.OutputDirectory, _options.OutputFileName ?? throw new InvalidOperationException("Output file name must be specified."));
+        var outputFileName = _options.OutputFileName ?? "fused.txt";
+        var outputFilePath = Path.Combine(_options.OutputDirectory, outputFileName);
         _logger.LogInformation("Output file: {OutputFilePath}", outputFilePath);
 
         try
@@ -39,7 +45,7 @@ public sealed class FuseService
             var files = GetFiles(extensions, excludeFolders, excludePatterns);
             _logger.LogInformation("Found {FileCount} files.", files.Count);
 
-            if (File.Exists(outputFilePath) && !_options.Overwrite)
+            if (_fileSystem.GetFileInfo(outputFilePath).Exists && !_options.Overwrite)
             {
                 _logger.LogWarning("The file {OutputFilePath} already exists and overwrite is set to false. Operation aborted.", outputFilePath);
                 return;
@@ -48,9 +54,7 @@ public sealed class FuseService
             await CombineFilesAsync(files, outputFilePath, cancellationToken);
 
             if (_options.UseCondensing)
-            {
                 ApplyLineCondensing(outputFilePath);
-            }
 
             _logger.LogInformation("Completed: Combined file content has been written to {OutputFilePath}", outputFilePath);
         }
@@ -65,7 +69,7 @@ public sealed class FuseService
         _logger.LogInformation("Combining files...");
         var processedFiles = 0;
 
-        await using var outputStream = new FileStream(outputFilePath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 4096, useAsync: true);
+        await using var outputStream = new FileStream(outputFilePath, FileMode.Create, FileAccess.Write, FileShare.None, 4096, true);
         await using var writer = new StreamWriter(outputStream, Encoding.UTF8);
 
         var contentQueue = new ConcurrentQueue<string?>();
@@ -73,19 +77,17 @@ public sealed class FuseService
 
         await Parallel.ForEachAsync(files, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount, CancellationToken = cancellationToken }, async (file, ct) =>
         {
-            var fileInfo = new FileInfo(file);
+            var fileInfo = _fileSystem.GetFileInfo(file);
             var sb = new StringBuilder();
-            var relativePath = Path.GetRelativePath(_options.SourceDirectory, file);
+            var relativePath = _fileSystem.GetRelativePath(_options.SourceDirectory, file);
 
             // Ultra-compact start marker
             sb.Append($"<|{relativePath}|>");
 
             if (_options.IncludeMetadata)
-            {
                 sb.Append($"[Size: {fileInfo.Length} bytes | Created: {fileInfo.CreationTime:yyyy-MM-dd HH:mm:ss} | Modified: {fileInfo.LastWriteTime:yyyy-MM-dd HH:mm:ss}] ");
-            }
 
-            var content = await File.ReadAllTextAsync(file, ct);
+            var content = await _fileSystem.ReadAllTextAsync(file, ct);
             var processedContent = _options.TrimContent ? TrimFileContent(content) : content;
 
             processedContent = ApplyNonInvasiveMinification(processedContent, Path.GetExtension(file).ToLowerInvariant());
@@ -111,14 +113,10 @@ public sealed class FuseService
     {
         if (_options.OutputDirectory == Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments) &&
             _options.SourceDirectory == Directory.GetCurrentDirectory())
-        {
-            _options.OutputDirectory = _options.OutputDirectory;
-        }
+            _options = _options with { OutputDirectory = _options.SourceDirectory };
 
-        if (!Directory.Exists(_options.OutputDirectory))
-        {
-            Directory.CreateDirectory(_options.OutputDirectory);
-        }
+        if (!_fileSystem.DirectoryExists(_options.OutputDirectory))
+            _fileSystem.CreateDirectory(_options.OutputDirectory);
     }
 
     private (string[] Extensions, string[] ExcludeDirectories, string[] ExcludePatterns) GetExtensionsAndExclusions()
@@ -133,19 +131,13 @@ public sealed class FuseService
             excludePatterns = ProjectTemplateRegistry.GetExcludedPatterns(_options.Template.Value);
 
             if (_options.ExcludeExtensions != null)
-            {
                 extensions = extensions.Except(_options.ExcludeExtensions).ToArray();
-            }
 
             if (_options.IncludeExtensions != null)
-            {
                 extensions = extensions.Concat(_options.IncludeExtensions).ToArray();
-            }
 
             if (_options.ExcludeDirectories != null)
-            {
                 excludeDirectories = excludeDirectories.Concat(_options.ExcludeDirectories).ToArray();
-            }
         }
 
         return (extensions, excludeDirectories, excludePatterns);
@@ -154,20 +146,20 @@ public sealed class FuseService
     private List<string> GetFiles(string[] extensions, string[] excludeFolders, string[] excludePatterns)
     {
         var option = _options.Recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
-        return Directory.EnumerateFiles(_options.SourceDirectory, "*.*", option)
+        return _fileSystem.EnumerateFiles(_options.SourceDirectory, "*.*", option)
             .AsParallel()
             .Where(file => extensions.Contains("*") || extensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase))
             .Where(file => !IsInExcludedFolder(file, excludeFolders))
             .Where(file => !_options.ExcludeTestProjects || !IsInTestProjectFolder(file))
             .Where(IsFileSizeAcceptable)
-            .Where(file => !_options.IgnoreBinaryFiles || !IsBinaryFile(file))
+            .Where(file => !_options.IgnoreBinaryFiles || !_fileSystem.IsBinaryFile(file))
             .Where(file => !IsExcludedByPattern(file, excludePatterns))
             .ToList();
     }
 
     private bool IsInExcludedFolder(string filePath, string[] excludeFolders)
     {
-        var relativePath = Path.GetRelativePath(_options.SourceDirectory, filePath);
+        var relativePath = _fileSystem.GetRelativePath(_options.SourceDirectory, filePath);
         var pathParts = relativePath.Split(Path.DirectorySeparatorChar);
         return pathParts.Any(part => excludeFolders.Contains(part, StringComparer.OrdinalIgnoreCase));
     }
@@ -207,7 +199,7 @@ public sealed class FuseService
             "StressTests"
         };
 
-        var relativePath = Path.GetRelativePath(_options.SourceDirectory, filePath);
+        var relativePath = _fileSystem.GetRelativePath(_options.SourceDirectory, filePath);
         var pathParts = relativePath.Split(Path.DirectorySeparatorChar);
 
         return pathParts.Any(part =>
@@ -218,46 +210,31 @@ public sealed class FuseService
     private bool IsFileSizeAcceptable(string filePath)
     {
         if (_options.MaxFileSizeKB == 0)
-        {
             return true;
-        }
 
-        var fileInfo = new FileInfo(filePath);
+        var fileInfo = _fileSystem.GetFileInfo(filePath);
         return fileInfo.Length <= _options.MaxFileSizeKB * 1024;
-    }
-
-    private bool IsBinaryFile(string filePath)
-    {
-        using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read);
-        using var reader = new BinaryReader(stream);
-        int bytesToRead = Math.Min(512, (int)stream.Length);
-        byte[] bytes = reader.ReadBytes(bytesToRead);
-        return bytes.Any(b => b == 0);
     }
 
     private bool IsExcludedByPattern(string filePath, string[] excludePatterns)
     {
         if (excludePatterns == null || excludePatterns.Length == 0)
-        {
             return false;
-        }
 
-        string fileName = Path.GetFileName(filePath);
+        var fileName = Path.GetFileName(filePath);
 
         foreach (var pattern in excludePatterns)
         {
             // Convert glob pattern to regex pattern
             // Escape special regex characters except * and ?
-            string regexPattern = "^" + Regex.Escape(pattern)
+            var regexPattern = "^" + Regex.Escape(pattern)
                 .Replace("\\*", ".*")
                 .Replace("\\?", ".") + "$";
 
             try
             {
                 if (Regex.IsMatch(fileName, regexPattern))
-                {
                     return true;
-                }
             }
             catch (RegexParseException ex)
             {
@@ -303,22 +280,18 @@ public sealed class FuseService
 
     private string ApplyCSharpMinification(string content, string fileExtension)
     {
-        bool isRazorFile = fileExtension == ".cshtml" || fileExtension == ".razor";
+        var isRazorFile = fileExtension == ".cshtml" || fileExtension == ".razor";
 
         // First, apply Razor-specific minification if it's a Razor file
         if (isRazorFile && _options.MinifyHtmlAndRazor)
-        {
             content = RazorMinifier.Minify(content);
-        }
 
         // Then apply C# minification
         content = CSharpMinifier.Minify(content, _options);
 
         // Finally, apply HTML minification for Razor files
         if (isRazorFile && _options.MinifyHtmlAndRazor)
-        {
             content = RazorMinifier.Minify(content);
-        }
 
         return content;
     }
@@ -338,9 +311,7 @@ public sealed class FuseService
             while (contentQueue.TryDequeue(out var content))
             {
                 if (content == null)
-                {
                     return; // End of processing
-                }
 
                 await writer.WriteAsync(content);
             }

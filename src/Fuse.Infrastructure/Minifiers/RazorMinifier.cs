@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace Fuse.Cli.Minifiers;
+namespace Fuse.Infrastructure.Minifiers;
 
 public static class RazorMinifier
 {
@@ -18,7 +18,7 @@ public static class RazorMinifier
 
         // Minimize HTML
         content = Regex.Replace(content, @">\s+<", "><");
-        content = Regex.Replace(content, @"(\S+)=&quot;([^&]*)&quot;", m => 
+        content = Regex.Replace(content, @"(\S+)=&quot;([^&]*)&quot;", m =>
             m.Groups[2].Value.Contains(' ') ? m.Value : $"{m.Groups[1].Value}={m.Groups[2].Value}");
 
         // Condense empty lines
