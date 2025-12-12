@@ -13,29 +13,23 @@ using TiktokenSharp;
 
 namespace Fuse.Cli;
 
-/// <summary>
-/// Implements the core logic for the Fuse tool, orchestrating file discovery,
-/// processing, minification, and combination.
-/// </summary>
 public sealed class FuseService : IFuseService
 {
     private readonly IAnsiConsole _console;
     private readonly IFileSystem _fileSystem;
+    private readonly TikToken _tokenizer;
     private long _totalTokenCount = 0;
     private FuseOptions _options = new();
 
-    /// <summary>
-    /// Initializes a new instance of the <see cref="FuseService"/> class.
-    /// </summary>
-    /// <param name="fileSystem">The file system abstraction.</param>
-    /// <param name="console">The ansi console for rich output.</param>
+    private sealed record FileProcessingInfo(string FullPath, string RelativePath, FileInfo Info);
+
     public FuseService(IFileSystem fileSystem, IAnsiConsole console)
     {
         _fileSystem = fileSystem;
         _console = console;
+        _tokenizer = TikToken.GetEncoding("cl100k_base");
     }
 
-    /// <inheritdoc />
     public async Task FuseAsync(FuseOptions options, CancellationToken cancellationToken = default)
     {
         _options = options;
@@ -54,12 +48,13 @@ public sealed class FuseService : IFuseService
 
         try
         {
-            List<string> files = [];
+            List<FileProcessingInfo> files = [];
             await _console.Status()
                 .Spinner(Spinner.Known.Dots)
-                .StartAsync("[yellow]Searching for files...[/]", async ctx =>
+                .StartAsync("[yellow]Searching for files...[/]", _ =>
                 {
                     files = GetFiles(extensions, excludeFolders, excludePatterns);
+                    return Task.CompletedTask;
                 });
 
             _console.MarkupLine($"Files Count: [green]{files.Count}[/]");
@@ -72,13 +67,6 @@ public sealed class FuseService : IFuseService
 
             await CombineFilesAsync(files, outputFilePath, cancellationToken);
 
-            if (_options.UseCondensing)
-            {
-                // This reads the file back, condenses it, and writes it out again.
-                ApplyLineCondensing(outputFilePath);
-            }
-
-            // Final Summary Output
             _console.MarkupLine($"[bold]Output File:[/] [underline blue]{outputFilePath}[/]");
             _console.MarkupLine($"[bold]Final Size:[/] {FormattingUtils.FormatFileSize(_fileSystem.GetFileInfo(outputFilePath).Length)}");
 
@@ -93,63 +81,57 @@ public sealed class FuseService : IFuseService
         }
     }
 
-    private void ApplyLineCondensing(string filePath)
+    private async Task CombineFilesAsync(List<FileProcessingInfo> files, string outputFilePath, CancellationToken cancellationToken)
     {
-        var lines = File.ReadAllLines(filePath);
-        var condensedLines = lines.Where(line => !string.IsNullOrWhiteSpace(line));
-        File.WriteAllLines(filePath, condensedLines);
-    }
-
-    private async Task CombineFilesAsync(List<string> files, string outputFilePath, CancellationToken cancellationToken)
-    {
-        _totalTokenCount = 0; // Reset token count for each run
+        _totalTokenCount = 0;
         var processedFiles = 0;
-
-        var tokenizer = await TikToken.GetEncodingAsync("cl100k_base");
         var localCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
         await using var outputStream = new FileStream(outputFilePath, FileMode.Create, FileAccess.Write, FileShare.None, 4096, true);
         await using var writer = new StreamWriter(outputStream, Encoding.UTF8);
 
         var contentQueue = new ConcurrentQueue<string?>();
-        var writingTask = WriteContentAsync(writer, contentQueue, cancellationToken);
+        var writingTask = WriteContentAsync(writer, contentQueue, localCts.Token);
 
-        await Parallel.ForEachAsync(files, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount, CancellationToken = cancellationToken }, async (file, ct) =>
+        await Parallel.ForEachAsync(files, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount, CancellationToken = localCts.Token }, async (fileInfo, ct) =>
         {
-            var fileInfo = _fileSystem.GetFileInfo(file);
             var sb = new StringBuilder();
-            var relativePath = _fileSystem.GetRelativePath(_options.SourceDirectory, file);
-
-            // Ultra-compact start marker
-            sb.Append($"<|{relativePath}|>");
+            sb.Append($"<|{fileInfo.RelativePath}|>");
 
             if (_options.IncludeMetadata)
-                sb.Append($"[Size: {fileInfo.Length} bytes | Created: {fileInfo.CreationTime:yyyy-MM-dd HH:mm:ss} | Modified: {fileInfo.LastWriteTime:yyyy-MM-dd HH:mm:ss}] ");
+            {
+                sb.Append($"[Size:{fileInfo.Info.Length}bytes | Modified:{fileInfo.Info.LastWriteTime:yyyy-MM-dd HH:mm:ss}]");
+            }
 
-            var content = await _fileSystem.ReadAllTextAsync(file, ct);
+            var content = await _fileSystem.ReadAllTextAsync(fileInfo.FullPath, ct);
+            var processedContent = content;
 
-            // Token counting logic
+            if (_options.TrimContent)
+            {
+                processedContent = Regex.Replace(processedContent, @"^[ \t]+|[ \t]+$", "", RegexOptions.Multiline);
+            }
+
+            if (_options.UseCondensing)
+            {
+                processedContent = Regex.Replace(processedContent, @"^\s*$\r?\n", string.Empty, RegexOptions.Multiline);
+            }
+
+            processedContent = ApplyNonInvasiveMinification(processedContent, fileInfo.Info.Extension.ToLowerInvariant());
+
             if (_options.ShowTokenCount || _options.MaxTokens.HasValue)
             {
-                var tokenCount = tokenizer.Encode(content).Count;
+                var tokenCount = _tokenizer.Encode(processedContent).Count;
                 var currentTotal = Interlocked.Add(ref _totalTokenCount, tokenCount);
 
                 if (_options.MaxTokens.HasValue && currentTotal > _options.MaxTokens.Value)
                 {
-                    await localCts.CancelAsync(); // Stop the Parallel.ForEachAsync
+                    await localCts.CancelAsync();
                     return;
                 }
             }
 
-            var processedContent = _options.TrimContent ? TrimFileContent(content) : content;
-
-            processedContent = ApplyNonInvasiveMinification(processedContent, Path.GetExtension(file).ToLowerInvariant());
-
             sb.Append(processedContent);
-
-            // Ultra-compact start marker
-            sb.Append($"<|{relativePath}|>");
-
+            sb.Append($"<|{fileInfo.RelativePath}|>");
             contentQueue.Enqueue(sb.ToString());
             Interlocked.Increment(ref processedFiles);
         });
@@ -162,10 +144,14 @@ public sealed class FuseService : IFuseService
     {
         if (_options.OutputDirectory == Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments) &&
             _options.SourceDirectory == Directory.GetCurrentDirectory())
+        {
             _options = _options with { OutputDirectory = _options.SourceDirectory };
+        }
 
         if (!_fileSystem.DirectoryExists(_options.OutputDirectory))
+        {
             _fileSystem.CreateDirectory(_options.OutputDirectory);
+        }
     }
 
     private (string[] Extensions, string[] ExcludeDirectories, string[] ExcludePatterns) GetExtensionsAndExclusions()
@@ -181,10 +167,8 @@ public sealed class FuseService : IFuseService
 
             if (_options.ExcludeExtensions != null)
                 extensions = extensions.Except(_options.ExcludeExtensions).ToArray();
-
             if (_options.IncludeExtensions != null)
                 extensions = extensions.Concat(_options.IncludeExtensions).ToArray();
-
             if (_options.ExcludeDirectories != null)
                 excludeDirectories = excludeDirectories.Concat(_options.ExcludeDirectories).ToArray();
         }
@@ -192,109 +176,53 @@ public sealed class FuseService : IFuseService
         return (extensions, excludeDirectories, excludePatterns);
     }
 
-    private List<string> GetFiles(string[] extensions, string[] excludeFolders, string[] excludePatterns)
+    private List<FileProcessingInfo> GetFiles(string[] extensions, string[] excludeFolders, string[] excludePatterns)
     {
         var option = _options.Recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
+        var gitignorePatterns = _options.RespectGitIgnore ? new GitIgnoreParser(_fileSystem).Parse(_options.SourceDirectory) : [];
 
-        // Create and use the GitIgnoreParser
-        List<Glob> gitignorePatterns = [];
-        if (_options.RespectGitIgnore)
-        {
-            var gitIgnoreParser = new GitIgnoreParser(_fileSystem);
-            gitignorePatterns = gitIgnoreParser.Parse(_options.SourceDirectory);
-        }
-
-        return _fileSystem.EnumerateFiles(_options.SourceDirectory, "*.*", option).AsParallel()
-            .Where(file => extensions.Contains("*") || extensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase))
-            .Where(file => !IsInExcludedFolder(file, excludeFolders))
-            .Where(file => !_options.ExcludeTestProjects || !IsInTestProjectFolder(file))
-            .Where(IsFileSizeAcceptable)
-            .Where(file => !_options.IgnoreBinaryFiles || !_fileSystem.IsBinaryFile(file))
-            .Where(file => !IsExcludedByPattern(file, excludePatterns))
-
-            // Add the new filter for gitignore
-            .Where(file => !gitignorePatterns.Any(p => p.IsMatch(file.Replace(Path.DirectorySeparatorChar, '/'))))
+        return _fileSystem.EnumerateFiles(_options.SourceDirectory, "*.*", option)
+            .AsParallel()
+            .Select(file => new { Path = file, Info = _fileSystem.GetFileInfo(file), RelativePath = _fileSystem.GetRelativePath(_options.SourceDirectory, file) })
+            .Where(f => !gitignorePatterns.Any(p => p.IsMatch(f.Path.Replace(Path.DirectorySeparatorChar, '/'))))
+            .Where(f => extensions.Contains("*") || extensions.Contains(Path.GetExtension(f.Path), StringComparer.OrdinalIgnoreCase))
+            .Where(f => !IsInExcludedFolder(f.RelativePath, excludeFolders))
+            .Where(f => !_options.ExcludeTestProjects || !IsInTestProjectFolder(f.RelativePath))
+            .Where(f => _options.MaxFileSizeKB == 0 || f.Info.Length <= _options.MaxFileSizeKB * 1024)
+            .Where(f => !_options.IgnoreBinaryFiles || !_fileSystem.IsBinaryFile(f.Path))
+            .Where(f => !IsExcludedByPattern(f.Path, excludePatterns))
+            .Select(f => new FileProcessingInfo(f.Path, f.RelativePath, f.Info))
             .ToList();
     }
 
-    private bool IsInExcludedFolder(string filePath, string[] excludeFolders)
+    private bool IsInExcludedFolder(string relativePath, string[] excludeFolders)
     {
-        var relativePath = _fileSystem.GetRelativePath(_options.SourceDirectory, filePath);
         var pathParts = relativePath.Split(Path.DirectorySeparatorChar);
         return pathParts.Any(part => excludeFolders.Contains(part, StringComparer.OrdinalIgnoreCase));
     }
 
-    private bool IsInTestProjectFolder(string filePath)
+    private bool IsInTestProjectFolder(string relativePath)
     {
-        // Common test project directory suffixes
         var testProjectSuffixes = new[]
         {
-            "UnitTests",
-            "Tests",
-            "IntegrationTests",
-            "Specs",
-            "Test",
-            "Testing",
-            "FunctionalTests",
-            "AcceptanceTests",
-            "EndToEndTests",
-            "E2ETests",
-            "TestProject",
-            "TestSuite",
-            "TestLib",
-            "TestData",
-            "TestFramework",
-            "TestUtils",
-            "TestUtilities",
-            "TestHelper",
-            "TestHelpers",
-            "TestCommon",
-            "TestShared",
-            "TestSupport",
-            "Benchmark",
-            "Benchmarks",
-            "Performance",
-            "PerformanceTests",
-            "LoadTests",
-            "StressTests"
+            "UnitTests", "Tests", "IntegrationTests", "Specs", "Test", "Testing", "FunctionalTests", "AcceptanceTests", "EndToEndTests", "E2ETests", "TestProject", "TestSuite", "TestLib", "TestData",
+            "TestFramework", "TestUtils", "TestUtilities", "TestHelper", "TestHelpers", "TestCommon", "TestShared", "TestSupport", "Benchmark", "Benchmarks", "Performance", "PerformanceTests",
+            "LoadTests", "StressTests"
         };
-
-        var relativePath = _fileSystem.GetRelativePath(_options.SourceDirectory, filePath);
         var pathParts = relativePath.Split(Path.DirectorySeparatorChar);
-
-        return pathParts.Any(part =>
-            testProjectSuffixes.Any(suffix =>
-                part.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)));
-    }
-
-    private bool IsFileSizeAcceptable(string filePath)
-    {
-        if (_options.MaxFileSizeKB == 0)
-            return true;
-
-        var fileInfo = _fileSystem.GetFileInfo(filePath);
-        return fileInfo.Length <= _options.MaxFileSizeKB * 1024;
+        return pathParts.Any(part => testProjectSuffixes.Any(suffix => part.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)));
     }
 
     private bool IsExcludedByPattern(string filePath, string[] excludePatterns)
     {
-        if (excludePatterns == null || excludePatterns.Length == 0)
-            return false;
-
+        if (excludePatterns == null || excludePatterns.Length == 0) return false;
         var fileName = Path.GetFileName(filePath);
-
         foreach (var pattern in excludePatterns)
         {
-            // Convert glob pattern to regex pattern
-            // Escape special regex characters except * and ?
-            var regexPattern = "^" + Regex.Escape(pattern)
-                .Replace("\\*", ".*")
-                .Replace("\\?", ".") + "$";
-
+            var regexPattern = "^" + Regex.Escape(pattern).Replace("\\*", ".*").Replace("\\?", ".") + "$";
             try
             {
-                if (Regex.IsMatch(fileName, regexPattern))
-                    return true;
+                if (Regex.IsMatch(fileName, regexPattern)) return true;
             }
             catch (RegexParseException ex)
             {
@@ -313,46 +241,33 @@ public sealed class FuseService : IFuseService
             case ".cshtml":
             case ".razor":
                 return ApplyCSharpMinification(content, fileExtension);
-            case ".html":
-                return HtmlMinifier.Minify(content);
-            case ".css":
-                return CssMinifier.Minify(content);
-            case ".scss":
-                return ScssMinifier.Minify(content);
-            case ".js":
-                return JavaScriptMinifier.Minify(content);
-            case ".json":
-                return JsonMinifier.Minify(content);
+            case ".html": return HtmlMinifier.Minify(content);
+            case ".css": return CssMinifier.Minify(content);
+            case ".scss": return ScssMinifier.Minify(content);
+            case ".js": return JavaScriptMinifier.Minify(content);
+            case ".json": return JsonMinifier.Minify(content);
             case ".xml":
             case ".targets":
             case ".props":
             case ".csproj":
                 return XmlMinifier.Minify(content);
-            case ".md":
-                return MarkdownMinifier.Minify(content);
+            case ".md": return MarkdownMinifier.Minify(content);
             case ".yml":
             case ".yaml":
                 return YamlMinifier.Minify(content);
-            default:
-                return content;
+            default: return content;
         }
     }
 
     private string ApplyCSharpMinification(string content, string fileExtension)
     {
         var isRazorFile = fileExtension == ".cshtml" || fileExtension == ".razor";
-
-        // First, apply Razor-specific minification if it's a Razor file
         if (isRazorFile && _options.MinifyHtmlAndRazor)
+        {
             content = RazorMinifier.Minify(content);
+        }
 
-        // Then apply C# minification
         content = CSharpMinifier.Minify(content, _options);
-
-        // Finally, apply HTML minification for Razor files
-        if (isRazorFile && _options.MinifyHtmlAndRazor)
-            content = RazorMinifier.Minify(content);
-
         return content;
     }
 
@@ -362,20 +277,11 @@ public sealed class FuseService : IFuseService
         {
             while (contentQueue.TryDequeue(out var content))
             {
-                if (content == null)
-                    return; // End of processing
-
+                if (content == null) return;
                 await writer.WriteAsync(content);
             }
 
-            await Task.Delay(10, cancellationToken); // Small delay to reduce CPU usage
+            await Task.Delay(10, cancellationToken);
         }
-    }
-
-    private string TrimFileContent(string content)
-    {
-        var lines = content.Split('\n');
-        var trimmedLines = lines.Select(line => line.Trim()).Where(line => !string.IsNullOrWhiteSpace(line));
-        return string.Join('\n', trimmedLines);
     }
 }

@@ -15,19 +15,27 @@ public static class CSharpMinifier
 
         // Remove comments
         if (options.RemoveCSharpComments)
+        {
             content = RemoveComments(content);
+        }
 
         // Remove region directives
         if (options.RemoveCSharpRegions)
+        {
             content = RemoveRegionDirectives(content);
+        }
 
         // Remove namespace declarations
         if (options.RemoveCSharpNamespaceDeclarations)
+        {
             content = RemoveNamespaceDeclarations(content);
+        }
 
         // Remove all using statements
         if (options.RemoveCSharpUsings)
+        {
             content = RemoveAllUsings(content);
+        }
 
         // Condense empty lines
         content = RemoveNewlines(content);
@@ -100,9 +108,13 @@ public static class CSharpMinifier
 
         foreach (var line in lines)
             if (line.TrimStart().StartsWith("using ") && line.TrimEnd().EndsWith(";"))
+            {
                 usings.Add(line.Trim());
+            }
             else
+            {
                 nonUsingLines.Add(line);
+            }
 
         var usedUsings = usings.Where(u => nonUsingLines.Any(l => l.Contains(u.Split()[1].TrimEnd(';')))).ToList();
         usedUsings.AddRange(usings.Where(u => u.Contains("System") || u.Contains("Microsoft"))); // Keep common namespaces

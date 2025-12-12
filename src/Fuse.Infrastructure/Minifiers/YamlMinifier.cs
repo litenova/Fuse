@@ -19,7 +19,9 @@ public static class YamlMinifier
         foreach (var line in lines)
         {
             if (string.IsNullOrWhiteSpace(line))
+            {
                 continue;
+            }
 
             // Preserve leading whitespace for YAML indentation, but trim trailing whitespace
             var trimmedLine = line.TrimEnd();

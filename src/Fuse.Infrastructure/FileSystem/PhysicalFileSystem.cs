@@ -44,12 +44,17 @@ public sealed class PhysicalFileSystem : IFileSystem
         var buffer = new char[charsToCheck];
         var bytesRead = streamReader.ReadBlock(buffer, 0, charsToCheck);
 
-        if (bytesRead == 0) return false;
+        if (bytesRead == 0)
+        {
+            return false;
+        }
 
         var nonAsciiChars = 0;
         for (var i = 0; i < bytesRead; i++)
             if (buffer[i] > 255)
+            {
                 nonAsciiChars++;
+            }
 
         return (double)nonAsciiChars / bytesRead > threshold;
     }

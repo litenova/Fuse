@@ -9,7 +9,10 @@ internal static class FormattingUtils
     /// <returns>A formatted string.</returns>
     public static string FormatFileSize(long bytes)
     {
-        if (bytes < 0) return "0 KB (0.00 MB)";
+        if (bytes < 0)
+        {
+            return "0 KB (0.00 MB)";
+        }
 
         double kb = bytes / 1024.0;
         double mb = kb / 1024.0;
