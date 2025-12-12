@@ -47,4 +47,10 @@ public sealed record FuseOptions
     public bool ApplyAllOptions { get; init; }
 
     public bool ExcludeTestProjects { get; init; } = false;
+
+    public bool RespectGitIgnore { get; init; } = true;
+
+    public int? MaxTokens { get; init; }
+
+    public bool ShowTokenCount { get; init; }
 }

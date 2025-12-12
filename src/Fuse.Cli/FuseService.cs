@@ -1,73 +1,112 @@
 using System.Collections.Concurrent;
 using System.Text;
 using System.Text.RegularExpressions;
+using DotNet.Globbing;
+using Fuse.Cli.Utils;
 using Fuse.Core;
 using Fuse.Core.Abstractions;
 using Fuse.Infrastructure;
+using Fuse.Infrastructure.Git;
 using Fuse.Infrastructure.Minifiers;
-using Microsoft.Extensions.Logging;
+using Spectre.Console;
+using TiktokenSharp;
 
 namespace Fuse.Cli;
 
+/// <summary>
+/// Implements the core logic for the Fuse tool, orchestrating file discovery,
+/// processing, minification, and combination.
+/// </summary>
 public sealed class FuseService : IFuseService
 {
+    private readonly IAnsiConsole _console;
     private readonly IFileSystem _fileSystem;
-    private readonly ILogger<FuseService> _logger;
+    private long _totalTokenCount = 0;
     private FuseOptions _options = new();
 
-    public FuseService(ILogger<FuseService> logger, IFileSystem fileSystem)
+    /// <summary>
+    /// Initializes a new instance of the <see cref="FuseService"/> class.
+    /// </summary>
+    /// <param name="fileSystem">The file system abstraction.</param>
+    /// <param name="console">The ansi console for rich output.</param>
+    public FuseService(IFileSystem fileSystem, IAnsiConsole console)
     {
-        _logger = logger;
         _fileSystem = fileSystem;
+        _console = console;
     }
 
+    /// <inheritdoc />
     public async Task FuseAsync(FuseOptions options, CancellationToken cancellationToken = default)
     {
         _options = options;
-        _logger.LogInformation("Processing directory: {SourceDirectory}", _options.SourceDirectory);
+
         if (!_fileSystem.DirectoryExists(_options.SourceDirectory))
         {
-            _logger.LogError("The directory {SourceDirectory} does not exist.", _options.SourceDirectory);
+            _console.MarkupLine($"[red]Error:[/] The directory [yellow]'{_options.SourceDirectory}'[/] does not exist.");
             return;
         }
 
         var (extensions, excludeFolders, excludePatterns) = GetExtensionsAndExclusions();
-
         SetupOutputPath();
 
-        var outputFileName = _options.OutputFileName ?? "fused.txt";
+        var outputFileName = _options.OutputFileName ?? $"fused_{Path.GetFileName(_options.SourceDirectory)}_{DateTime.Now:yyyyMMddHHmmss}.txt";
         var outputFilePath = Path.Combine(_options.OutputDirectory, outputFileName);
-        _logger.LogInformation("Output file: {OutputFilePath}", outputFilePath);
 
         try
         {
-            _logger.LogInformation("Searching for files...");
-            var files = GetFiles(extensions, excludeFolders, excludePatterns);
-            _logger.LogInformation("Found {FileCount} files.", files.Count);
+            List<string> files = [];
+            await _console.Status()
+                .Spinner(Spinner.Known.Dots)
+                .StartAsync("[yellow]Searching for files...[/]", async ctx =>
+                {
+                    files = GetFiles(extensions, excludeFolders, excludePatterns);
+                });
+
+            _console.MarkupLine($"Files Count: [green]{files.Count}[/]");
 
             if (_fileSystem.GetFileInfo(outputFilePath).Exists && !_options.Overwrite)
             {
-                _logger.LogWarning("The file {OutputFilePath} already exists and overwrite is set to false. Operation aborted.", outputFilePath);
+                _console.MarkupLine($"[yellow]Warning:[/] The file [underline]'{outputFilePath}'[/] already exists and overwrite is disabled. Operation aborted.");
                 return;
             }
 
             await CombineFilesAsync(files, outputFilePath, cancellationToken);
 
             if (_options.UseCondensing)
+            {
+                // This reads the file back, condenses it, and writes it out again.
                 ApplyLineCondensing(outputFilePath);
+            }
 
-            _logger.LogInformation("Completed: Combined file content has been written to {OutputFilePath}", outputFilePath);
+            // Final Summary Output
+            _console.MarkupLine($"[bold]Output File:[/] [underline blue]{outputFilePath}[/]");
+            _console.MarkupLine($"[bold]Final Size:[/] {FormattingUtils.FormatFileSize(_fileSystem.GetFileInfo(outputFilePath).Length)}");
+
+            if (_options.ShowTokenCount)
+            {
+                _console.MarkupLine($"[bold]Est. Tokens:[/] [yellow]{_totalTokenCount:N0}[/]");
+            }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "An error occurred while processing files.");
+            _console.WriteException(ex, ExceptionFormats.ShortenPaths);
         }
+    }
+
+    private void ApplyLineCondensing(string filePath)
+    {
+        var lines = File.ReadAllLines(filePath);
+        var condensedLines = lines.Where(line => !string.IsNullOrWhiteSpace(line));
+        File.WriteAllLines(filePath, condensedLines);
     }
 
     private async Task CombineFilesAsync(List<string> files, string outputFilePath, CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Combining files...");
+        _totalTokenCount = 0; // Reset token count for each run
         var processedFiles = 0;
+
+        var tokenizer = await TikToken.GetEncodingAsync("cl100k_base");
+        var localCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
         await using var outputStream = new FileStream(outputFilePath, FileMode.Create, FileAccess.Write, FileShare.None, 4096, true);
         await using var writer = new StreamWriter(outputStream, Encoding.UTF8);
@@ -88,6 +127,20 @@ public sealed class FuseService : IFuseService
                 sb.Append($"[Size: {fileInfo.Length} bytes | Created: {fileInfo.CreationTime:yyyy-MM-dd HH:mm:ss} | Modified: {fileInfo.LastWriteTime:yyyy-MM-dd HH:mm:ss}] ");
 
             var content = await _fileSystem.ReadAllTextAsync(file, ct);
+
+            // Token counting logic
+            if (_options.ShowTokenCount || _options.MaxTokens.HasValue)
+            {
+                var tokenCount = tokenizer.Encode(content).Count;
+                var currentTotal = Interlocked.Add(ref _totalTokenCount, tokenCount);
+
+                if (_options.MaxTokens.HasValue && currentTotal > _options.MaxTokens.Value)
+                {
+                    await localCts.CancelAsync(); // Stop the Parallel.ForEachAsync
+                    return;
+                }
+            }
+
             var processedContent = _options.TrimContent ? TrimFileContent(content) : content;
 
             processedContent = ApplyNonInvasiveMinification(processedContent, Path.GetExtension(file).ToLowerInvariant());
@@ -99,14 +152,10 @@ public sealed class FuseService : IFuseService
 
             contentQueue.Enqueue(sb.ToString());
             Interlocked.Increment(ref processedFiles);
-
-            _logger.LogDebug($"Processed file: {relativePath}");
         });
 
         contentQueue.Enqueue(null);
         await writingTask;
-
-        _logger.LogInformation($"Processed {processedFiles} files.");
     }
 
     private void SetupOutputPath()
@@ -146,14 +195,25 @@ public sealed class FuseService : IFuseService
     private List<string> GetFiles(string[] extensions, string[] excludeFolders, string[] excludePatterns)
     {
         var option = _options.Recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
-        return _fileSystem.EnumerateFiles(_options.SourceDirectory, "*.*", option)
-            .AsParallel()
+
+        // Create and use the GitIgnoreParser
+        List<Glob> gitignorePatterns = [];
+        if (_options.RespectGitIgnore)
+        {
+            var gitIgnoreParser = new GitIgnoreParser(_fileSystem);
+            gitignorePatterns = gitIgnoreParser.Parse(_options.SourceDirectory);
+        }
+
+        return _fileSystem.EnumerateFiles(_options.SourceDirectory, "*.*", option).AsParallel()
             .Where(file => extensions.Contains("*") || extensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase))
             .Where(file => !IsInExcludedFolder(file, excludeFolders))
             .Where(file => !_options.ExcludeTestProjects || !IsInTestProjectFolder(file))
             .Where(IsFileSizeAcceptable)
             .Where(file => !_options.IgnoreBinaryFiles || !_fileSystem.IsBinaryFile(file))
             .Where(file => !IsExcludedByPattern(file, excludePatterns))
+
+            // Add the new filter for gitignore
+            .Where(file => !gitignorePatterns.Any(p => p.IsMatch(file.Replace(Path.DirectorySeparatorChar, '/'))))
             .ToList();
     }
 
@@ -238,7 +298,7 @@ public sealed class FuseService : IFuseService
             }
             catch (RegexParseException ex)
             {
-                _logger.LogWarning("Invalid regex pattern: {Pattern}. Error: {Error}", pattern, ex.Message);
+                _console.MarkupLine($"[red]Warning:[/] Invalid exclude pattern '[yellow]{pattern}[/]': {ex.Message}");
             }
         }
 
@@ -294,14 +354,6 @@ public sealed class FuseService : IFuseService
             content = RazorMinifier.Minify(content);
 
         return content;
-    }
-
-    private void ApplyLineCondensing(string filePath)
-    {
-        _logger.LogInformation("Applying line condensing...");
-        var lines = File.ReadAllLines(filePath);
-        var condensedLines = lines.Where(line => !string.IsNullOrWhiteSpace(line));
-        File.WriteAllLines(filePath, condensedLines);
     }
 
     private async Task WriteContentAsync(StreamWriter writer, ConcurrentQueue<string?> contentQueue, CancellationToken cancellationToken)
