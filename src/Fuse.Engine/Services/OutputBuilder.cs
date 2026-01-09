@@ -1,9 +1,9 @@
-// -----------------------------------------------------------------------
+//-----------------------------------------------------------------------
 // <copyright file="OutputBuilder.cs" company="Fuse">
-//     Copyright (c) Fuse. All rights reserved.
-//     Licensed under the MIT License. See LICENSE in the project root for license information.
+// Copyright (c) Fuse. All rights reserved.
+// Licensed under the MIT License. See LICENSE in the project root for license information.
 // </copyright>
-// -----------------------------------------------------------------------
+//-----------------------------------------------------------------------
 
 using System.Text;
 using Fuse.Core;
@@ -20,10 +20,10 @@ namespace Fuse.Engine.Services;
 /// This service is responsible for:
 /// </para>
 /// <list type="bullet">
-///     <item><description>Creating the output file with proper encoding</description></item>
-///     <item><description>Adding file markers and metadata</description></item>
-///     <item><description>Tracking and enforcing token limits</description></item>
-///     <item><description>Displaying progress and statistics</description></item>
+/// <item><description>Creating the output file with proper encoding</description></item>
+/// <item><description>Adding file markers and metadata</description></item>
+/// <item><description>Tracking and enforcing token limits</description></item>
+/// <item><description>Displaying progress and statistics</description></item>
 /// </list>
 /// <para>
 /// The output format uses special markers to delimit file content:
@@ -67,9 +67,28 @@ public sealed class OutputBuilder : IOutputBuilder
     /// </summary>
     public async Task BuildOutputAsync(List<FileProcessingInfo> files, FuseOptions options, CancellationToken cancellationToken)
     {
-        // Generate output file name if not specified
-        var outputFileName = options.OutputFileName ?? 
-            $"fused_{Path.GetFileName(options.SourceDirectory)}_{DateTime.Now:yyyyMMddHHmmss}.txt";
+        // Determine the final output file name
+        string outputFileName;
+
+        if (!string.IsNullOrWhiteSpace(options.OutputFileName))
+        {
+            // User provided a custom name
+            outputFileName = options.OutputFileName;
+
+            // Check if the provided name has an extension.
+            // If not, append .txt to ensure the file is easily readable.
+            // If the user provided an extension (e.g., .md, .json), we respect it.
+            if (!Path.HasExtension(outputFileName))
+            {
+                outputFileName += ".txt";
+            }
+        }
+        else
+        {
+            // Auto-generate name based on source directory and timestamp
+            // Format: fused_DirectoryName_YYYYMMDDHHMMSS.txt
+            outputFileName = $"fused_{Path.GetFileName(options.SourceDirectory)}_{DateTime.Now:yyyyMMddHHmmss}.txt";
+        }
 
         // Construct full output path
         var outputFilePath = Path.Combine(options.OutputDirectory, outputFileName);
@@ -88,14 +107,7 @@ public sealed class OutputBuilder : IOutputBuilder
         var localCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
         // Open output file stream with buffered writing
-        await using var outputStream = new FileStream(
-            outputFilePath,
-            FileMode.Create,
-            FileAccess.Write,
-            FileShare.None,
-            bufferSize: 4096,
-            useAsync: true);
-
+        await using var outputStream = new FileStream(outputFilePath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 4096, useAsync: true);
         await using var writer = new StreamWriter(outputStream, Encoding.UTF8);
 
         // Display progress bar during processing
@@ -104,14 +116,12 @@ public sealed class OutputBuilder : IOutputBuilder
                 new TaskDescriptionColumn(),
                 new ProgressBarColumn(),
                 new PercentageColumn(),
-                new SpinnerColumn())
+                new SpinnerColumn()
+            )
             .StartAsync(async ctx =>
             {
                 // Create progress task with total file count
-                var task = ctx.AddTask("[green]Fusing files[/]", new ProgressTaskSettings
-                {
-                    MaxValue = files.Count
-                });
+                var task = ctx.AddTask("[green]Fusing files[/]", new ProgressTaskSettings { MaxValue = files.Count });
 
                 // Process each file
                 foreach (var fileInfo in files)
@@ -132,8 +142,7 @@ public sealed class OutputBuilder : IOutputBuilder
                     }
 
                     // Process and add file content
-                    var processedContent = await _contentProcessor.ProcessContentAsync(
-                        fileInfo, options, localCts.Token);
+                    var processedContent = await _contentProcessor.ProcessContentAsync(fileInfo, options, localCts.Token);
                     sb.AppendLine(processedContent);
 
                     // Add closing file marker
@@ -163,12 +172,12 @@ public sealed class OutputBuilder : IOutputBuilder
             });
 
         // Display final statistics
-        _console.MarkupLine($"[bold]Output File:[/][underline blue]{outputFilePath}[/]");
-        _console.MarkupLine($"[bold]Final Size:[/][green]{new FileInfo(outputFilePath).Length:N0} bytes[/]");
+        _console.MarkupLine($"[bold]Output File:[/][underline blue] {outputFilePath}[/]");
+        _console.MarkupLine($"[bold]Final Size:[/][green] {new FileInfo(outputFilePath).Length:N0} bytes[/]");
 
         if (options.ShowTokenCount)
         {
-            _console.MarkupLine($"[bold]Est. Tokens:[/][yellow]{totalTokenCount:N0}[/]");
+            _console.MarkupLine($"[bold]Est. Tokens:[/][yellow] {totalTokenCount:N0}[/]");
         }
     }
 }

@@ -1,9 +1,9 @@
-// -----------------------------------------------------------------------
+//-----------------------------------------------------------------------
 // <copyright file="CommandBase.cs" company="Fuse">
-//     Copyright (c) Fuse. All rights reserved.
-//     Licensed under the MIT License. See LICENSE in the project root for license information.
+// Copyright (c) Fuse. All rights reserved.
+// Licensed under the MIT License. See LICENSE in the project root for license information.
 // </copyright>
-// -----------------------------------------------------------------------
+//-----------------------------------------------------------------------
 
 using DotMake.CommandLine;
 using Fuse.Engine;
@@ -19,10 +19,10 @@ namespace Fuse.Cli.Commands;
 /// This class provides common CLI options that are shared across all commands:
 /// </para>
 /// <list type="bullet">
-///     <item><description>Directory and output path settings</description></item>
-///     <item><description>File filtering options (size, binary, recursive)</description></item>
-///     <item><description>Content options (metadata, gitignore, tokens)</description></item>
-///     <item><description>Test project exclusion</description></item>
+/// <item><description>Directory and output path settings</description></item>
+/// <item><description>File filtering options (size, binary, recursive)</description></item>
+/// <item><description>Content options (metadata, gitignore, tokens)</description></item>
+/// <item><description>Test project exclusion</description></item>
 /// </list>
 /// <para>
 /// Derived command classes inherit these options and can add their own
@@ -76,7 +76,17 @@ public abstract class CommandBase
     /// Gets or sets the custom output file name.
     /// </summary>
     /// <value>The output file name without extension, or null for auto-generated name.</value>
-    [CliOption(Name = "name", Description = "Name of the output file (without extension).")]
+    /// <remarks>
+    /// <para>
+    /// This option is optional. If not provided, a filename will be generated based on the 
+    /// source directory name and the current timestamp.
+    /// </para>
+    /// <para>
+    /// If a name is provided without a file extension, .txt will be appended automatically
+    /// by the output builder.
+    /// </para>
+    /// </remarks>
+    [CliOption(Name = "name", Required = false, Description = "Name of the output file (without extension).")]
     public string? OutputFileName { get; set; }
 
     /// <summary>
@@ -167,13 +177,13 @@ public abstract class CommandBase
     /// </summary>
     /// <remarks>
     /// <para>
-    /// When specified, this overrides any template-based extension settings.
+    /// This option is optional. When specified, it overrides any template-based extension settings.
     /// </para>
     /// <para>
     /// Example: <c>--only-extensions .cs,.razor</c> will only process C# and Razor files.
     /// </para>
     /// </remarks>
-    [CliOption(Description = "Fuse ONLY the specified comma-separated file extensions, ignoring all template defaults.")]
+    [CliOption(Required = false, Description = "Fuse ONLY the specified comma-separated file extensions, ignoring all template defaults.")]
     public string[]? OnlyExtensions { get; set; }
 
     #endregion
