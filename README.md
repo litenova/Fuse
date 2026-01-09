@@ -1,123 +1,117 @@
+
 # Fuse
 
-Fuse is a flexible file combining tool for developers, designed to streamline the process of merging multiple files from
-a project directory into a single output file. It offers a wide range of customization options to suit various project
-types and developer preferences.
+**Fuse** is a powerful, developer-centric file combining tool designed to merge source code files into a single output file. It is optimized for preparing codebases for Large Language Models (LLMs), documentation, or code analysis.
 
-## Table of Contents
+## Features
 
-1. [Installation](#installation)
-2. [Usage](#usage)
-3. [Command-Line Options](#command-line-options)
-4. [Project Templates](#project-templates)
-5. [Features](#features)
-6. [Examples](#examples)
-7. [Contributing](#contributing)
-8. [License](#license)
+- **Smart Templates**: Pre-configured settings for .NET, Python, Java, JavaScript, and 20+ other languages.
+- **Intelligent Minification**: Reduces token count by removing comments and whitespace for C#, HTML, CSS, JSON, XML, and more.
+- **Git Aware**: Automatically respects `.gitignore` rules to exclude unwanted files.
+- **Token Counting**: Estimates GPT-4 tokens to help you stay within context limits.
+- **Safety First**: Detects and skips binary files automatically.
+- **Clean Output**: Generates a structured text file with clear file markers and optional metadata.
 
 ## Installation
 
-### Windows
+Fuse is built as a .NET Global Tool. You can install it easily on Windows, macOS, or Linux.
 
-1. Download the `install_fuse_win64.bat` script.
-2. Run the script with administrator privileges.
-3. The script will install Fuse to `C:\Program Files\FuseTool` and add it to your system PATH.
-4. Restart your command prompt to use the `fuse` command.
+### Prerequisites
+- [.NET SDK 8.0](https://dotnet.microsoft.com/download) or later.
 
-### Other Platforms
+### Local Installation (Development)
+To build and install the tool from the source code:
 
-For other platforms, you can build the project from source:
+**Windows:**
+Run the included script:
+```cmd
+install.bat
+```
 
-1. Ensure you have .NET SDK 8.0 or later installed.
-2. Clone the repository: `git clone https://github.com/your-repo/Fuse.git`
-3. Navigate to the project directory: `cd Fuse/src/Fuse.Cli`
-4. Build the project: `dotnet build -c Release`
-5. Run the tool: `dotnet run -- [options]`
+**macOS / Linux:**
+```bash
+chmod +x install.sh
+./install.sh
+```
+
+### Manual Installation
+If you prefer to run the commands manually:
+```bash
+# 1. Pack the tool
+dotnet pack src/Fuse.Cli/Fuse.Cli.csproj -c Release
+
+# 2. Install globally from local source
+dotnet tool install -g Fuse --add-source src/Fuse.Cli/nupkg
+```
 
 ## Usage
 
+Once installed, use the `fuse` command from any terminal.
+
+### Basic Syntax
+```bash
+fuse [command] [options]
 ```
-fuse [options]
-```
 
-## Command-Line Options
+### Commands
 
-- `--directory, -d <path>`: Path to the directory to process (required).
-- `--output, -o <path>`: Path to the output directory where the combined file will be saved (required).
-- `--template, -t <template>`: Project template to use (optional).
-- `--extensions, -e <list>`: Comma-separated list of file extensions to include in the processing (optional).
-- `--exclude, -x <list>`: Comma-separated list of directories to exclude from processing (optional).
-- `--name, -n <filename>`: Name of the output file without extension (optional).
-- `--overwrite, -w`: Whether to overwrite the output file if it already exists (default: true).
-- `--recursive, -r`: Whether to search recursively through subdirectories (default: true).
-- `--trim`: Whether to trim leading and trailing whitespace from each line in the file contents (default: true).
-- `--max-file-size <size>`: Maximum file size in KB to process. Files larger than this will be skipped. Set to 0 for
-  unlimited size (default: 10240).
-- `--ignore-binary`: Whether to ignore binary files (default: true).
-- `--aggressive-minify`: Whether to aggressively minify .cs and .razor files, removing most whitespace including
-  newlines (default: false).
-- `--include-metadata`: Whether to include file metadata in the output file (default: false).
-- `--condense`: Whether to apply line condensing to the output file (default: true).
+| Command | Description |
+|---------|-------------|
+| `fuse` | **Default.** Generic fusion. Uses standard text extensions if no template is specified. |
+| `fuse dotnet` | Optimized for .NET (C#, F#, Razor). Adds options to remove namespaces, usings, etc. |
+| `fuse wiki` | Optimized for Azure DevOps Wikis. Processes Markdown files only. |
 
-## Project Templates
+### Common Options
 
-Fuse supports various project templates to automatically set appropriate file extensions and exclusions:
-
-- Generic
-- DotNet
-- Java
-- Python
-- JavaScript
-- TypeScript
-- Ruby
-- Go
-- Rust
-- Php
-- CppCSharp
-- Swift
-- Kotlin
-- Scala
-- Dart
-- Lua
-- Perl
-- R
-- VbNet
-- Fsharp
-- Clojure
-- Haskell
-- Erlang
-- Elixir
-
-Use the `--template` option to specify a template.
+| Option | Alias | Description |
+|--------|-------|-------------|
+| `--directory` | `-d` | The root directory to process (default: current dir). |
+| `--output` | `-o` | Output directory (default: MyDocuments). |
+| `--name` | `-n` | Custom output filename. |
+| `--template` | `-t` | **(Root command only)** Specify a project template (e.g., `Python`, `Java`). |
+| `--only-extensions` | | **Override.** Process *only* these extensions, ignoring all defaults. |
+| `--max-tokens` | | Stop processing if the estimated token count exceeds this limit. |
+| `--include-metadata` | | Add file size and modification date to the output. |
+| `--exclude-test-projects` | | Automatically skip folders like `Tests`, `UnitTests`, etc. |
 
 ## Examples
 
-1. Basic usage:
-   ```
-   fuse --directory C:\MyProject --output C:\Output
-   ```
+**1. Fuse a .NET project for an LLM prompt:**
+```bash
+fuse dotnet -d ./src -o ./output --remove-csharp-comments --remove-csharp-usings
+```
 
-2. Using a project template:
-   ```
-   fuse -d C:\MyProject -o C:\Output -t DotNet
-   ```
+**2. Fuse a Python project, excluding tests:**
+```bash
+fuse -d ./my-app -t Python --exclude-test-projects
+```
 
-3. Custom file extensions:
-   ```
-   fuse -d C:\MyProject -o C:\Output -e .cs,.js,.html
-   ```
+**3. Fuse only specific files (Override):**
+```bash
+fuse -d ./frontend --only-extensions .ts,.tsx,.css
+```
 
-4. Exclude specific directories:
-   ```
-   fuse -d C:\MyProject -o C:\Output -x bin,obj,node_modules
-   ```
+**4. Create a documentation backup:**
+```bash
+fuse wiki -d ./docs --include-metadata
+```
 
-5. Aggressive minification:
-   ```
-   fuse -d C:\MyProject -o C:\Output --aggressive-minify
-   ```
+## Supported Templates
 
-6. Include metadata:
-   ```
-   fuse -d C:\MyProject -o C:\Output --include-metadata
-   ```
+Fuse includes built-in configurations for:
+- **Web**: JavaScript, TypeScript, HTML, CSS, PHP
+- **Backend**: .NET, Java, Python, Go, Rust, Ruby, Node.js
+- **Mobile**: Swift, Kotlin, Dart (Flutter)
+- **Functional**: F#, Haskell, Clojure, Elixir, Erlang, Scala
+- **Data/Scripting**: R, Lua, Perl, PowerShell, Shell
+- **Infrastructure**: Terraform, Kubernetes, Ansible
+
+## Contributing
+
+1. Clone the repository.
+2. Open `src/Fuse.sln` in your IDE.
+3. Make changes and run `install.bat` to test locally.
+
+## License
+
+Licensed under the MIT License.
