@@ -1,9 +1,9 @@
-// -----------------------------------------------------------------------
+//-----------------------------------------------------------------------
 // <copyright file="DotNetCommand.cs" company="Fuse">
-//     Copyright (c) Fuse. All rights reserved.
-//     Licensed under the MIT License. See LICENSE in the project root for license information.
+// Copyright (c) Fuse. All rights reserved.
+// Licensed under the MIT License. See LICENSE in the project root for license information.
 // </copyright>
-// -----------------------------------------------------------------------
+//-----------------------------------------------------------------------
 
 using DotMake.CommandLine;
 using Fuse.Core;
@@ -20,9 +20,9 @@ namespace Fuse.Cli.Commands;
 /// This command is invoked via <c>fuse dotnet</c> and provides .NET-specific options:
 /// </para>
 /// <list type="bullet">
-///     <item><description>C# namespace and using statement removal</description></item>
-///     <item><description>C# comment and region removal</description></item>
-///     <item><description>XML and HTML/Razor minification toggles</description></item>
+/// <item><description>C# namespace and using statement removal</description></item>
+/// <item><description>C# comment and region removal</description></item>
+/// <item><description>XML and HTML/Razor minification toggles</description></item>
 /// </list>
 /// <para>
 /// The command uses the <see cref="ProjectTemplate.DotNet"/> template which includes
@@ -34,6 +34,7 @@ namespace Fuse.Cli.Commands;
 /// <code>
 /// fuse dotnet --directory ./src --remove-csharp-comments
 /// fuse dotnet --only-extensions .cs,.razor --exclude-test-projects
+/// fuse dotnet --all
 /// </code>
 /// </example>
 [CliCommand(Name = "dotnet", Description = "Fuse a .NET project, including C#, F#, and web files.", Parent = typeof(FuseCliCommand))]
@@ -45,14 +46,18 @@ public sealed class DotNetCommand : CommandBase
     /// <remarks>
     /// Parameterless constructor required by DotMake.CommandLine source generator.
     /// </remarks>
-    public DotNetCommand() : base(null!, null!) { }
+    public DotNetCommand() : base(null!, null!)
+    {
+    }
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DotNetCommand"/> class.
     /// </summary>
     /// <param name="engine">The fusion engine instance.</param>
     /// <param name="console">The console for output.</param>
-    public DotNetCommand(FuseEngine engine, IAnsiConsole console) : base(engine, console) { }
+    public DotNetCommand(FuseEngine engine, IAnsiConsole console) : base(engine, console)
+    {
+    }
 
     #region .NET Specific Options
 
@@ -98,6 +103,13 @@ public sealed class DotNetCommand : CommandBase
     [CliOption(Description = "Minify HTML and Razor files.")]
     public bool MinifyHtmlAndRazor { get; set; } = true;
 
+    /// <summary>
+    /// Gets or sets a value indicating whether to apply all available optimizations.
+    /// </summary>
+    /// <value><c>true</c> to enable all optimizations; otherwise, <c>false</c>. Defaults to <c>false</c>.</value>
+    [CliOption(Description = "Apply all optimizations (remove namespaces, comments, regions, usings).")]
+    public bool All { get; set; } = false;
+
     #endregion
 
     /// <summary>
@@ -141,12 +153,14 @@ public sealed class DotNetCommand : CommandBase
             ExcludeTestProjects = ExcludeTestProjects,
 
             // .NET-specific options
-            RemoveCSharpNamespaceDeclarations = RemoveCSharpNamespaces,
-            RemoveCSharpComments = RemoveCSharpComments,
-            RemoveCSharpRegions = RemoveCSharpRegions,
-            RemoveCSharpUsings = RemoveCSharpUsings,
+            // If 'All' is true, it overrides the individual flags to true
+            RemoveCSharpNamespaceDeclarations = All || RemoveCSharpNamespaces,
+            RemoveCSharpComments = All || RemoveCSharpComments,
+            RemoveCSharpRegions = All || RemoveCSharpRegions,
+            RemoveCSharpUsings = All || RemoveCSharpUsings,
             MinifyXmlFiles = MinifyXmlFiles,
             MinifyHtmlAndRazor = MinifyHtmlAndRazor,
+            ApplyAllOptions = All,
 
             // Default content transformations
             UseCondensing = true,
