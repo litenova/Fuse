@@ -13,25 +13,29 @@ using Spectre.Console;
 namespace Fuse.Cli.Commands;
 
 /// <summary>
-/// CLI command for fusing Azure DevOps wiki repositories.
+///     CLI command for fusing Azure DevOps wiki repositories.
 /// </summary>
 /// <remarks>
-/// <para>
-/// This command is invoked via <c>fuse wiki</c> and is optimized for Azure DevOps wikis.
-/// It uses the <see cref="ProjectTemplate.AzureDevOpsWiki"/> template which:
-/// </para>
-/// <list type="bullet">
-///     <item><description>Includes only Markdown (.md) files</description></item>
-///     <item><description>Excludes .git and .attachments directories</description></item>
-/// </list>
-/// <para>
-/// This is useful for consolidating wiki documentation into a single file
-/// for analysis, backup, or feeding to LLMs.
-/// </para>
+///     <para>
+///         This command is invoked via <c>fuse wiki</c> and is optimized for Azure DevOps wikis.
+///         It uses the <see cref="ProjectTemplate.AzureDevOpsWiki" /> template which:
+///     </para>
+///     <list type="bullet">
+///         <item>
+///             <description>Includes only Markdown (.md) files</description>
+///         </item>
+///         <item>
+///             <description>Excludes .git and .attachments directories</description>
+///         </item>
+///     </list>
+///     <para>
+///         This is useful for consolidating wiki documentation into a single file
+///         for analysis, backup, or feeding to LLMs.
+///     </para>
 /// </remarks>
 /// <example>
-/// Usage examples:
-/// <code>
+///     Usage examples:
+///     <code>
 /// fuse wiki --directory ./wiki-repo
 /// fuse wiki --directory ./docs --include-metadata
 /// </code>
@@ -40,22 +44,26 @@ namespace Fuse.Cli.Commands;
 public sealed class AzureDevOpsWikiCommand : CommandBase
 {
     /// <summary>
-    /// Initializes a new instance of the <see cref="AzureDevOpsWikiCommand"/> class.
+    ///     Initializes a new instance of the <see cref="AzureDevOpsWikiCommand" /> class.
     /// </summary>
     /// <remarks>
-    /// Parameterless constructor required by DotMake.CommandLine source generator.
+    ///     Parameterless constructor required by DotMake.CommandLine source generator.
     /// </remarks>
-    public AzureDevOpsWikiCommand() : base(null!, null!) { }
+    public AzureDevOpsWikiCommand() : base(null!, null!)
+    {
+    }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="AzureDevOpsWikiCommand"/> class.
+    ///     Initializes a new instance of the <see cref="AzureDevOpsWikiCommand" /> class.
     /// </summary>
     /// <param name="engine">The fusion engine instance.</param>
     /// <param name="console">The console for output.</param>
-    public AzureDevOpsWikiCommand(FuseEngine engine, IAnsiConsole console) : base(engine, console) { }
+    public AzureDevOpsWikiCommand(FuseEngine engine, IAnsiConsole console) : base(engine, console)
+    {
+    }
 
     /// <summary>
-    /// Executes the wiki fusion command.
+    ///     Executes the wiki fusion command.
     /// </summary>
     /// <param name="context">The CLI context containing cancellation token and other metadata.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
@@ -96,7 +104,7 @@ public sealed class AzureDevOpsWikiCommand : CommandBase
 
             // Default content transformations
             UseCondensing = true,
-            TrimContent = true,
+            TrimContent = true
         };
 
         // Execute the fusion operation

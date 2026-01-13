@@ -11,31 +11,35 @@ using Fuse.Engine.FileSystem;
 namespace Fuse.Engine.Git;
 
 /// <summary>
-/// Parses .gitignore files and provides glob patterns for file exclusion.
+///     Parses .gitignore files and provides glob patterns for file exclusion.
 /// </summary>
 /// <remarks>
-/// <para>
-/// This parser walks up the directory tree from a starting directory, collecting
-/// all .gitignore patterns found along the way. Patterns from child directories
-/// take precedence over patterns from parent directories.
-/// </para>
-/// <para>
-/// The parser stops traversing when it reaches:
-/// </para>
-/// <list type="bullet">
-///     <item><description>The repository root (directory containing .git folder)</description></item>
-///     <item><description>The file system root</description></item>
-/// </list>
+///     <para>
+///         This parser walks up the directory tree from a starting directory, collecting
+///         all .gitignore patterns found along the way. Patterns from child directories
+///         take precedence over patterns from parent directories.
+///     </para>
+///     <para>
+///         The parser stops traversing when it reaches:
+///     </para>
+///     <list type="bullet">
+///         <item>
+///             <description>The repository root (directory containing .git folder)</description>
+///         </item>
+///         <item>
+///             <description>The file system root</description>
+///         </item>
+///     </list>
 /// </remarks>
 public class GitIgnoreParser
 {
     /// <summary>
-    /// The file system abstraction used for file operations.
+    ///     The file system abstraction used for file operations.
     /// </summary>
     private readonly PhysicalFileSystem _fileSystem;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="GitIgnoreParser"/> class.
+    ///     Initializes a new instance of the <see cref="GitIgnoreParser" /> class.
     /// </summary>
     /// <param name="fileSystem">The file system implementation to use for file operations.</param>
     public GitIgnoreParser(PhysicalFileSystem fileSystem)
@@ -44,26 +48,26 @@ public class GitIgnoreParser
     }
 
     /// <summary>
-    /// Parses all .gitignore files from the starting directory up to the repository root.
+    ///     Parses all .gitignore files from the starting directory up to the repository root.
     /// </summary>
     /// <param name="startDirectory">The directory to start parsing from.</param>
     /// <returns>
-    /// A list of compiled glob patterns that can be used to match files against
-    /// .gitignore rules. Returns an empty list if no .gitignore files are found.
+    ///     A list of compiled glob patterns that can be used to match files against
+    ///     .gitignore rules. Returns an empty list if no .gitignore files are found.
     /// </returns>
     /// <remarks>
-    /// <para>
-    /// Each pattern is converted to an absolute path glob pattern based on the
-    /// location of the .gitignore file that contained it. This allows patterns
-    /// to be matched against absolute file paths.
-    /// </para>
-    /// <para>
-    /// Lines starting with '#' are treated as comments and ignored.
-    /// Empty lines are also ignored.
-    /// </para>
+    ///     <para>
+    ///         Each pattern is converted to an absolute path glob pattern based on the
+    ///         location of the .gitignore file that contained it. This allows patterns
+    ///         to be matched against absolute file paths.
+    ///     </para>
+    ///     <para>
+    ///         Lines starting with '#' are treated as comments and ignored.
+    ///         Empty lines are also ignored.
+    ///     </para>
     /// </remarks>
     /// <example>
-    /// <code>
+    ///     <code>
     /// var parser = new GitIgnoreParser(fileSystem);
     /// var patterns = parser.Parse(@"C:\Projects\MyApp\src");
     /// 
@@ -89,7 +93,7 @@ public class GitIgnoreParser
                 foreach (var line in lines)
                 {
                     var trimmedLine = line.Trim();
-                    
+
                     // Skip empty lines and comments
                     if (!string.IsNullOrEmpty(trimmedLine) && !trimmedLine.StartsWith('#'))
                     {
@@ -97,7 +101,7 @@ public class GitIgnoreParser
                         // The pattern is relative to the .gitignore file's directory
                         var globPattern = Path.Combine(currentDirectory, trimmedLine)
                             .Replace(Path.DirectorySeparatorChar, '/');
-                        
+
                         patterns.Add(Glob.Parse(globPattern));
                     }
                 }
@@ -105,12 +109,10 @@ public class GitIgnoreParser
 
             // Move to the parent directory
             var parent = Directory.GetParent(currentDirectory);
-            
+
             // Stop if we've reached the repository root (contains .git) or filesystem root
             if (parent == null || parent.GetDirectories(".git").Length > 0)
-            {
                 break;
-            }
 
             currentDirectory = parent.FullName;
         }

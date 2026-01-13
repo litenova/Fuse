@@ -10,32 +10,40 @@ using System.Text.RegularExpressions;
 namespace Fuse.Minifiers;
 
 /// <summary>
-/// Provides minification functionality for XML files including .csproj, .props, and .targets.
+///     Provides minification functionality for XML files including .csproj, .props, and .targets.
 /// </summary>
 /// <remarks>
-/// <para>
-/// This minifier performs the following optimizations:
-/// </para>
-/// <list type="bullet">
-///     <item><description>Removal of XML comments (&lt;!-- ... --&gt;)</description></item>
-///     <item><description>Removal of whitespace between XML tags</description></item>
-///     <item><description>Condensation of whitespace within text content</description></item>
-///     <item><description>Preservation of significant whitespace in CDATA sections</description></item>
-/// </list>
-/// <para>
-/// Note: This minifier preserves the XML declaration and does not modify
-/// attribute values or element content beyond whitespace condensation.
-/// </para>
+///     <para>
+///         This minifier performs the following optimizations:
+///     </para>
+///     <list type="bullet">
+///         <item>
+///             <description>Removal of XML comments (&lt;!-- ... --&gt;)</description>
+///         </item>
+///         <item>
+///             <description>Removal of whitespace between XML tags</description>
+///         </item>
+///         <item>
+///             <description>Condensation of whitespace within text content</description>
+///         </item>
+///         <item>
+///             <description>Preservation of significant whitespace in CDATA sections</description>
+///         </item>
+///     </list>
+///     <para>
+///         Note: This minifier preserves the XML declaration and does not modify
+///         attribute values or element content beyond whitespace condensation.
+///     </para>
 /// </remarks>
 public static class XmlMinifier
 {
     /// <summary>
-    /// Minifies XML content by removing comments and unnecessary whitespace.
+    ///     Minifies XML content by removing comments and unnecessary whitespace.
     /// </summary>
     /// <param name="content">The XML content to minify.</param>
     /// <returns>The minified XML content.</returns>
     /// <example>
-    /// <code>
+    ///     <code>
     /// string xml = @"
     /// &lt;!-- Project configuration --&gt;
     /// &lt;Project&gt;

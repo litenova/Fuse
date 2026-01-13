@@ -11,41 +11,47 @@ using Fuse.Core;
 namespace Fuse.Engine;
 
 /// <summary>
-/// Provides a registry of project template configurations for different project types.
+///     Provides a registry of project template configurations for different project types.
 /// </summary>
 /// <remarks>
-/// <para>
-/// This static class maintains immutable dictionaries of template defaults including:
-/// </para>
-/// <list type="bullet">
-///     <item><description>File extensions to include for each template type</description></item>
-///     <item><description>Directories to exclude from scanning</description></item>
-///     <item><description>File patterns to exclude (e.g., generated files)</description></item>
-/// </list>
-/// <para>
-/// Templates are initialized statically and are thread-safe for concurrent access.
-/// </para>
+///     <para>
+///         This static class maintains immutable dictionaries of template defaults including:
+///     </para>
+///     <list type="bullet">
+///         <item>
+///             <description>File extensions to include for each template type</description>
+///         </item>
+///         <item>
+///             <description>Directories to exclude from scanning</description>
+///         </item>
+///         <item>
+///             <description>File patterns to exclude (e.g., generated files)</description>
+///         </item>
+///     </list>
+///     <para>
+///         Templates are initialized statically and are thread-safe for concurrent access.
+///     </para>
 /// </remarks>
 public static class ProjectTemplateRegistry
 {
     /// <summary>
-    /// Stores the default extensions and excluded folders for each template.
+    ///     Stores the default extensions and excluded folders for each template.
     /// </summary>
     private static readonly ImmutableDictionary<ProjectTemplate, (string[] Extensions, string[] ExcludeFolders)> TemplateDefaults;
 
     /// <summary>
-    /// Stores the excluded file patterns for each template.
+    ///     Stores the excluded file patterns for each template.
     /// </summary>
     private static readonly ImmutableDictionary<ProjectTemplate, string[]> ExcludedPatterns;
 
     /// <summary>
-    /// Initializes the static template registry with all predefined templates.
+    ///     Initializes the static template registry with all predefined templates.
     /// </summary>
     static ProjectTemplateRegistry()
     {
         // Builder for template defaults (extensions and excluded folders)
         var builder = ImmutableDictionary.CreateBuilder<ProjectTemplate, (string[] Extensions, string[] ExcludeFolders)>();
-        
+
         // Builder for excluded file patterns
         var patternsBuilder = ImmutableDictionary.CreateBuilder<ProjectTemplate, string[]>();
 
@@ -60,9 +66,9 @@ public static class ProjectTemplateRegistry
         // Comprehensive template for C#, F#, VB.NET, and ASP.NET projects
         builder[ProjectTemplate.DotNet] = (
             [
-                ".cs", ".xaml", ".cshtml", ".csproj", ".config", ".json", ".xml", ".resx", 
-                ".razor", ".md", ".txt", ".props", ".targets", ".yml", ".yaml", ".scriban", 
-                ".bat", ".sh", ".ps1", ".cmd", ".nuspec", ".scss", ".css", ".html", ".htm", 
+                ".cs", ".xaml", ".cshtml", ".csproj", ".config", ".json", ".xml", ".resx",
+                ".razor", ".md", ".txt", ".props", ".targets", ".yml", ".yaml", ".scriban",
+                ".bat", ".sh", ".ps1", ".cmd", ".nuspec", ".scss", ".css", ".html", ".htm",
                 ".sql", ".feature"
             ],
             ["bin", "obj", ".vs", ".git", ".idea"]
@@ -281,8 +287,8 @@ public static class ProjectTemplateRegistry
         // ===== Azure DevOps Wiki Template =====
         // Specifically for Azure DevOps wiki repositories
         builder[ProjectTemplate.AzureDevOpsWiki] = (
-            [".md"],  // Wiki consists primarily of Markdown files
-            [".git", ".attachments"]  // Exclude git and attachments folder
+            [".md"],                 // Wiki consists primarily of Markdown files
+            [".git", ".attachments"] // Exclude git and attachments folder
         );
 
         // Build the immutable dictionaries
@@ -291,15 +297,15 @@ public static class ProjectTemplateRegistry
     }
 
     /// <summary>
-    /// Gets the template configuration for the specified project template.
+    ///     Gets the template configuration for the specified project template.
     /// </summary>
     /// <param name="template">The project template to retrieve configuration for.</param>
     /// <returns>
-    /// A tuple containing the file extensions to include and directories to exclude.
-    /// Returns the Generic template configuration if the specified template is not found.
+    ///     A tuple containing the file extensions to include and directories to exclude.
+    ///     Returns the Generic template configuration if the specified template is not found.
     /// </returns>
     /// <example>
-    /// <code>
+    ///     <code>
     /// var (extensions, excludeFolders) = ProjectTemplateRegistry.GetTemplate(ProjectTemplate.DotNet);
     /// // extensions: [".cs", ".csproj", ".json", ...]
     /// // excludeFolders: ["bin", "obj", ".vs", ".git", ".idea"]
@@ -307,29 +313,29 @@ public static class ProjectTemplateRegistry
     /// </example>
     public static (string[] Extensions, string[] ExcludeFolders) GetTemplate(ProjectTemplate template)
     {
-        return TemplateDefaults.TryGetValue(template, out var defaults) 
-            ? defaults 
+        return TemplateDefaults.TryGetValue(template, out var defaults)
+            ? defaults
             : TemplateDefaults[ProjectTemplate.Generic];
     }
 
     /// <summary>
-    /// Gets the excluded file patterns for the specified project template.
+    ///     Gets the excluded file patterns for the specified project template.
     /// </summary>
     /// <param name="template">The project template to retrieve patterns for.</param>
     /// <returns>
-    /// An array of glob patterns that should be excluded from processing.
-    /// Returns an empty array if the template has no specific exclusion patterns.
+    ///     An array of glob patterns that should be excluded from processing.
+    ///     Returns an empty array if the template has no specific exclusion patterns.
     /// </returns>
     /// <example>
-    /// <code>
+    ///     <code>
     /// var patterns = ProjectTemplateRegistry.GetExcludedPatterns(ProjectTemplate.DotNet);
     /// // patterns: ["*.g.cs", "*.Designer.cs", ...]
     /// </code>
     /// </example>
     public static string[] GetExcludedPatterns(ProjectTemplate template)
     {
-        return ExcludedPatterns.TryGetValue(template, out var patterns) 
-            ? patterns 
+        return ExcludedPatterns.TryGetValue(template, out var patterns)
+            ? patterns
             : [];
     }
 }

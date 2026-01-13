@@ -12,47 +12,55 @@ using Spectre.Console;
 namespace Fuse.Engine;
 
 /// <summary>
-/// The main orchestrator for file fusion operations.
+///     The main orchestrator for file fusion operations.
 /// </summary>
 /// <remarks>
-/// <para>
-/// This class serves as the central coordinator that:
-/// </para>
-/// <list type="bullet">
-///     <item><description>Receives fusion options from CLI commands</description></item>
-///     <item><description>Delegates configuration resolution to <see cref="IConfigurationResolver"/></description></item>
-///     <item><description>Delegates file collection to <see cref="IFileCollector"/></description></item>
-///     <item><description>Delegates output generation to <see cref="IOutputBuilder"/></description></item>
-/// </list>
-/// <para>
-/// Following the Single Responsibility Principle, this class only handles
-/// orchestration and error handling, delegating actual work to specialized services.
-/// </para>
+///     <para>
+///         This class serves as the central coordinator that:
+///     </para>
+///     <list type="bullet">
+///         <item>
+///             <description>Receives fusion options from CLI commands</description>
+///         </item>
+///         <item>
+///             <description>Delegates configuration resolution to <see cref="IConfigurationResolver" /></description>
+///         </item>
+///         <item>
+///             <description>Delegates file collection to <see cref="IFileCollector" /></description>
+///         </item>
+///         <item>
+///             <description>Delegates output generation to <see cref="IOutputBuilder" /></description>
+///         </item>
+///     </list>
+///     <para>
+///         Following the Single Responsibility Principle, this class only handles
+///         orchestration and error handling, delegating actual work to specialized services.
+///     </para>
 /// </remarks>
 public sealed class FuseEngine
 {
     /// <summary>
-    /// The console interface for displaying status and output.
-    /// </summary>
-    private readonly IAnsiConsole _console;
-
-    /// <summary>
-    /// The service responsible for resolving configuration options.
+    ///     The service responsible for resolving configuration options.
     /// </summary>
     private readonly IConfigurationResolver _configResolver;
 
     /// <summary>
-    /// The service responsible for collecting files to process.
+    ///     The console interface for displaying status and output.
+    /// </summary>
+    private readonly IAnsiConsole _console;
+
+    /// <summary>
+    ///     The service responsible for collecting files to process.
     /// </summary>
     private readonly IFileCollector _fileCollector;
 
     /// <summary>
-    /// The service responsible for building the output file.
+    ///     The service responsible for building the output file.
     /// </summary>
     private readonly IOutputBuilder _outputBuilder;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="FuseEngine"/> class.
+    ///     Initializes a new instance of the <see cref="FuseEngine" /> class.
     /// </summary>
     /// <param name="console">The console for output display.</param>
     /// <param name="configResolver">The configuration resolver service.</param>
@@ -71,27 +79,33 @@ public sealed class FuseEngine
     }
 
     /// <summary>
-    /// Executes the file fusion operation with the specified options.
+    ///     Executes the file fusion operation with the specified options.
     /// </summary>
     /// <param name="options">The options controlling the fusion operation.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>A task representing the asynchronous fusion operation.</returns>
     /// <remarks>
-    /// <para>
-    /// The fusion process consists of three main steps:
-    /// </para>
-    /// <list type="number">
-    ///     <item><description>Resolve configuration by merging user options with template defaults</description></item>
-    ///     <item><description>Collect files matching the resolved configuration</description></item>
-    ///     <item><description>Build the output file with processed content</description></item>
-    /// </list>
-    /// <para>
-    /// Progress and status information is displayed throughout the operation.
-    /// Any exceptions are caught and displayed to the user.
-    /// </para>
+    ///     <para>
+    ///         The fusion process consists of three main steps:
+    ///     </para>
+    ///     <list type="number">
+    ///         <item>
+    ///             <description>Resolve configuration by merging user options with template defaults</description>
+    ///         </item>
+    ///         <item>
+    ///             <description>Collect files matching the resolved configuration</description>
+    ///         </item>
+    ///         <item>
+    ///             <description>Build the output file with processed content</description>
+    ///         </item>
+    ///     </list>
+    ///     <para>
+    ///         Progress and status information is displayed throughout the operation.
+    ///         Any exceptions are caught and displayed to the user.
+    ///     </para>
     /// </remarks>
     /// <example>
-    /// <code>
+    ///     <code>
     /// var options = new FuseOptions
     /// {
     ///     SourceDirectory = @"C:\Projects\MyApp",

@@ -10,32 +10,40 @@ using System.Text.RegularExpressions;
 namespace Fuse.Minifiers;
 
 /// <summary>
-/// Provides minification functionality for Razor (.cshtml, .razor) files.
+///     Provides minification functionality for Razor (.cshtml, .razor) files.
 /// </summary>
 /// <remarks>
-/// <para>
-/// This minifier handles the hybrid nature of Razor files which contain:
-/// </para>
-/// <list type="bullet">
-///     <item><description>HTML markup</description></item>
-///     <item><description>C# code blocks (@{ ... })</description></item>
-///     <item><description>Razor expressions (@expression or @(expression))</description></item>
-///     <item><description>HTML and C# comments</description></item>
-/// </list>
-/// <para>
-/// The minifier optimizes all aspects while preserving the functional relationship
-/// between the C# code and HTML output.
-/// </para>
+///     <para>
+///         This minifier handles the hybrid nature of Razor files which contain:
+///     </para>
+///     <list type="bullet">
+///         <item>
+///             <description>HTML markup</description>
+///         </item>
+///         <item>
+///             <description>C# code blocks (@{ ... })</description>
+///         </item>
+///         <item>
+///             <description>Razor expressions (@expression or @(expression))</description>
+///         </item>
+///         <item>
+///             <description>HTML and C# comments</description>
+///         </item>
+///     </list>
+///     <para>
+///         The minifier optimizes all aspects while preserving the functional relationship
+///         between the C# code and HTML output.
+///     </para>
 /// </remarks>
 public static class RazorMinifier
 {
     /// <summary>
-    /// Minifies Razor content by removing comments and optimizing syntax.
+    ///     Minifies Razor content by removing comments and optimizing syntax.
     /// </summary>
     /// <param name="content">The Razor content to minify.</param>
     /// <returns>The minified Razor content.</returns>
     /// <example>
-    /// <code>
+    ///     <code>
     /// string razor = @"
     /// &lt;!-- Page header --&gt;
     /// @{

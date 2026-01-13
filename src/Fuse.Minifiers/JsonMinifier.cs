@@ -10,27 +10,27 @@ using System.Text.RegularExpressions;
 namespace Fuse.Minifiers;
 
 /// <summary>
-/// Provides minification functionality for JSON (JavaScript Object Notation) files.
+///     Provides minification functionality for JSON (JavaScript Object Notation) files.
 /// </summary>
 /// <remarks>
-/// <para>
-/// This minifier removes all unnecessary whitespace from JSON content while
-/// preserving the data structure. The output is valid, compact JSON.
-/// </para>
-/// <para>
-/// Note: This minifier does not validate JSON syntax. Invalid JSON will be
-/// processed but may produce incorrect output.
-/// </para>
+///     <para>
+///         This minifier removes all unnecessary whitespace from JSON content while
+///         preserving the data structure. The output is valid, compact JSON.
+///     </para>
+///     <para>
+///         Note: This minifier does not validate JSON syntax. Invalid JSON will be
+///         processed but may produce incorrect output.
+///     </para>
 /// </remarks>
 public static class JsonMinifier
 {
     /// <summary>
-    /// Minifies JSON content by removing unnecessary whitespace.
+    ///     Minifies JSON content by removing unnecessary whitespace.
     /// </summary>
     /// <param name="content">The JSON content to minify.</param>
     /// <returns>The minified JSON content.</returns>
     /// <example>
-    /// <code>
+    ///     <code>
     /// string json = @"{
     ///     ""name"": ""John"",
     ///     ""age"": 30

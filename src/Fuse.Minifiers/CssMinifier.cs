@@ -10,28 +10,36 @@ using System.Text.RegularExpressions;
 namespace Fuse.Minifiers;
 
 /// <summary>
-/// Provides minification functionality for CSS (Cascading Style Sheets) files.
+///     Provides minification functionality for CSS (Cascading Style Sheets) files.
 /// </summary>
 /// <remarks>
-/// <para>
-/// This minifier performs the following optimizations:
-/// </para>
-/// <list type="bullet">
-///     <item><description>Removal of CSS comments (/* ... */)</description></item>
-///     <item><description>Removal of unnecessary whitespace around selectors and properties</description></item>
-///     <item><description>Condensation of multiple spaces</description></item>
-///     <item><description>Removal of whitespace around special characters ({, }, :, ;)</description></item>
-/// </list>
+///     <para>
+///         This minifier performs the following optimizations:
+///     </para>
+///     <list type="bullet">
+///         <item>
+///             <description>Removal of CSS comments (/* ... */)</description>
+///         </item>
+///         <item>
+///             <description>Removal of unnecessary whitespace around selectors and properties</description>
+///         </item>
+///         <item>
+///             <description>Condensation of multiple spaces</description>
+///         </item>
+///         <item>
+///             <description>Removal of whitespace around special characters ({, }, :, ;)</description>
+///         </item>
+///     </list>
 /// </remarks>
 public static class CssMinifier
 {
     /// <summary>
-    /// Minifies CSS content by removing comments and unnecessary whitespace.
+    ///     Minifies CSS content by removing comments and unnecessary whitespace.
     /// </summary>
     /// <param name="content">The CSS content to minify.</param>
     /// <returns>The minified CSS content.</returns>
     /// <example>
-    /// <code>
+    ///     <code>
     /// string css = @"
     /// /* Main container styles */
     /// .container {

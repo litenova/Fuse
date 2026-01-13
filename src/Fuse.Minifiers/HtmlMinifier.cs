@@ -10,32 +10,40 @@ using System.Text.RegularExpressions;
 namespace Fuse.Minifiers;
 
 /// <summary>
-/// Provides minification functionality for HTML (HyperText Markup Language) files.
+///     Provides minification functionality for HTML (HyperText Markup Language) files.
 /// </summary>
 /// <remarks>
-/// <para>
-/// This minifier performs the following optimizations on HTML content:
-/// </para>
-/// <list type="bullet">
-///     <item><description>Removal of HTML comments (&lt;!-- ... --&gt;)</description></item>
-///     <item><description>Removal of whitespace between HTML tags</description></item>
-///     <item><description>Removal of unnecessary quotes around simple attribute values</description></item>
-///     <item><description>Condensation of multiple consecutive spaces</description></item>
-/// </list>
-/// <para>
-/// Note: This is a lightweight minifier. For production use, consider more sophisticated
-/// solutions that handle edge cases like &lt;pre&gt; and &lt;script&gt; tags.
-/// </para>
+///     <para>
+///         This minifier performs the following optimizations on HTML content:
+///     </para>
+///     <list type="bullet">
+///         <item>
+///             <description>Removal of HTML comments (&lt;!-- ... --&gt;)</description>
+///         </item>
+///         <item>
+///             <description>Removal of whitespace between HTML tags</description>
+///         </item>
+///         <item>
+///             <description>Removal of unnecessary quotes around simple attribute values</description>
+///         </item>
+///         <item>
+///             <description>Condensation of multiple consecutive spaces</description>
+///         </item>
+///     </list>
+///     <para>
+///         Note: This is a lightweight minifier. For production use, consider more sophisticated
+///         solutions that handle edge cases like &lt;pre&gt; and &lt;script&gt; tags.
+///     </para>
 /// </remarks>
 public static class HtmlMinifier
 {
     /// <summary>
-    /// Minifies HTML content by removing comments and unnecessary whitespace.
+    ///     Minifies HTML content by removing comments and unnecessary whitespace.
     /// </summary>
     /// <param name="content">The HTML content to minify.</param>
     /// <returns>The minified HTML content.</returns>
     /// <example>
-    /// <code>
+    ///     <code>
     /// string html = @"
     ///     &lt;!-- Header section --&gt;
     ///     &lt;div class=""container""&gt;
@@ -65,13 +73,11 @@ public static class HtmlMinifier
             // Only remove quotes if the value contains no special characters
             var attrName = m.Groups[1].Value;
             var attrValue = m.Groups[2].Value;
-            
+
             // Keep quotes for values with special characters that require quoting
             if (Regex.IsMatch(attrValue, @"[<>&'""]"))
-            {
                 return m.Value;
-            }
-            
+
             return $"{attrName}={attrValue}";
         });
 

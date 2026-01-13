@@ -13,42 +13,50 @@ using TiktokenSharp;
 namespace Fuse.Engine.Services;
 
 /// <summary>
-/// Builds the final fused output file from processed content.
+///     Builds the final fused output file from processed content.
 /// </summary>
 /// <remarks>
-/// <para>
-/// This service is responsible for:
-/// </para>
-/// <list type="bullet">
-/// <item><description>Creating the output file with proper encoding</description></item>
-/// <item><description>Adding file markers and metadata</description></item>
-/// <item><description>Tracking and enforcing token limits</description></item>
-/// <item><description>Displaying progress and statistics</description></item>
-/// </list>
-/// <para>
-/// The output format uses special markers to delimit file content:
-/// <c>&lt;|path/to/file|&gt;</c>
-/// </para>
+///     <para>
+///         This service is responsible for:
+///     </para>
+///     <list type="bullet">
+///         <item>
+///             <description>Creating the output file with proper encoding</description>
+///         </item>
+///         <item>
+///             <description>Adding file markers and metadata</description>
+///         </item>
+///         <item>
+///             <description>Tracking and enforcing token limits</description>
+///         </item>
+///         <item>
+///             <description>Displaying progress and statistics</description>
+///         </item>
+///     </list>
+///     <para>
+///         The output format uses special markers to delimit file content:
+///         <c>&lt;|path/to/file|&gt;</c>
+///     </para>
 /// </remarks>
 public sealed class OutputBuilder : IOutputBuilder
 {
     /// <summary>
-    /// The console interface for progress display and output.
+    ///     The console interface for progress display and output.
     /// </summary>
     private readonly IAnsiConsole _console;
 
     /// <summary>
-    /// The content processor for transforming file content.
+    ///     The content processor for transforming file content.
     /// </summary>
     private readonly IContentProcessor _contentProcessor;
 
     /// <summary>
-    /// The tokenizer for GPT token counting (uses cl100k_base encoding).
+    ///     The tokenizer for GPT token counting (uses cl100k_base encoding).
     /// </summary>
     private readonly TikToken _tokenizer;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="OutputBuilder"/> class.
+    ///     Initializes a new instance of the <see cref="OutputBuilder" /> class.
     /// </summary>
     /// <param name="console">The console for output and progress display.</param>
     /// <param name="contentProcessor">The content processor for file transformations.</param>
@@ -63,7 +71,7 @@ public sealed class OutputBuilder : IOutputBuilder
 
     /// <inheritdoc />
     /// <summary>
-    /// Builds the fused output file with progress display and token tracking.
+    ///     Builds the fused output file with progress display and token tracking.
     /// </summary>
     public async Task BuildOutputAsync(List<FileProcessingInfo> files, FuseOptions options, CancellationToken cancellationToken)
     {
@@ -79,9 +87,7 @@ public sealed class OutputBuilder : IOutputBuilder
             // If not, append .txt to ensure the file is easily readable.
             // If the user provided an extension (e.g., .md, .json), we respect it.
             if (!Path.HasExtension(outputFileName))
-            {
                 outputFileName += ".txt";
-            }
         }
         else
         {
@@ -107,7 +113,7 @@ public sealed class OutputBuilder : IOutputBuilder
         var localCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
         // Open output file stream with buffered writing
-        await using var outputStream = new FileStream(outputFilePath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 4096, useAsync: true);
+        await using var outputStream = new FileStream(outputFilePath, FileMode.Create, FileAccess.Write, FileShare.None, 4096, true);
         await using var writer = new StreamWriter(outputStream, Encoding.UTF8);
 
         // Display progress bar during processing
@@ -137,9 +143,7 @@ public sealed class OutputBuilder : IOutputBuilder
 
                     // Add metadata if requested
                     if (options.IncludeMetadata)
-                    {
                         sb.AppendLine($"[Size: {fileInfo.Info.Length} bytes | Modified: {fileInfo.Info.LastWriteTime:yyyy-MM-dd HH:mm:ss}]");
-                    }
 
                     // Process and add file content
                     var processedContent = await _contentProcessor.ProcessContentAsync(fileInfo, options, localCts.Token);
@@ -176,8 +180,6 @@ public sealed class OutputBuilder : IOutputBuilder
         _console.MarkupLine($"[bold]Final Size:[/][green] {new FileInfo(outputFilePath).Length:N0} bytes[/]");
 
         if (options.ShowTokenCount)
-        {
             _console.MarkupLine($"[bold]Est. Tokens:[/][yellow] {totalTokenCount:N0}[/]");
-        }
     }
 }

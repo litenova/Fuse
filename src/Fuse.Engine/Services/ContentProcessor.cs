@@ -13,32 +13,40 @@ using Fuse.Minifiers;
 namespace Fuse.Engine.Services;
 
 /// <summary>
-/// Processes file content by applying transformations and minification.
+///     Processes file content by applying transformations and minification.
 /// </summary>
 /// <remarks>
-/// <para>
-/// This service handles the content transformation pipeline:
-/// </para>
-/// <list type="number">
-///     <item><description>Read raw content from file</description></item>
-///     <item><description>Apply whitespace trimming if enabled</description></item>
-///     <item><description>Apply line condensation if enabled</description></item>
-///     <item><description>Apply file-type-specific minification</description></item>
-/// </list>
-/// <para>
-/// Minification is applied based on file extension and respects the
-/// relevant options in <see cref="FuseOptions"/>.
-/// </para>
+///     <para>
+///         This service handles the content transformation pipeline:
+///     </para>
+///     <list type="number">
+///         <item>
+///             <description>Read raw content from file</description>
+///         </item>
+///         <item>
+///             <description>Apply whitespace trimming if enabled</description>
+///         </item>
+///         <item>
+///             <description>Apply line condensation if enabled</description>
+///         </item>
+///         <item>
+///             <description>Apply file-type-specific minification</description>
+///         </item>
+///     </list>
+///     <para>
+///         Minification is applied based on file extension and respects the
+///         relevant options in <see cref="FuseOptions" />.
+///     </para>
 /// </remarks>
 public sealed class ContentProcessor : IContentProcessor
 {
     /// <summary>
-    /// The file system abstraction for reading file content.
+    ///     The file system abstraction for reading file content.
     /// </summary>
     private readonly PhysicalFileSystem _fileSystem;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="ContentProcessor"/> class.
+    ///     Initializes a new instance of the <see cref="ContentProcessor" /> class.
     /// </summary>
     /// <param name="fileSystem">The file system implementation for reading files.</param>
     public ContentProcessor(PhysicalFileSystem fileSystem)
@@ -48,7 +56,7 @@ public sealed class ContentProcessor : IContentProcessor
 
     /// <inheritdoc />
     /// <summary>
-    /// Processes file content by reading, transforming, and minifying it.
+    ///     Processes file content by reading, transforming, and minifying it.
     /// </summary>
     public async Task<string> ProcessContentAsync(FileProcessingInfo fileInfo, FuseOptions options, CancellationToken cancellationToken)
     {
@@ -61,44 +69,60 @@ public sealed class ContentProcessor : IContentProcessor
         // Step 2: Apply whitespace trimming if enabled
         // This removes leading and trailing whitespace from each line
         if (options.TrimContent)
-        {
             content = Regex.Replace(content, @"^[\s\t]+|[\s\t]+$", "", RegexOptions.Multiline);
-        }
 
         // Step 3: Apply line condensation if enabled
         // This removes empty lines (lines containing only whitespace)
         if (options.UseCondensing)
-        {
             content = Regex.Replace(content, @"^\s*$\r?\n", string.Empty, RegexOptions.Multiline);
-        }
 
         // Step 4: Apply file-type-specific minification
         return ApplyMinification(content, fileExtension, options);
     }
 
     /// <summary>
-    /// Applies the appropriate minifier based on file extension.
+    ///     Applies the appropriate minifier based on file extension.
     /// </summary>
     /// <param name="content">The content to minify.</param>
     /// <param name="fileExtension">The file extension (including leading dot).</param>
     /// <param name="options">The fusion options controlling minification behavior.</param>
     /// <returns>The minified content.</returns>
     /// <remarks>
-    /// <para>
-    /// Supported file types and their minifiers:
-    /// </para>
-    /// <list type="bullet">
-    ///     <item><description>.cs - <see cref="CSharpMinifier"/></description></item>
-    ///     <item><description>.razor, .cshtml - <see cref="RazorMinifier"/> (when MinifyHtmlAndRazor is true)</description></item>
-    ///     <item><description>.html, .htm - <see cref="HtmlMinifier"/> (when MinifyHtmlAndRazor is true)</description></item>
-    ///     <item><description>.css - <see cref="CssMinifier"/></description></item>
-    ///     <item><description>.scss - <see cref="ScssMinifier"/></description></item>
-    ///     <item><description>.js - <see cref="JavaScriptMinifier"/></description></item>
-    ///     <item><description>.json - <see cref="JsonMinifier"/></description></item>
-    ///     <item><description>.xml, .targets, .props, .csproj - <see cref="XmlMinifier"/> (when MinifyXmlFiles is true)</description></item>
-    ///     <item><description>.md - <see cref="MarkdownMinifier"/></description></item>
-    ///     <item><description>.yml, .yaml - <see cref="YamlMinifier"/></description></item>
-    /// </list>
+    ///     <para>
+    ///         Supported file types and their minifiers:
+    ///     </para>
+    ///     <list type="bullet">
+    ///         <item>
+    ///             <description>.cs - <see cref="CSharpMinifier" /></description>
+    ///         </item>
+    ///         <item>
+    ///             <description>.razor, .cshtml - <see cref="RazorMinifier" /> (when MinifyHtmlAndRazor is true)</description>
+    ///         </item>
+    ///         <item>
+    ///             <description>.html, .htm - <see cref="HtmlMinifier" /> (when MinifyHtmlAndRazor is true)</description>
+    ///         </item>
+    ///         <item>
+    ///             <description>.css - <see cref="CssMinifier" /></description>
+    ///         </item>
+    ///         <item>
+    ///             <description>.scss - <see cref="ScssMinifier" /></description>
+    ///         </item>
+    ///         <item>
+    ///             <description>.js - <see cref="JavaScriptMinifier" /></description>
+    ///         </item>
+    ///         <item>
+    ///             <description>.json - <see cref="JsonMinifier" /></description>
+    ///         </item>
+    ///         <item>
+    ///             <description>.xml, .targets, .props, .csproj - <see cref="XmlMinifier" /> (when MinifyXmlFiles is true)</description>
+    ///         </item>
+    ///         <item>
+    ///             <description>.md - <see cref="MarkdownMinifier" /></description>
+    ///         </item>
+    ///         <item>
+    ///             <description>.yml, .yaml - <see cref="YamlMinifier" /></description>
+    ///         </item>
+    ///     </list>
     /// </remarks>
     private static string ApplyMinification(string content, string fileExtension, FuseOptions options)
     {

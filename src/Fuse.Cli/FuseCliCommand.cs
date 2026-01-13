@@ -14,24 +14,28 @@ using Spectre.Console;
 namespace Fuse.Cli;
 
 /// <summary>
-/// The root CLI command for the Fuse application.
+///     The root CLI command for the Fuse application.
 /// </summary>
 /// <remarks>
-/// <para>
-/// This command serves as both:
-/// </para>
-/// <list type="bullet">
-///     <item><description>The root command container for subcommands (dotnet, wiki, etc.)</description></item>
-///     <item><description>A standalone generic fusion command when invoked without subcommands</description></item>
-/// </list>
-/// <para>
-/// Global options defined here are available to all subcommands when they inherit from
-/// the shared <see cref="CommandBase"/> class.
-/// </para>
+///     <para>
+///         This command serves as both:
+///     </para>
+///     <list type="bullet">
+///         <item>
+///             <description>The root command container for subcommands (dotnet, wiki, etc.)</description>
+///         </item>
+///         <item>
+///             <description>A standalone generic fusion command when invoked without subcommands</description>
+///         </item>
+///     </list>
+///     <para>
+///         Global options defined here are available to all subcommands when they inherit from
+///         the shared <see cref="CommandBase" /> class.
+///     </para>
 /// </remarks>
 /// <example>
-/// Usage examples:
-/// <code>
+///     Usage examples:
+///     <code>
 /// fuse --directory ./src                           # Generic fusion
 /// fuse dotnet --directory ./src                    # .NET-specific fusion
 /// fuse wiki --directory ./docs                     # Wiki fusion
@@ -42,29 +46,33 @@ namespace Fuse.Cli;
 public class FuseCliCommand : CommandBase
 {
     /// <summary>
-    /// Initializes a new instance of the <see cref="FuseCliCommand"/> class.
+    ///     Initializes a new instance of the <see cref="FuseCliCommand" /> class.
     /// </summary>
     /// <remarks>
-    /// Parameterless constructor required by DotMake.CommandLine source generator.
+    ///     Parameterless constructor required by DotMake.CommandLine source generator.
     /// </remarks>
-    public FuseCliCommand() : base(null!, null!) { }
+    public FuseCliCommand() : base(null!, null!)
+    {
+    }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="FuseCliCommand"/> class.
+    ///     Initializes a new instance of the <see cref="FuseCliCommand" /> class.
     /// </summary>
     /// <param name="engine">The fusion engine instance.</param>
     /// <param name="console">The console for output.</param>
-    public FuseCliCommand(FuseEngine engine, IAnsiConsole console) : base(engine, console) { }
+    public FuseCliCommand(FuseEngine engine, IAnsiConsole console) : base(engine, console)
+    {
+    }
 
     /// <summary>
-    /// Executes the root fuse command for generic file fusion.
+    ///     Executes the root fuse command for generic file fusion.
     /// </summary>
     /// <param name="context">The CLI context containing cancellation token and other metadata.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     /// <remarks>
-    /// When invoked without a subcommand, this performs a generic fusion operation
-    /// without any template-specific settings. All files matching the criteria
-    /// will be included unless filtered by <c>--only-extensions</c>.
+    ///     When invoked without a subcommand, this performs a generic fusion operation
+    ///     without any template-specific settings. All files matching the criteria
+    ///     will be included unless filtered by <c>--only-extensions</c>.
     /// </remarks>
     public async Task RunAsync(CliContext context)
     {
@@ -103,7 +111,7 @@ public class FuseCliCommand : CommandBase
 
             // Default content transformations (sensible defaults)
             UseCondensing = true,
-            TrimContent = true,
+            TrimContent = true
         };
 
         // Execute the fusion operation

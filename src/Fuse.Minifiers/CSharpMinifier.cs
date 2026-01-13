@@ -11,34 +11,46 @@ using Fuse.Core;
 namespace Fuse.Minifiers;
 
 /// <summary>
-/// Provides minification functionality for C# source code files.
+///     Provides minification functionality for C# source code files.
 /// </summary>
 /// <remarks>
-/// <para>
-/// This minifier performs various optimizations on C# code including:
-/// </para>
-/// <list type="bullet">
-///     <item><description>Removal of single-line, multi-line, and XML documentation comments</description></item>
-///     <item><description>Removal of #region and #endregion directives</description></item>
-///     <item><description>Removal of namespace declarations (both file-scoped and classic)</description></item>
-///     <item><description>Removal of using statements</description></item>
-///     <item><description>Removal of debug code (Debug.WriteLine and #if DEBUG blocks)</description></item>
-///     <item><description>Whitespace optimization and condensation</description></item>
-/// </list>
-/// <para>
-/// The minification behavior is controlled through <see cref="FuseOptions"/>.
-/// </para>
+///     <para>
+///         This minifier performs various optimizations on C# code including:
+///     </para>
+///     <list type="bullet">
+///         <item>
+///             <description>Removal of single-line, multi-line, and XML documentation comments</description>
+///         </item>
+///         <item>
+///             <description>Removal of #region and #endregion directives</description>
+///         </item>
+///         <item>
+///             <description>Removal of namespace declarations (both file-scoped and classic)</description>
+///         </item>
+///         <item>
+///             <description>Removal of using statements</description>
+///         </item>
+///         <item>
+///             <description>Removal of debug code (Debug.WriteLine and #if DEBUG blocks)</description>
+///         </item>
+///         <item>
+///             <description>Whitespace optimization and condensation</description>
+///         </item>
+///     </list>
+///     <para>
+///         The minification behavior is controlled through <see cref="FuseOptions" />.
+///     </para>
 /// </remarks>
 public static class CSharpMinifier
 {
     /// <summary>
-    /// Minifies C# source code by removing unnecessary content and optimizing whitespace.
+    ///     Minifies C# source code by removing unnecessary content and optimizing whitespace.
     /// </summary>
     /// <param name="content">The C# source code content to minify.</param>
     /// <param name="options">The options that control which minification steps are applied.</param>
     /// <returns>The minified C# source code.</returns>
     /// <example>
-    /// <code>
+    ///     <code>
     /// var options = new FuseOptions { RemoveCSharpComments = true };
     /// var minified = CSharpMinifier.Minify(sourceCode, options);
     /// </code>
@@ -52,30 +64,22 @@ public static class CSharpMinifier
         // Step 2: Remove comments if the option is enabled
         // This removes single-line (//), multi-line (/* */), and XML documentation (///) comments
         if (options.RemoveCSharpComments)
-        {
             content = RemoveComments(content);
-        }
 
         // Step 3: Remove #region and #endregion directives if enabled
         // These are organizational markers that aren't needed in minified output
         if (options.RemoveCSharpRegions)
-        {
             content = RemoveRegionDirectives(content);
-        }
 
         // Step 4: Remove namespace declarations if enabled
         // Removes both file-scoped (namespace X;) and classic (namespace X { }) declarations
         if (options.RemoveCSharpNamespaceDeclarations)
-        {
             content = RemoveNamespaceDeclarations(content);
-        }
 
         // Step 5: Remove all using statements if enabled
         // This removes all 'using' directives at the top of the file
         if (options.RemoveCSharpUsings)
-        {
             content = RemoveAllUsings(content);
-        }
 
         // Step 6: Condense newlines and empty lines
         // Reduces multiple consecutive newlines to improve density
@@ -89,7 +93,7 @@ public static class CSharpMinifier
     }
 
     /// <summary>
-    /// Removes all using statements from the source code.
+    ///     Removes all using statements from the source code.
     /// </summary>
     /// <param name="code">The C# source code.</param>
     /// <returns>The code with all using statements removed.</returns>
@@ -101,13 +105,13 @@ public static class CSharpMinifier
     }
 
     /// <summary>
-    /// Removes namespace declarations from the source code.
+    ///     Removes namespace declarations from the source code.
     /// </summary>
     /// <param name="code">The C# source code.</param>
     /// <returns>The code with namespace declarations removed.</returns>
     /// <remarks>
-    /// Handles both file-scoped namespace declarations (C# 10+) like <c>namespace MyApp;</c>
-    /// and classic block-style declarations like <c>namespace MyApp { ... }</c>.
+    ///     Handles both file-scoped namespace declarations (C# 10+) like <c>namespace MyApp;</c>
+    ///     and classic block-style declarations like <c>namespace MyApp { ... }</c>.
     /// </remarks>
     private static string RemoveNamespaceDeclarations(string code)
     {
@@ -127,17 +131,23 @@ public static class CSharpMinifier
     }
 
     /// <summary>
-    /// Removes all types of comments from C# source code.
+    ///     Removes all types of comments from C# source code.
     /// </summary>
     /// <param name="content">The C# source code.</param>
     /// <returns>The code with all comments removed.</returns>
     /// <remarks>
-    /// Removes three types of comments:
-    /// <list type="bullet">
-    ///     <item><description>Single-line comments: <c>// comment</c></description></item>
-    ///     <item><description>Multi-line comments: <c>/* comment */</c></description></item>
-    ///     <item><description>XML documentation comments: <c>/// &lt;summary&gt;</c></description></item>
-    /// </list>
+    ///     Removes three types of comments:
+    ///     <list type="bullet">
+    ///         <item>
+    ///             <description>Single-line comments: <c>// comment</c></description>
+    ///         </item>
+    ///         <item>
+    ///             <description>Multi-line comments: <c>/* comment */</c></description>
+    ///         </item>
+    ///         <item>
+    ///             <description>XML documentation comments: <c>/// &lt;summary&gt;</c></description>
+    ///         </item>
+    ///     </list>
     /// </remarks>
     private static string RemoveComments(string content)
     {
@@ -157,7 +167,7 @@ public static class CSharpMinifier
     }
 
     /// <summary>
-    /// Removes #region and #endregion preprocessor directives.
+    ///     Removes #region and #endregion preprocessor directives.
     /// </summary>
     /// <param name="content">The C# source code.</param>
     /// <returns>The code with region directives removed.</returns>
@@ -174,16 +184,20 @@ public static class CSharpMinifier
     }
 
     /// <summary>
-    /// Removes debug-specific code including Debug.WriteLine calls and #if DEBUG blocks.
+    ///     Removes debug-specific code including Debug.WriteLine calls and #if DEBUG blocks.
     /// </summary>
     /// <param name="content">The C# source code.</param>
     /// <returns>The code with debug code removed.</returns>
     /// <remarks>
-    /// This method targets:
-    /// <list type="bullet">
-    ///     <item><description>Debug.WriteLine and similar Debug class method calls</description></item>
-    ///     <item><description>#if DEBUG ... #endif conditional compilation blocks</description></item>
-    /// </list>
+    ///     This method targets:
+    ///     <list type="bullet">
+    ///         <item>
+    ///             <description>Debug.WriteLine and similar Debug class method calls</description>
+    ///         </item>
+    ///         <item>
+    ///             <description>#if DEBUG ... #endif conditional compilation blocks</description>
+    ///         </item>
+    ///     </list>
     /// </remarks>
     private static string RemoveDebugCode(string content)
     {
@@ -199,7 +213,7 @@ public static class CSharpMinifier
     }
 
     /// <summary>
-    /// Condenses multiple consecutive newlines into single newlines.
+    ///     Condenses multiple consecutive newlines into single newlines.
     /// </summary>
     /// <param name="content">The C# source code.</param>
     /// <returns>The code with condensed newlines.</returns>
@@ -216,16 +230,20 @@ public static class CSharpMinifier
     }
 
     /// <summary>
-    /// Optimizes whitespace by removing unnecessary spaces.
+    ///     Optimizes whitespace by removing unnecessary spaces.
     /// </summary>
     /// <param name="content">The C# source code.</param>
     /// <returns>The code with optimized whitespace.</returns>
     /// <remarks>
-    /// This method removes:
-    /// <list type="bullet">
-    ///     <item><description>Trailing whitespace at end of lines</description></item>
-    ///     <item><description>Multiple consecutive spaces (condensed to single space)</description></item>
-    /// </list>
+    ///     This method removes:
+    ///     <list type="bullet">
+    ///         <item>
+    ///             <description>Trailing whitespace at end of lines</description>
+    ///         </item>
+    ///         <item>
+    ///             <description>Multiple consecutive spaces (condensed to single space)</description>
+    ///         </item>
+    ///     </list>
     /// </remarks>
     private static string OptimizeWhitespace(string content)
     {

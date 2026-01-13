@@ -10,33 +10,41 @@ using System.Text.RegularExpressions;
 namespace Fuse.Minifiers;
 
 /// <summary>
-/// Provides minification functionality for JavaScript files.
+///     Provides minification functionality for JavaScript files.
 /// </summary>
 /// <remarks>
-/// <para>
-/// This minifier performs the following optimizations:
-/// </para>
-/// <list type="bullet">
-///     <item><description>Removal of single-line comments (// ...)</description></item>
-///     <item><description>Removal of multi-line comments (/* ... */)</description></item>
-///     <item><description>Condensation of whitespace</description></item>
-///     <item><description>Removal of unnecessary newlines</description></item>
-/// </list>
-/// <para>
-/// Note: This is a basic minifier. For production JavaScript, consider using
-/// specialized tools like Terser or UglifyJS that can perform advanced optimizations
-/// like variable renaming and dead code elimination.
-/// </para>
+///     <para>
+///         This minifier performs the following optimizations:
+///     </para>
+///     <list type="bullet">
+///         <item>
+///             <description>Removal of single-line comments (// ...)</description>
+///         </item>
+///         <item>
+///             <description>Removal of multi-line comments (/* ... */)</description>
+///         </item>
+///         <item>
+///             <description>Condensation of whitespace</description>
+///         </item>
+///         <item>
+///             <description>Removal of unnecessary newlines</description>
+///         </item>
+///     </list>
+///     <para>
+///         Note: This is a basic minifier. For production JavaScript, consider using
+///         specialized tools like Terser or UglifyJS that can perform advanced optimizations
+///         like variable renaming and dead code elimination.
+///     </para>
 /// </remarks>
 public static class JavaScriptMinifier
 {
     /// <summary>
-    /// Minifies JavaScript content by removing comments and unnecessary whitespace.
+    ///     Minifies JavaScript content by removing comments and unnecessary whitespace.
     /// </summary>
     /// <param name="content">The JavaScript content to minify.</param>
     /// <returns>The minified JavaScript content.</returns>
     /// <example>
-    /// <code>
+    ///     <code>
     /// string js = @"
     /// // Calculate the sum
     /// function add(a, b) {

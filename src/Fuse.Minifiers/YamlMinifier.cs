@@ -10,33 +10,41 @@ using System.Text.RegularExpressions;
 namespace Fuse.Minifiers;
 
 /// <summary>
-/// Provides minification functionality for YAML (YAML Ain't Markup Language) files.
+///     Provides minification functionality for YAML (YAML Ain't Markup Language) files.
 /// </summary>
 /// <remarks>
-/// <para>
-/// This minifier optimizes YAML content while being careful to preserve its
-/// whitespace-sensitive structure:
-/// </para>
-/// <list type="bullet">
-///     <item><description>Removal of comment lines (# ...)</description></item>
-///     <item><description>Condensation of multiple blank lines</description></item>
-///     <item><description>Removal of trailing whitespace</description></item>
-///     <item><description>Preservation of indentation (critical for YAML structure)</description></item>
-/// </list>
-/// <para>
-/// Warning: YAML is whitespace-sensitive. This minifier is conservative and
-/// preserves all indentation to avoid breaking document structure.
-/// </para>
+///     <para>
+///         This minifier optimizes YAML content while being careful to preserve its
+///         whitespace-sensitive structure:
+///     </para>
+///     <list type="bullet">
+///         <item>
+///             <description>Removal of comment lines (# ...)</description>
+///         </item>
+///         <item>
+///             <description>Condensation of multiple blank lines</description>
+///         </item>
+///         <item>
+///             <description>Removal of trailing whitespace</description>
+///         </item>
+///         <item>
+///             <description>Preservation of indentation (critical for YAML structure)</description>
+///         </item>
+///     </list>
+///     <para>
+///         Warning: YAML is whitespace-sensitive. This minifier is conservative and
+///         preserves all indentation to avoid breaking document structure.
+///     </para>
 /// </remarks>
 public static class YamlMinifier
 {
     /// <summary>
-    /// Minifies YAML content by removing comments and unnecessary blank lines.
+    ///     Minifies YAML content by removing comments and unnecessary blank lines.
     /// </summary>
     /// <param name="content">The YAML content to minify.</param>
     /// <returns>The minified YAML content.</returns>
     /// <example>
-    /// <code>
+    ///     <code>
     /// string yaml = @"
     /// # Application configuration
     /// name: myapp

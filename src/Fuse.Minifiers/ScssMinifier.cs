@@ -10,28 +10,36 @@ using System.Text.RegularExpressions;
 namespace Fuse.Minifiers;
 
 /// <summary>
-/// Provides minification functionality for SCSS (Sassy CSS) files.
+///     Provides minification functionality for SCSS (Sassy CSS) files.
 /// </summary>
 /// <remarks>
-/// <para>
-/// This minifier handles SCSS-specific syntax in addition to standard CSS:
-/// </para>
-/// <list type="bullet">
-///     <item><description>Removal of single-line comments (// ...)</description></item>
-///     <item><description>Removal of multi-line comments (/* ... */)</description></item>
-///     <item><description>Preservation of important SCSS constructs like variables and mixins</description></item>
-///     <item><description>Whitespace optimization around SCSS operators</description></item>
-/// </list>
+///     <para>
+///         This minifier handles SCSS-specific syntax in addition to standard CSS:
+///     </para>
+///     <list type="bullet">
+///         <item>
+///             <description>Removal of single-line comments (// ...)</description>
+///         </item>
+///         <item>
+///             <description>Removal of multi-line comments (/* ... */)</description>
+///         </item>
+///         <item>
+///             <description>Preservation of important SCSS constructs like variables and mixins</description>
+///         </item>
+///         <item>
+///             <description>Whitespace optimization around SCSS operators</description>
+///         </item>
+///     </list>
 /// </remarks>
 public static class ScssMinifier
 {
     /// <summary>
-    /// Minifies SCSS content by removing comments and unnecessary whitespace.
+    ///     Minifies SCSS content by removing comments and unnecessary whitespace.
     /// </summary>
     /// <param name="content">The SCSS content to minify.</param>
     /// <returns>The minified SCSS content.</returns>
     /// <example>
-    /// <code>
+    ///     <code>
     /// string scss = @"
     /// // Primary color variable
     /// $primary: #007bff;
