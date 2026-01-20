@@ -65,6 +65,7 @@ public static class CSharpMinifier
 
             // Step 6: Aggressive Syntax Compression
             // This flattens the file and removes almost all newlines and unnecessary spaces
+            // while preserving string literals.
             content = CompressSyntax(content);
         }
         else
@@ -223,19 +224,45 @@ public static class CSharpMinifier
     /// </remarks>
     private static string CompressSyntax(string content)
     {
-        // 1. Remove whitespace around delimiters
+        // Store string literals to preserve them during minification
+        var literals = new List<string>();
+
+        // Regex matches:
+        // 1. Verbatim strings (@"...") handling double-quote escaping ("")
+        // 2. Regular strings ("...") handling backslash escaping (\")
+        // Note: Interpolated strings ($"...") are handled because the quote part matches #2, 
+        // leaving the $ as a token which is preserved.
+        string stringPattern = @"@""(?:""""|[^""])*""|""(?:\\.|[^""\\])*""";
+
+        // Step 1: Protect literals by replacing them with placeholders
+        content = Regex.Replace(content, stringPattern, m =>
+        {
+            literals.Add(m.Value);
+            return $"__FUSE_STR_{literals.Count - 1}__";
+        });
+
+        // Step 2: Remove whitespace around delimiters
         // We include: { } ; , : ( ) = [ ]
         // This turns "int x = 1;" into "int x=1;"
         // This turns "public class X { }" into "public class X{}"
         // This turns "if ( x )" into "if(x)"
         content = Regex.Replace(content, @"\s*([{};,:()=\[\]])\s*", "$1");
 
-        // 2. Collapse all remaining whitespace sequences (including newlines) to a single space
+        // Step 3: Collapse all remaining whitespace sequences (including newlines) to a single space
         // This handles the keywords: "public    static   void" -> "public static void"
         // It also merges lines: "int x; \n int y;" -> "int x;int y;" (because ; was handled above)
-        // Note: This may affect whitespace inside string literals, which is an accepted trade-off
-        // for aggressive context optimization.
         content = Regex.Replace(content, @"\s+", " ");
+
+        // Step 4: Restore literals from placeholders
+        content = Regex.Replace(content, @"__FUSE_STR_(\d+)__", m =>
+        {
+            if (int.TryParse(m.Groups[1].Value, out int index) && index >= 0 && index < literals.Count)
+            {
+                return literals[index];
+            }
+
+            return m.Value;
+        });
 
         return content;
     }
