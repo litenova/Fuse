@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------
 // <copyright file="CSharpMinifier.cs" company="Fuse">
-//     Copyright (c) Fuse. All rights reserved.
-//     Licensed under the MIT License. See LICENSE in the project root for license information.
+// Copyright (c) Fuse. All rights reserved.
+// Licensed under the MIT License. See LICENSE in the project root for license information.
 // </copyright>
 // -----------------------------------------------------------------------
 
@@ -11,247 +11,213 @@ using Fuse.Core;
 namespace Fuse.Minifiers;
 
 /// <summary>
-///     Provides minification functionality for C# source code files.
+/// Provides minification functionality for C# source code files.
 /// </summary>
 /// <remarks>
-///     <para>
-///         This minifier performs various optimizations on C# code including:
-///     </para>
-///     <list type="bullet">
-///         <item>
-///             <description>Removal of single-line, multi-line, and XML documentation comments</description>
-///         </item>
-///         <item>
-///             <description>Removal of #region and #endregion directives</description>
-///         </item>
-///         <item>
-///             <description>Removal of namespace declarations (both file-scoped and classic)</description>
-///         </item>
-///         <item>
-///             <description>Removal of using statements</description>
-///         </item>
-///         <item>
-///             <description>Removal of debug code (Debug.WriteLine and #if DEBUG blocks)</description>
-///         </item>
-///         <item>
-///             <description>Whitespace optimization and condensation</description>
-///         </item>
-///     </list>
-///     <para>
-///         The minification behavior is controlled through <see cref="FuseOptions" />.
-///     </para>
+/// <para>
+/// This minifier performs various optimizations on C# code including:
+/// </para>
+/// <list type="bullet">
+/// <item>
+/// <description>Removal of comments (single-line, multi-line, XML)</description>
+/// </item>
+/// <item>
+/// <description>Removal of preprocessor directives (#region, #pragma)</description>
+/// </item>
+/// <item>
+/// <description>Structural flattening (removing namespaces and indentation)</description>
+/// </item>
+/// <item>
+/// <description>Aggressive reduction (attributes, redundant keywords, auto-props)</description>
+/// </item>
+/// </list>
 /// </remarks>
 public static class CSharpMinifier
 {
     /// <summary>
-    ///     Minifies C# source code by removing unnecessary content and optimizing whitespace.
+    /// Minifies C# content based on the provided options.
     /// </summary>
-    /// <param name="content">The C# source code content to minify.</param>
-    /// <param name="options">The options that control which minification steps are applied.</param>
-    /// <returns>The minified C# source code.</returns>
-    /// <example>
-    ///     <code>
-    /// var options = new FuseOptions { RemoveCSharpComments = true };
-    /// var minified = CSharpMinifier.Minify(sourceCode, options);
-    /// </code>
-    /// </example>
+    /// <param name="content">The C# content to minify.</param>
+    /// <param name="options">The fusion options.</param>
+    /// <returns>The minified C# content.</returns>
     public static string Minify(string content, FuseOptions options)
     {
-        // Step 1: Remove debug-specific code first as it may contain other elements
-        // This includes Debug.WriteLine statements and #if DEBUG blocks
-        content = RemoveDebugCode(content);
+        // Step 1: Remove comments first to prevent interference with other regex patterns
+        content = RemoveComments(content, options);
 
-        // Step 2: Remove comments if the option is enabled
-        // This removes single-line (//), multi-line (/* */), and XML documentation (///) comments
-        if (options.RemoveCSharpComments)
-            content = RemoveComments(content);
+        // Step 2: Remove preprocessor directives (#region, #if, etc.)
+        content = RemovePreprocessorDirectives(content, options);
 
-        // Step 3: Remove #region and #endregion directives if enabled
-        // These are organizational markers that aren't needed in minified output
-        if (options.RemoveCSharpRegions)
-            content = RemoveRegionDirectives(content);
+        // Step 3: Remove using statements to reduce noise at the top of the file
+        content = RemoveUsings(content, options);
 
-        // Step 4: Remove namespace declarations if enabled
-        // Removes both file-scoped (namespace X;) and classic (namespace X { }) declarations
-        if (options.RemoveCSharpNamespaceDeclarations)
-            content = RemoveNamespaceDeclarations(content);
+        // Step 4: Remove namespace declarations and flatten the structure
+        content = RemoveNamespaces(content, options);
 
-        // Step 5: Remove all using statements if enabled
-        // This removes all 'using' directives at the top of the file
-        if (options.RemoveCSharpUsings)
-            content = RemoveAllUsings(content);
+        // Step 5: Apply aggressive optimizations (attributes, keywords, properties)
+        // This is enabled if specifically requested OR if 'ApplyAllOptions' (fuse dotnet --all) is true
+        if (options.AggressiveCSharpReduction || options.ApplyAllOptions)
+        {
+            content = ApplyAggressiveOptimization(content);
+        }
 
-        // Step 6: Condense newlines and empty lines
-        // Reduces multiple consecutive newlines to improve density
-        content = RemoveNewlines(content);
-
-        // Step 7: Final whitespace optimization
-        // Removes unnecessary spaces around operators and punctuation
+        // Step 6: Final whitespace cleanup (condense newlines, trim lines)
         content = OptimizeWhitespace(content);
 
-        return content;
+        return content.Trim();
     }
 
     /// <summary>
-    ///     Removes all using statements from the source code.
+    /// Removes single-line, multi-line, and XML documentation comments.
     /// </summary>
-    /// <param name="code">The C# source code.</param>
-    /// <returns>The code with all using statements removed.</returns>
-    private static string RemoveAllUsings(string code)
+    private static string RemoveComments(string content, FuseOptions options)
     {
-        // Match lines that start with 'using' and end with semicolon
-        // Uses multiline mode to match ^ at the start of each line
-        return Regex.Replace(code, @"^\s*using\s+.*?;\s*$", "", RegexOptions.Multiline);
-    }
-
-    /// <summary>
-    ///     Removes namespace declarations from the source code.
-    /// </summary>
-    /// <param name="code">The C# source code.</param>
-    /// <returns>The code with namespace declarations removed.</returns>
-    /// <remarks>
-    ///     Handles both file-scoped namespace declarations (C# 10+) like <c>namespace MyApp;</c>
-    ///     and classic block-style declarations like <c>namespace MyApp { ... }</c>.
-    /// </remarks>
-    private static string RemoveNamespaceDeclarations(string code)
-    {
-        // Remove file-scoped namespace declaration (C# 10+ feature)
-        // Example: "namespace MyApp.Services;"
-        code = Regex.Replace(code, @"^\s*namespace\s+[\w.]+\s*;\s*$", "", RegexOptions.Multiline);
-
-        // Remove classic namespace declaration opening brace
-        // Example: "namespace MyApp.Services {"
-        code = Regex.Replace(code, @"namespace\s+[\w.]+\s*\{", "");
-
-        // Remove the closing brace that would have matched the namespace
-        // This is a simplified approach and may remove other closing braces at line start
-        code = Regex.Replace(code, @"^\s*\}\s*$", "", RegexOptions.Multiline);
-
-        return code;
-    }
-
-    /// <summary>
-    ///     Removes all types of comments from C# source code.
-    /// </summary>
-    /// <param name="content">The C# source code.</param>
-    /// <returns>The code with all comments removed.</returns>
-    /// <remarks>
-    ///     Removes three types of comments:
-    ///     <list type="bullet">
-    ///         <item>
-    ///             <description>Single-line comments: <c>// comment</c></description>
-    ///         </item>
-    ///         <item>
-    ///             <description>Multi-line comments: <c>/* comment */</c></description>
-    ///         </item>
-    ///         <item>
-    ///             <description>XML documentation comments: <c>/// &lt;summary&gt;</c></description>
-    ///         </item>
-    ///     </list>
-    /// </remarks>
-    private static string RemoveComments(string content)
-    {
-        // Remove single-line comments (// to end of line)
-        // Note: This is a simple implementation that may affect string literals containing //
-        content = Regex.Replace(content, @"//.*$", "", RegexOptions.Multiline);
-
-        // Remove multi-line comments (/* ... */)
-        // Uses Singleline option so . matches newlines within comments
-        content = Regex.Replace(content, @"/\*[\s\S]*?\*/", "");
+        if (options is { RemoveCSharpComments: false, ApplyAllOptions: false })
+        {
+            return content;
+        }
 
         // Remove XML documentation comments (/// ...)
-        // These are commonly used for IntelliSense documentation
-        content = Regex.Replace(content, @"^\s*///.*$", "", RegexOptions.Multiline);
+        // Must be done before single-line comments to avoid partial matches
+        content = Regex.Replace(content, @"///[^\r\n]*", "");
+
+        // Remove Single-line comments (// ...)
+        // Uses lookbehind (?<!:) to avoid matching URLs like http://
+        content = Regex.Replace(content, @"(?<!:)//(?!/)[^\r\n]*", "");
+
+        // Remove Multi-line comments (/* ... */)
+        content = Regex.Replace(content, @"/\*.*?\*/", "", RegexOptions.Singleline);
 
         return content;
     }
 
     /// <summary>
-    ///     Removes #region and #endregion preprocessor directives.
+    /// Removes #region, #endregion, and other compiler directives.
     /// </summary>
-    /// <param name="content">The C# source code.</param>
-    /// <returns>The code with region directives removed.</returns>
-    private static string RemoveRegionDirectives(string content)
+    private static string RemovePreprocessorDirectives(string content, FuseOptions options)
     {
-        // Remove #region directives with optional name
-        // Matches: #region, #region Name, #region "Name", etc.
-        content = Regex.Replace(content, @"^\s*#region\s*.*$", "", RegexOptions.Multiline);
+        // Always remove regions if requested
+        if (options.RemoveCSharpRegions || options.ApplyAllOptions)
+        {
+            content = Regex.Replace(content, @"^\s*#(region|endregion)[^\r\n]*", "", RegexOptions.Multiline);
+        }
 
-        // Remove #endregion directives
-        content = Regex.Replace(content, @"^\s*#endregion\s*.*$", "", RegexOptions.Multiline);
+        // Remove other directives if aggressive reduction is enabled
+        if (options.AggressiveCSharpReduction || options.ApplyAllOptions)
+        {
+            // Remove #pragma (warnings) and #nullable contexts
+            content = Regex.Replace(content, @"^\s*#(pragma|nullable)[^\r\n]*", "", RegexOptions.Multiline);
+        }
 
         return content;
     }
 
     /// <summary>
-    ///     Removes debug-specific code including Debug.WriteLine calls and #if DEBUG blocks.
+    /// Removes using statements and alias directives.
     /// </summary>
-    /// <param name="content">The C# source code.</param>
-    /// <returns>The code with debug code removed.</returns>
-    /// <remarks>
-    ///     This method targets:
-    ///     <list type="bullet">
-    ///         <item>
-    ///             <description>Debug.WriteLine and similar Debug class method calls</description>
-    ///         </item>
-    ///         <item>
-    ///             <description>#if DEBUG ... #endif conditional compilation blocks</description>
-    ///         </item>
-    ///     </list>
-    /// </remarks>
-    private static string RemoveDebugCode(string content)
+    private static string RemoveUsings(string content, FuseOptions options)
     {
-        // Remove Debug.WriteLine statements
-        // Matches Debug.WriteLine(...) including nested parentheses
-        content = Regex.Replace(content, @"^\s*Debug\.Write(Line)?\s*\(.*?\)\s*;\s*$", "", RegexOptions.Multiline);
+        if (options is { RemoveCSharpUsings: false, ApplyAllOptions: false })
+        {
+            return content;
+        }
 
-        // Remove #if DEBUG blocks entirely
-        // Uses Singleline mode to match across multiple lines
-        content = Regex.Replace(content, @"#if\s+DEBUG[\s\S]*?#endif", "", RegexOptions.Singleline);
+        // Remove standard using statements: "using System.Text;"
+        content = Regex.Replace(content, @"^\s*using\s+[\w\.]+;\s*(\r?\n)?", "", RegexOptions.Multiline);
+
+        // Remove alias directives: "using Project = My.Project;"
+        content = Regex.Replace(content, @"^\s*using\s+[A-Za-z0-9_]+\s*=\s*[\w\.]+;\s*(\r?\n)?", "", RegexOptions.Multiline);
 
         return content;
     }
 
     /// <summary>
-    ///     Condenses multiple consecutive newlines into single newlines.
+    /// Removes namespace declarations and unindents the code to save horizontal tokens.
     /// </summary>
-    /// <param name="content">The C# source code.</param>
-    /// <returns>The code with condensed newlines.</returns>
-    private static string RemoveNewlines(string content)
+    private static string RemoveNamespaces(string content, FuseOptions options)
     {
-        // Replace 3 or more consecutive newlines with 2 newlines
-        // Preserves paragraph separation while removing excessive whitespace
-        content = Regex.Replace(content, @"(\r?\n){3,}", "\n\n");
+        if (options is { RemoveCSharpNamespaceDeclarations: false, ApplyAllOptions: false })
+        {
+            return content;
+        }
 
-        // Remove blank lines that contain only whitespace
-        content = Regex.Replace(content, @"^\s+$", "", RegexOptions.Multiline);
+        // Handle file-scoped namespaces (C# 10+): "namespace X;"
+        // These are easy to remove as they don't affect indentation structure
+        content = Regex.Replace(content, @"^\s*namespace\s+[\w\.]+\s*;\s*(\r?\n)?", "", RegexOptions.Multiline);
+
+        // Handle block-scoped namespaces: "namespace X { ... }"
+        // 1. Remove the "namespace X {" line
+        content = Regex.Replace(content, @"^\s*namespace\s+[\w\.]+\s*[\r\n\s]*\{", "", RegexOptions.Multiline);
+
+        // 2. Unindent the content
+        // Since we removed the wrapping namespace, the code inside is now indented unnecessarily.
+        // We remove 4 spaces or 1 tab from the start of every line.
+        content = Regex.Replace(content, @"^(\s{4}|\t)", "", RegexOptions.Multiline);
+
+        // Note: We do not attempt to remove the closing '}' of the namespace.
+        // Finding the exact matching brace via Regex is impossible (requires a parser).
+        // Leaving a dangling '}' at the end of the file is acceptable for LLM context
+        // as it prioritizes content density over compilation correctness.
 
         return content;
     }
 
     /// <summary>
-    ///     Optimizes whitespace by removing unnecessary spaces.
+    /// Applies aggressive optimizations to reduce token count significantly.
+    /// Includes attribute removal, keyword reduction, and property compression.
     /// </summary>
-    /// <param name="content">The C# source code.</param>
-    /// <returns>The code with optimized whitespace.</returns>
-    /// <remarks>
-    ///     This method removes:
-    ///     <list type="bullet">
-    ///         <item>
-    ///             <description>Trailing whitespace at end of lines</description>
-    ///         </item>
-    ///         <item>
-    ///             <description>Multiple consecutive spaces (condensed to single space)</description>
-    ///         </item>
-    ///     </list>
-    /// </remarks>
+    private static string ApplyAggressiveOptimization(string content)
+    {
+        // 1. Remove "Noise" Attributes
+        // These attributes provide metadata for tools/compilers but add little semantic value for LLMs.
+        var noiseAttributes = new[]
+        {
+            "DebuggerDisplay", "DebuggerStepThrough", "DebuggerNonUserCode",
+            "MethodImpl", "EditorBrowsable", "Serializable", "Obsolete",
+            "GeneratedCode", "CompilerGenerated", "ExcludeFromCodeCoverage"
+        };
+
+        // Pattern matches [Attribute] or [Attribute(...)]
+        var attrPattern = $@"\[\s*({string.Join("|", noiseAttributes)})(\(.*\))?\s*\]\s*";
+        content = Regex.Replace(content, attrPattern, "");
+
+        // 2. Remove redundant "this." qualifier
+        // "this.Property" -> "Property"
+        content = Regex.Replace(content, @"\bthis\.", "");
+
+        // 3. Compress Auto-Properties to single line
+        // From:
+        // public int Id
+        // {
+        //    get;
+        //    set;
+        // }
+        // To: public int Id { get; set; }
+        content = Regex.Replace(content, @"\{\s*get;\s*set;\s*\}", "{ get; set; }");
+        content = Regex.Replace(content, @"\{\s*get;\s*\}", "{ get; }");
+        content = Regex.Replace(content, @"\{\s*set;\s*\}", "{ set; }");
+
+        return content;
+    }
+
+    /// <summary>
+    /// Performs final whitespace cleanup including line trimming and condensation.
+    /// </summary>
     private static string OptimizeWhitespace(string content)
     {
         // Remove trailing whitespace from each line
         content = Regex.Replace(content, @"[\t ]+$", "", RegexOptions.Multiline);
 
-        // Condense multiple spaces to single space (but not at line start - preserve indentation)
+        // Condense multiple spaces to single space (preserving indentation at start of line)
+        // Matches 2+ spaces that are NOT at the start of a line
         content = Regex.Replace(content, @"(?<!^)[ ]{2,}", " ", RegexOptions.Multiline);
+
+        // Replace 3 or more consecutive newlines with 2 newlines
+        // This preserves paragraph separation but removes massive gaps
+        content = Regex.Replace(content, @"(\r?\n){3,}", "\n\n");
+
+        // Remove blank lines that contain only whitespace
+        content = Regex.Replace(content, @"^\s+$", "", RegexOptions.Multiline);
 
         return content;
     }

@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------
 // <copyright file="ProjectTemplateRegistry.cs" company="Fuse">
-//     Copyright (c) Fuse. All rights reserved.
-//     Licensed under the MIT License. See LICENSE in the project root for license information.
+// Copyright (c) Fuse. All rights reserved.
+// Licensed under the MIT License. See LICENSE in the project root for license information.
 // </copyright>
 // -----------------------------------------------------------------------
 
@@ -11,41 +11,41 @@ using Fuse.Core;
 namespace Fuse.Engine;
 
 /// <summary>
-///     Provides a registry of project template configurations for different project types.
+/// Provides a registry of project template configurations for different project types.
 /// </summary>
 /// <remarks>
-///     <para>
-///         This static class maintains immutable dictionaries of template defaults including:
-///     </para>
-///     <list type="bullet">
-///         <item>
-///             <description>File extensions to include for each template type</description>
-///         </item>
-///         <item>
-///             <description>Directories to exclude from scanning</description>
-///         </item>
-///         <item>
-///             <description>File patterns to exclude (e.g., generated files)</description>
-///         </item>
-///     </list>
-///     <para>
-///         Templates are initialized statically and are thread-safe for concurrent access.
-///     </para>
+/// <para>
+/// This static class maintains immutable dictionaries of template defaults including:
+/// </para>
+/// <list type="bullet">
+/// <item>
+/// <description>File extensions to include for each template type</description>
+/// </item>
+/// <item>
+/// <description>Directories to exclude from scanning</description>
+/// </item>
+/// <item>
+/// <description>File patterns to exclude (e.g., generated files)</description>
+/// </item>
+/// </list>
+/// <para>
+/// Templates are initialized statically and are thread-safe for concurrent access.
+/// </para>
 /// </remarks>
 public static class ProjectTemplateRegistry
 {
     /// <summary>
-    ///     Stores the default extensions and excluded folders for each template.
+    /// Stores the default extensions and excluded folders for each template.
     /// </summary>
     private static readonly ImmutableDictionary<ProjectTemplate, (string[] Extensions, string[] ExcludeFolders)> TemplateDefaults;
 
     /// <summary>
-    ///     Stores the excluded file patterns for each template.
+    /// Stores the excluded file patterns for each template.
     /// </summary>
     private static readonly ImmutableDictionary<ProjectTemplate, string[]> ExcludedPatterns;
 
     /// <summary>
-    ///     Initializes the static template registry with all predefined templates.
+    /// Initializes the static template registry with all predefined templates.
     /// </summary>
     static ProjectTemplateRegistry()
     {
@@ -66,20 +66,27 @@ public static class ProjectTemplateRegistry
         // Comprehensive template for C#, F#, VB.NET, and ASP.NET projects
         builder[ProjectTemplate.DotNet] = (
             [
-                ".cs", ".xaml", ".cshtml", ".csproj", ".config", ".json", ".xml", ".resx",
+                ".cs", ".xaml", ".cshtml", ".csproj", ".config", ".json", ".xml",
                 ".razor", ".md", ".txt", ".props", ".targets", ".yml", ".yaml", ".scriban",
                 ".bat", ".sh", ".ps1", ".cmd", ".nuspec", ".scss", ".css", ".html", ".htm",
-                ".sql", ".feature"
+                ".sql", ".feature", ".editorconfig"
             ],
-            ["bin", "obj", ".vs", ".git", ".idea"]
+            [
+                "bin", "obj", ".vs", ".git", ".idea",
+                "node_modules", // Common in ASP.NET Core SPA templates
+                "TestResults",  // dotnet test output
+                "packages",     // NuGet packages (legacy)
+                "artifacts"     // Common build output folder
+            ]
         );
 
-        // Patterns to exclude for .NET - specifically generated files
+        // Patterns to exclude for .NET - specifically generated files and noise
         patternsBuilder[ProjectTemplate.DotNet] =
         [
+            // Generated Code
             "*.feature.cs",                // SpecFlow/ReqnRoll generated feature files
             "*Steps.g.cs",                 // Generated step files
-            "*.AssemblyHooks.cs",          // Assembly hook files from SpecFlow/ReqnRoll
+            "*.AssemblyHooks.cs",          // Assembly hook files
             "*.g.cs",                      // Any generated C# files
             "*.g.i.cs",                    // Designer generated code
             "*.Designer.cs",               // Designer generated code
@@ -89,12 +96,25 @@ public static class ProjectTemplateRegistry
             "TemporaryGeneratedFile_*.cs", // Temporary generated files
             "*.Cache.cs",                  // Cache files
             "*.cache",                     // Other cache files
-            "*.resources",                 // Resource files
             "*.baml",                      // Compiled XAML
             "ServiceReference.cs",         // Service reference code
             "Reference.cs",                // Reference classes
             "AssemblyInfo.cs",             // Assembly info files
-            "*.xsd.cs"                     // XML schema generated code
+            "*.xsd.cs",                    // XML schema generated code
+
+            // High-Noise / Low-Value Files
+            "*.resx",              // Resource files (verbose XML, often binary data)
+            "*.resources",         // Compiled resources
+            "launchSettings.json", // Local dev config (ports, env vars) - noise for logic
+            "packages.lock.json",  // NuGet lock file - noise
+            "bundleconfig.json",   // Bundling config - usually low value
+
+            // Web Artifacts (Noise in a source context)
+            "*.min.js",          // Minified JavaScript
+            "*.min.css",         // Minified CSS
+            "*.map",             // Source maps
+            "package-lock.json", // NPM lock file
+            "yarn.lock"          // Yarn lock file
         ];
 
         // ===== Java Template =====
@@ -297,15 +317,15 @@ public static class ProjectTemplateRegistry
     }
 
     /// <summary>
-    ///     Gets the template configuration for the specified project template.
+    /// Gets the template configuration for the specified project template.
     /// </summary>
     /// <param name="template">The project template to retrieve configuration for.</param>
     /// <returns>
-    ///     A tuple containing the file extensions to include and directories to exclude.
-    ///     Returns the Generic template configuration if the specified template is not found.
+    /// A tuple containing the file extensions to include and directories to exclude.
+    /// Returns the Generic template configuration if the specified template is not found.
     /// </returns>
     /// <example>
-    ///     <code>
+    /// <code>
     /// var (extensions, excludeFolders) = ProjectTemplateRegistry.GetTemplate(ProjectTemplate.DotNet);
     /// // extensions: [".cs", ".csproj", ".json", ...]
     /// // excludeFolders: ["bin", "obj", ".vs", ".git", ".idea"]
@@ -319,15 +339,15 @@ public static class ProjectTemplateRegistry
     }
 
     /// <summary>
-    ///     Gets the excluded file patterns for the specified project template.
+    /// Gets the excluded file patterns for the specified project template.
     /// </summary>
     /// <param name="template">The project template to retrieve patterns for.</param>
     /// <returns>
-    ///     An array of glob patterns that should be excluded from processing.
-    ///     Returns an empty array if the template has no specific exclusion patterns.
+    /// An array of glob patterns that should be excluded from processing.
+    /// Returns an empty array if the template has no specific exclusion patterns.
     /// </returns>
     /// <example>
-    ///     <code>
+    /// <code>
     /// var patterns = ProjectTemplateRegistry.GetExcludedPatterns(ProjectTemplate.DotNet);
     /// // patterns: ["*.g.cs", "*.Designer.cs", ...]
     /// </code>
