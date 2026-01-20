@@ -22,7 +22,7 @@ namespace Fuse.Minifiers;
 /// <description>Removal of comments (single-line, multi-line, XML)</description>
 /// </item>
 /// <item>
-/// <description>Removal of preprocessor directives (#region, #pragma)</description>
+/// <description>Removal of preprocessor directives (#region, #pragma, #if)</description>
 /// </item>
 /// <item>
 /// <description>Structural flattening (removing namespaces and indentation)</description>
@@ -31,7 +31,7 @@ namespace Fuse.Minifiers;
 /// <description>Aggressive reduction (attributes, redundant keywords, auto-props)</description>
 /// </item>
 /// <item>
-/// <description>Aggressive whitespace removal (collapsing blank lines)</description>
+/// <description>Syntax compression (removing whitespace around delimiters, flattening lines)</description>
 /// </item>
 /// </list>
 /// </remarks>
@@ -48,7 +48,8 @@ public static class CSharpMinifier
         // Step 1: Remove comments first to prevent interference with other regex patterns
         content = RemoveComments(content, options);
 
-        // Step 2: Remove preprocessor directives (#region, #if, etc.)
+        // Step 2: Remove preprocessor directives
+        // CRITICAL: Must be done before flattening, as directives require newlines to terminate.
         content = RemovePreprocessorDirectives(content, options);
 
         // Step 3: Remove using statements to reduce noise at the top of the file
@@ -57,15 +58,20 @@ public static class CSharpMinifier
         // Step 4: Remove namespace declarations and flatten the structure
         content = RemoveNamespaces(content, options);
 
-        // Step 5: Apply aggressive optimizations (attributes, keywords, properties)
-        // This is enabled if specifically requested OR if 'ApplyAllOptions' (fuse dotnet --all) is true
+        // Step 5: Apply aggressive optimizations
         if (options.AggressiveCSharpReduction || options.ApplyAllOptions)
         {
             content = ApplyAggressiveOptimization(content);
-        }
 
-        // Step 6: Final whitespace cleanup (condense newlines, trim lines)
-        content = OptimizeWhitespace(content);
+            // Step 6: Aggressive Syntax Compression
+            // This flattens the file and removes almost all newlines and unnecessary spaces
+            content = CompressSyntax(content);
+        }
+        else
+        {
+            // Standard whitespace cleanup (preserves line structure)
+            content = OptimizeWhitespace(content);
+        }
 
         return content.Trim();
     }
@@ -99,17 +105,19 @@ public static class CSharpMinifier
     /// </summary>
     private static string RemovePreprocessorDirectives(string content, FuseOptions options)
     {
-        // Always remove regions if requested
-        if (options.RemoveCSharpRegions || options.ApplyAllOptions)
+        // Standard removal: Regions only
+        if (options.RemoveCSharpRegions && !options.ApplyAllOptions && !options.AggressiveCSharpReduction)
         {
             content = Regex.Replace(content, @"^\s*#(region|endregion)[^\r\n]*", "", RegexOptions.Multiline);
+            return content;
         }
 
-        // Remove other directives if aggressive reduction is enabled
+        // Aggressive removal: ALL directives (#region, #if, #pragma, #define, etc.)
+        // We must remove these because we are about to flatten the file, and directives
+        // rely on newlines to terminate. If we flatten without removing them, we break the code.
         if (options.AggressiveCSharpReduction || options.ApplyAllOptions)
         {
-            // Remove #pragma (warnings) and #nullable contexts
-            content = Regex.Replace(content, @"^\s*#(pragma|nullable)[^\r\n]*", "", RegexOptions.Multiline);
+            content = Regex.Replace(content, @"^\s*#.*", "", RegexOptions.Multiline);
         }
 
         return content;
@@ -207,7 +215,33 @@ public static class CSharpMinifier
     }
 
     /// <summary>
-    /// Performs final whitespace cleanup including line trimming and condensation.
+    /// Aggressively compresses syntax by removing whitespace around delimiters and flattening lines.
+    /// </summary>
+    /// <remarks>
+    /// This method transforms code into a dense format similar to minified JavaScript.
+    /// Example: "public class X { int y; }" becomes "public class X{int y;}"
+    /// </remarks>
+    private static string CompressSyntax(string content)
+    {
+        // 1. Remove whitespace around delimiters
+        // We include: { } ; , : ( ) = [ ]
+        // This turns "int x = 1;" into "int x=1;"
+        // This turns "public class X { }" into "public class X{}"
+        // This turns "if ( x )" into "if(x)"
+        content = Regex.Replace(content, @"\s*([{};,:()=\[\]])\s*", "$1");
+
+        // 2. Collapse all remaining whitespace sequences (including newlines) to a single space
+        // This handles the keywords: "public    static   void" -> "public static void"
+        // It also merges lines: "int x; \n int y;" -> "int x;int y;" (because ; was handled above)
+        // Note: This may affect whitespace inside string literals, which is an accepted trade-off
+        // for aggressive context optimization.
+        content = Regex.Replace(content, @"\s+", " ");
+
+        return content;
+    }
+
+    /// <summary>
+    /// Standard whitespace optimization (preserves line structure).
     /// </summary>
     private static string OptimizeWhitespace(string content)
     {
@@ -218,9 +252,8 @@ public static class CSharpMinifier
         // Matches 2+ spaces that are NOT at the start of a line
         content = Regex.Replace(content, @"(?<!^)[ ]{2,}", " ", RegexOptions.Multiline);
 
-        // 3. AGGRESSIVE: Remove ALL blank lines.
+        // 3. Remove ALL blank lines.
         // Replace 2 or more consecutive newlines with a single newline.
-        // This ensures the code is a solid block of text with no vertical gaps.
         content = Regex.Replace(content, @"(\r?\n){2,}", "\n");
 
         // 4. Remove blank lines that contain only whitespace (if any remain)
