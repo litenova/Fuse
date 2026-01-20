@@ -1,26 +1,64 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+
+# Solution Folders
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{63412BD6-618C-432C-B8A8-DB293EFEF995}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Fuse.Cli", "src\Fuse.Cli\Fuse.Cli.csproj", "{7DEAFDF9-67A4-49AF-BDF6-FD75564EAEB8}"
-EndProject
+
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "solution-items", "solution-items", "{417ECC97-114D-436B-9ED1-95ACA95EB4B1}"
 	ProjectSection(SolutionItems) = preProject
 		.gitignore = .gitignore
 		global.json = global.json
-		install_fuse_win64.bat = install_fuse_win64.bat
+		install.bat = install.bat
 		README.md = README.md
 	EndProjectSection
 EndProject
+
+# Core Domain Library
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Fuse.Core", "src\Fuse.Core\Fuse.Core.csproj", "{64158297-CC30-40E6-ABB9-79201B29C75D}"
+EndProject
+
+# Minifiers Library
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Fuse.Minifiers", "src\Fuse.Minifiers\Fuse.Minifiers.csproj", "{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}"
+EndProject
+
+# Engine Library
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Fuse.Engine", "src\Fuse.Engine\Fuse.Engine.csproj", "{B2C3D4E5-F6A7-8901-BCDE-F23456789012}"
+EndProject
+
+# CLI Application
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Fuse.Cli", "src\Fuse.Cli\Fuse.Cli.csproj", "{7DEAFDF9-67A4-49AF-BDF6-FD75564EAEB8}"
+EndProject
+
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
 		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
+
 	GlobalSection(NestedProjects) = preSolution
+		{64158297-CC30-40E6-ABB9-79201B29C75D} = {63412BD6-618C-432C-B8A8-DB293EFEF995}
+		{A1B2C3D4-E5F6-7890-ABCD-EF1234567890} = {63412BD6-618C-432C-B8A8-DB293EFEF995}
+		{B2C3D4E5-F6A7-8901-BCDE-F23456789012} = {63412BD6-618C-432C-B8A8-DB293EFEF995}
 		{7DEAFDF9-67A4-49AF-BDF6-FD75564EAEB8} = {63412BD6-618C-432C-B8A8-DB293EFEF995}
 	EndGlobalSection
+
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{64158297-CC30-40E6-ABB9-79201B29C75D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{64158297-CC30-40E6-ABB9-79201B29C75D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{64158297-CC30-40E6-ABB9-79201B29C75D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{64158297-CC30-40E6-ABB9-79201B29C75D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B2C3D4E5-F6A7-8901-BCDE-F23456789012}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B2C3D4E5-F6A7-8901-BCDE-F23456789012}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B2C3D4E5-F6A7-8901-BCDE-F23456789012}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B2C3D4E5-F6A7-8901-BCDE-F23456789012}.Release|Any CPU.Build.0 = Release|Any CPU
 		{7DEAFDF9-67A4-49AF-BDF6-FD75564EAEB8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{7DEAFDF9-67A4-49AF-BDF6-FD75564EAEB8}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7DEAFDF9-67A4-49AF-BDF6-FD75564EAEB8}.Release|Any CPU.ActiveCfg = Release|Any CPU

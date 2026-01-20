@@ -1,26 +1,71 @@
-﻿// src/Fuse.Cli/Program.cs
+// -----------------------------------------------------------------------
+// <copyright file="Program.cs" company="Fuse">
+//     Copyright (c) Fuse. All rights reserved.
+//     Licensed under the MIT License. See LICENSE in the project root for license information.
+// </copyright>
+// -----------------------------------------------------------------------
 
-using CliFx;
+using DotMake.CommandLine;
+using Fuse.Cli;
+using Fuse.Cli.Commands;
+using Fuse.Engine;
+using Fuse.Engine.FileSystem;
+using Fuse.Engine.Git;
+using Fuse.Engine.Services;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
+using Spectre.Console;
 
-namespace Fuse.Cli;
+// ============================================================================
+// FUSE CLI APPLICATION ENTRY POINT
+// ============================================================================
+// This file configures the dependency injection container and bootstraps the
+// CLI application using DotMake.CommandLine.
+//
+// The application follows a clean architecture with:
+// - Presentation Layer: Fuse.Cli and Fuse.Commands (CLI commands and options)
+// - Application Layer: Fuse.Engine (orchestration and services)
+// - Domain Layer: Fuse.Core (entities and abstractions)
+// - Infrastructure: Fuse.Minifiers (file processing)
+// ============================================================================
 
-public class Program
+// ===== Step 1: Configure Dependency Injection =====
+// Register all services with the DI container used by DotMake.CommandLine
+Cli.Ext.ConfigureServices(services =>
 {
-    public static async Task<int> Main(string[] args)
-    {
-        // Configure services
-        var services = new ServiceCollection()
-            .AddLogging(builder => builder.AddConsole())
-            .BuildServiceProvider();
+    // ----- Presentation Layer -----
+    // Register the Spectre.Console instance for rich terminal output
+    services.AddSingleton<IAnsiConsole>(AnsiConsole.Console);
 
-        // Run the application with CliFx
-        return await new CliApplicationBuilder()
-            .AddCommandsFromThisAssembly()
-            .SetExecutableName("fuse")
-            .UseTypeActivator(type => ActivatorUtilities.CreateInstance(services, type))
-            .Build()
-            .RunAsync(args);
-    }
-}
+    // ----- Engine and Services -----
+    // Register the main fusion engine as singleton (stateless)
+    services.AddSingleton<FuseEngine>();
+
+    // Register all engine services implementing the single responsibility principle
+    services.AddSingleton<IConfigurationResolver, ConfigurationResolver>();
+    services.AddSingleton<IFileCollector, FileCollector>();
+    services.AddSingleton<IContentProcessor, ContentProcessor>();
+    services.AddSingleton<IOutputBuilder, OutputBuilder>();
+
+    // ----- Engine Dependencies -----
+    // File system and Git support services
+    services.AddSingleton<PhysicalFileSystem>();
+    services.AddSingleton<GitIgnoreParser>();
+
+    // ----- CLI Commands -----
+    // Register all command classes as transient (new instance per invocation)
+    services.AddTransient<FuseCliCommand>();
+    services.AddTransient<DotNetCommand>();
+    services.AddTransient<AzureDevOpsWikiCommand>();
+
+    // NOTE: Add additional command registrations here as new commands are created
+    // Example: services.AddTransient<PythonCommand>();
+});
+
+// ===== Step 2: Run the Application =====
+// Execute the CLI with the root command type
+// DotMake.CommandLine handles:
+// - Argument parsing
+// - Help text generation
+// - Subcommand routing
+// - Error handling and exit codes
+await Cli.RunAsync<FuseCliCommand>(args);
