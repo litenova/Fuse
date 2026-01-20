@@ -13,50 +13,49 @@ using TiktokenSharp;
 namespace Fuse.Engine.Services;
 
 /// <summary>
-///     Builds the final fused output file from processed content.
+/// Builds the final fused output file from processed content.
 /// </summary>
 /// <remarks>
-///     <para>
-///         This service is responsible for:
-///     </para>
-///     <list type="bullet">
-///         <item>
-///             <description>Creating the output file with proper encoding</description>
-///         </item>
-///         <item>
-///             <description>Adding file markers and metadata</description>
-///         </item>
-///         <item>
-///             <description>Tracking and enforcing token limits</description>
-///         </item>
-///         <item>
-///             <description>Displaying progress and statistics</description>
-///         </item>
-///     </list>
-///     <para>
-///         The output format uses special markers to delimit file content:
-///         <c>&lt;|path/to/file|&gt;</c>
-///     </para>
+/// <para>
+/// This service is responsible for:
+/// </para>
+/// <list type="bullet">
+/// <item>
+/// <description>Creating the output file with proper encoding</description>
+/// </item>
+/// <item>
+/// <description>Adding file markers and metadata</description>
+/// </item>
+/// <item>
+/// <description>Tracking and enforcing token limits</description>
+/// </item>
+/// <item>
+/// <description>Displaying progress and statistics</description>
+/// </item>
+/// <item>
+/// <description>Skipping files that become empty after minification</description>
+/// </item>
+/// </list>
 /// </remarks>
 public sealed class OutputBuilder : IOutputBuilder
 {
     /// <summary>
-    ///     The console interface for progress display and output.
+    /// The console interface for progress display and output.
     /// </summary>
     private readonly IAnsiConsole _console;
 
     /// <summary>
-    ///     The content processor for transforming file content.
+    /// The content processor for transforming file content.
     /// </summary>
     private readonly IContentProcessor _contentProcessor;
 
     /// <summary>
-    ///     The tokenizer for GPT token counting (uses cl100k_base encoding).
+    /// The tokenizer for GPT token counting (uses cl100k_base encoding).
     /// </summary>
     private readonly TikToken _tokenizer;
 
     /// <summary>
-    ///     Initializes a new instance of the <see cref="OutputBuilder" /> class.
+    /// Initializes a new instance of the <see cref="OutputBuilder" /> class.
     /// </summary>
     /// <param name="console">The console for output and progress display.</param>
     /// <param name="contentProcessor">The content processor for file transformations.</param>
@@ -71,13 +70,12 @@ public sealed class OutputBuilder : IOutputBuilder
 
     /// <inheritdoc />
     /// <summary>
-    ///     Builds the fused output file with progress display and token tracking.
+    /// Builds the fused output file with progress display and token tracking.
     /// </summary>
     public async Task BuildOutputAsync(List<FileProcessingInfo> files, FuseOptions options, CancellationToken cancellationToken)
     {
         // Determine the final output file name
         string outputFileName;
-
         if (!string.IsNullOrWhiteSpace(options.OutputFileName))
         {
             // User provided a custom name
@@ -85,7 +83,6 @@ public sealed class OutputBuilder : IOutputBuilder
 
             // Check if the provided name has an extension.
             // If not, append .txt to ensure the file is easily readable.
-            // If the user provided an extension (e.g., .md, .json), we respect it.
             if (!Path.HasExtension(outputFileName))
                 outputFileName += ".txt";
         }
@@ -106,8 +103,9 @@ public sealed class OutputBuilder : IOutputBuilder
             return;
         }
 
-        // Track total token count across all files
+        // Track statistics
         long totalTokenCount = 0;
+        int processedFileCount = 0;
 
         // Create a linked cancellation token for token limit enforcement
         var localCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -135,6 +133,16 @@ public sealed class OutputBuilder : IOutputBuilder
                     // Check for cancellation (either user-initiated or token limit reached)
                     if (localCts.IsCancellationRequested) break;
 
+                    // Process content first to see if it's empty
+                    var processedContent = await _contentProcessor.ProcessContentAsync(fileInfo, options, localCts.Token);
+
+                    // SKIP EMPTY FILES: If minification stripped everything (e.g. GlobalSuppressions.cs), don't include it.
+                    if (string.IsNullOrWhiteSpace(processedContent))
+                    {
+                        task.Increment(1);
+                        continue;
+                    }
+
                     // Build the output block for this file
                     var sb = new StringBuilder();
 
@@ -145,8 +153,7 @@ public sealed class OutputBuilder : IOutputBuilder
                     if (options.IncludeMetadata)
                         sb.AppendLine($"[Size: {fileInfo.Info.Length} bytes | Modified: {fileInfo.Info.LastWriteTime:yyyy-MM-dd HH:mm:ss}]");
 
-                    // Process and add file content
-                    var processedContent = await _contentProcessor.ProcessContentAsync(fileInfo, options, localCts.Token);
+                    // Add processed content
                     sb.AppendLine(processedContent);
 
                     // Add closing file marker
@@ -170,13 +177,15 @@ public sealed class OutputBuilder : IOutputBuilder
                     // Write to output file
                     await writer.WriteAsync(sb.ToString());
 
-                    // Update progress
+                    // Update stats and progress
+                    processedFileCount++;
                     task.Increment(1);
                 }
             });
 
         // Display final statistics
         _console.MarkupLine($"[bold]Output File:[/][underline blue] {outputFilePath}[/]");
+        _console.MarkupLine($"[bold]Files Included:[/][green] {processedFileCount}/{files.Count}[/]");
         _console.MarkupLine($"[bold]Final Size:[/][green] {new FileInfo(outputFilePath).Length:N0} bytes[/]");
 
         if (options.ShowTokenCount)

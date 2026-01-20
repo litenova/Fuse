@@ -30,6 +30,9 @@ namespace Fuse.Minifiers;
 /// <item>
 /// <description>Aggressive reduction (attributes, redundant keywords, auto-props)</description>
 /// </item>
+/// <item>
+/// <description>Aggressive whitespace removal (collapsing blank lines)</description>
+/// </item>
 /// </list>
 /// </remarks>
 public static class CSharpMinifier
@@ -72,7 +75,7 @@ public static class CSharpMinifier
     /// </summary>
     private static string RemoveComments(string content, FuseOptions options)
     {
-        if (options is { RemoveCSharpComments: false, ApplyAllOptions: false })
+        if (!options.RemoveCSharpComments && !options.ApplyAllOptions)
         {
             return content;
         }
@@ -117,7 +120,7 @@ public static class CSharpMinifier
     /// </summary>
     private static string RemoveUsings(string content, FuseOptions options)
     {
-        if (options is { RemoveCSharpUsings: false, ApplyAllOptions: false })
+        if (!options.RemoveCSharpUsings && !options.ApplyAllOptions)
         {
             return content;
         }
@@ -136,7 +139,7 @@ public static class CSharpMinifier
     /// </summary>
     private static string RemoveNamespaces(string content, FuseOptions options)
     {
-        if (options is { RemoveCSharpNamespaceDeclarations: false, ApplyAllOptions: false })
+        if (!options.RemoveCSharpNamespaceDeclarations && !options.ApplyAllOptions)
         {
             return content;
         }
@@ -154,11 +157,6 @@ public static class CSharpMinifier
         // We remove 4 spaces or 1 tab from the start of every line.
         content = Regex.Replace(content, @"^(\s{4}|\t)", "", RegexOptions.Multiline);
 
-        // Note: We do not attempt to remove the closing '}' of the namespace.
-        // Finding the exact matching brace via Regex is impossible (requires a parser).
-        // Leaving a dangling '}' at the end of the file is acceptable for LLM context
-        // as it prioritizes content density over compilation correctness.
-
         return content;
     }
 
@@ -174,18 +172,26 @@ public static class CSharpMinifier
         {
             "DebuggerDisplay", "DebuggerStepThrough", "DebuggerNonUserCode",
             "MethodImpl", "EditorBrowsable", "Serializable", "Obsolete",
-            "GeneratedCode", "CompilerGenerated", "ExcludeFromCodeCoverage"
+            "GeneratedCode", "CompilerGenerated", "ExcludeFromCodeCoverage",
+            "SuppressMessage", "AssemblyVersion", "AssemblyFileVersion",
+            "AssemblyTitle", "AssemblyDescription", "AssemblyConfiguration",
+            "AssemblyCompany", "AssemblyProduct", "AssemblyCopyright",
+            "AssemblyTrademark", "AssemblyCulture"
         };
 
         // Pattern matches [Attribute] or [Attribute(...)]
         var attrPattern = $@"\[\s*({string.Join("|", noiseAttributes)})(\(.*\))?\s*\]\s*";
         content = Regex.Replace(content, attrPattern, "");
 
-        // 2. Remove redundant "this." qualifier
+        // 2. Remove assembly-level attributes specifically (often found in GlobalSuppressions.cs)
+        // Matches [assembly: SuppressMessage(...)]
+        content = Regex.Replace(content, @"^\s*\[assembly:\s*SuppressMessage.*\]\s*$", "", RegexOptions.Multiline);
+
+        // 3. Remove redundant "this." qualifier
         // "this.Property" -> "Property"
         content = Regex.Replace(content, @"\bthis\.", "");
 
-        // 3. Compress Auto-Properties to single line
+        // 4. Compress Auto-Properties to single line
         // From:
         // public int Id
         // {
@@ -205,18 +211,19 @@ public static class CSharpMinifier
     /// </summary>
     private static string OptimizeWhitespace(string content)
     {
-        // Remove trailing whitespace from each line
+        // 1. Remove trailing whitespace from each line
         content = Regex.Replace(content, @"[\t ]+$", "", RegexOptions.Multiline);
 
-        // Condense multiple spaces to single space (preserving indentation at start of line)
+        // 2. Condense multiple spaces to single space (preserving indentation at start of line)
         // Matches 2+ spaces that are NOT at the start of a line
         content = Regex.Replace(content, @"(?<!^)[ ]{2,}", " ", RegexOptions.Multiline);
 
-        // Replace 3 or more consecutive newlines with 2 newlines
-        // This preserves paragraph separation but removes massive gaps
-        content = Regex.Replace(content, @"(\r?\n){3,}", "\n\n");
+        // 3. AGGRESSIVE: Remove ALL blank lines.
+        // Replace 2 or more consecutive newlines with a single newline.
+        // This ensures the code is a solid block of text with no vertical gaps.
+        content = Regex.Replace(content, @"(\r?\n){2,}", "\n");
 
-        // Remove blank lines that contain only whitespace
+        // 4. Remove blank lines that contain only whitespace (if any remain)
         content = Regex.Replace(content, @"^\s+$", "", RegexOptions.Multiline);
 
         return content;
