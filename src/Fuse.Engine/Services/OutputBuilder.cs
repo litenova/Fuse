@@ -24,13 +24,13 @@ namespace Fuse.Engine.Services;
 /// <description>Creating the output file with proper encoding</description>
 /// </item>
 /// <item>
+/// <description>Adding context metadata and format instructions</description>
+/// </item>
+/// <item>
 /// <description>Adding file markers and metadata</description>
 /// </item>
 /// <item>
 /// <description>Tracking and enforcing token limits</description>
-/// </item>
-/// <item>
-/// <description>Displaying progress and statistics</description>
 /// </item>
 /// <item>
 /// <description>Skipping files that become empty after minification</description>
@@ -114,6 +114,10 @@ public sealed class OutputBuilder : IOutputBuilder
         await using var outputStream = new FileStream(outputFilePath, FileMode.Create, FileAccess.Write, FileShare.None, 4096, true);
         await using var writer = new StreamWriter(outputStream, Encoding.UTF8);
 
+        // 1. Write Context Metadata Header
+        // This helps the LLM understand the project structure and file format
+        await WriteMetadataHeaderAsync(writer, options);
+
         // Display progress bar during processing
         await _console.Progress()
             .Columns(
@@ -136,8 +140,9 @@ public sealed class OutputBuilder : IOutputBuilder
                     // Process content first to see if it's empty
                     var processedContent = await _contentProcessor.ProcessContentAsync(fileInfo, options, localCts.Token);
 
-                    // SKIP EMPTY FILES: If minification stripped everything (e.g. GlobalSuppressions.cs), don't include it.
-                    if (string.IsNullOrWhiteSpace(processedContent))
+                    // SKIP EMPTY OR TRIVIAL FILES
+                    // We skip if content is whitespace, or if it's just empty JSON/Array structures
+                    if (IsContentTrivial(processedContent))
                     {
                         task.Increment(1);
                         continue;
@@ -146,19 +151,32 @@ public sealed class OutputBuilder : IOutputBuilder
                     // Build the output block for this file
                     var sb = new StringBuilder();
 
+                    // Normalize path to forward slashes for consistency and token efficiency
+                    var normalizedPath = fileInfo.RelativePath.Replace('\\', '/');
+
                     // Add opening file marker
-                    sb.AppendLine($"<|{fileInfo.RelativePath}|>");
+                    // Format: <|path/to/file|>
+                    sb.Append($"<|{normalizedPath}|>");
+                    sb.AppendLine(); // Newline after header is still useful for separation
 
                     // Add metadata if requested
                     if (options.IncludeMetadata)
+                    {
                         sb.AppendLine($"[Size: {fileInfo.Info.Length} bytes | Modified: {fileInfo.Info.LastWriteTime:yyyy-MM-dd HH:mm:ss}]");
+                    }
 
                     // Add processed content
-                    sb.AppendLine(processedContent);
+                    // We ensure the content ends with a newline to separate it from the closing tag
+                    sb.Append(processedContent);
+                    if (!processedContent.EndsWith('\n'))
+                    {
+                        sb.AppendLine();
+                    }
 
-                    // Add closing file marker
-                    sb.AppendLine($"<|{fileInfo.RelativePath}|>");
-                    sb.AppendLine();
+                    // Add simplified closing file marker
+                    // Format: <|/|>
+                    // We do NOT add a trailing newline here, allowing the next file header to start immediately
+                    sb.Append("<|/|>");
 
                     // Track token count if needed
                     if (options.ShowTokenCount || options.MaxTokens.HasValue)
@@ -187,8 +205,94 @@ public sealed class OutputBuilder : IOutputBuilder
         _console.MarkupLine($"[bold]Output File:[/][underline blue] {outputFilePath}[/]");
         _console.MarkupLine($"[bold]Files Included:[/][green] {processedFileCount}/{files.Count}[/]");
         _console.MarkupLine($"[bold]Final Size:[/][green] {new FileInfo(outputFilePath).Length:N0} bytes[/]");
-
         if (options.ShowTokenCount)
             _console.MarkupLine($"[bold]Est. Tokens:[/][yellow] {totalTokenCount:N0}[/]");
+    }
+
+    /// <summary>
+    /// Writes the context metadata header to the output file.
+    /// </summary>
+    private static async Task WriteMetadataHeaderAsync(StreamWriter writer, FuseOptions options)
+    {
+        var sb = new StringBuilder();
+
+        // Find the project root (Solution or Git root) to calculate relative base path
+        var rootPath = FindRootDirectory(options.SourceDirectory);
+        var basePathLabel = "Source Path";
+        var pathValue = options.SourceDirectory;
+
+        if (rootPath != null)
+        {
+            basePathLabel = "Base Path";
+
+            // Calculate relative path from the root (e.g., "src/MyService")
+            pathValue = Path.GetRelativePath(rootPath, options.SourceDirectory).Replace('\\', '/');
+
+            // If the source directory IS the root, represent it as "/"
+            if (pathValue == ".") pathValue = "/";
+        }
+
+        // Write the header block
+        sb.AppendLine("# FUSE CONTEXT");
+        sb.AppendLine($"# {basePathLabel}: {pathValue}");
+        sb.AppendLine("# File Format: <|path/to/file|> content <|/|>");
+        sb.AppendLine(); // Empty line to separate header from first file
+
+        await writer.WriteAsync(sb.ToString());
+    }
+
+    /// <summary>
+    /// Attempts to find the project root directory by looking for .sln files or .git folders.
+    /// </summary>
+    private static string? FindRootDirectory(string startPath)
+    {
+        try
+        {
+            var dir = new DirectoryInfo(startPath);
+            while (dir != null)
+            {
+                // Check for Solution file or Git folder
+                if (dir.GetFiles("*.sln").Length > 0 || dir.GetDirectories(".git").Length > 0)
+                {
+                    return dir.FullName;
+                }
+
+                dir = dir.Parent;
+            }
+        }
+        catch
+        {
+            // Ignore permission errors or invalid paths during root search
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Determines if the processed content is trivial and should be skipped.
+    /// </summary>
+    /// <param name="content">The processed file content.</param>
+    /// <returns>True if the content is empty, whitespace, or trivial JSON/Array structures.</returns>
+    private static bool IsContentTrivial(string content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+            return true;
+
+        var trimmed = content.Trim();
+
+        // Check for empty JSON object "{}"
+        if (trimmed == "{}")
+            return true;
+
+        // Check for empty JSON array "[]"
+        if (trimmed == "[]")
+            return true;
+
+        // Check for empty XML/HTML self-closing tags that might be leftovers (rare but possible)
+        // e.g. <root />
+        if (trimmed.StartsWith('<') && trimmed.EndsWith("/>") && trimmed.Length < 10)
+            return true;
+
+        return false;
     }
 }
