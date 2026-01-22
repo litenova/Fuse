@@ -158,17 +158,19 @@ public sealed class OutputBuilder : IOutputBuilder
                     // Format: <|path/to/file|>
                     sb.Append($"<|{normalizedPath}|>");
 
-                    // Add metadata if requested
+                    // Only add newline if metadata is present, otherwise content starts immediately
+                    // This saves vertical space in the output file
                     if (options.IncludeMetadata)
                     {
-                        // If metadata is included, we DO need a newline to separate it from the header
                         sb.AppendLine();
                         sb.AppendLine($"[Size: {fileInfo.Info.Length} bytes | Modified: {fileInfo.Info.LastWriteTime:yyyy-MM-dd HH:mm:ss}]");
                     }
 
                     // Add processed content
-                    // We ensure the content ends with a newline to separate it from the closing tag
                     sb.Append(processedContent);
+
+                    // Ensure content ends with newline before closing tag
+                    // This prevents the closing tag from being appended to the last line of code
                     if (!processedContent.EndsWith('\n'))
                     {
                         sb.AppendLine();
@@ -213,6 +215,8 @@ public sealed class OutputBuilder : IOutputBuilder
     /// <summary>
     /// Writes the context metadata header to the output file.
     /// </summary>
+    /// <param name="writer">The stream writer to write to.</param>
+    /// <param name="options">The fusion options.</param>
     private static async Task WriteMetadataHeaderAsync(StreamWriter writer, FuseOptions options)
     {
         var sb = new StringBuilder();
@@ -245,6 +249,8 @@ public sealed class OutputBuilder : IOutputBuilder
     /// <summary>
     /// Attempts to find the project root directory by looking for .sln files or .git folders.
     /// </summary>
+    /// <param name="startPath">The directory to start searching from.</param>
+    /// <returns>The path to the root directory, or null if not found.</returns>
     private static string? FindRootDirectory(string startPath)
     {
         try

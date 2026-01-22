@@ -19,7 +19,7 @@ namespace Fuse.Minifiers;
 /// </para>
 /// <list type="bullet">
 /// <item>
-/// <description>Removal of comments (single-line, multi-line, XML)</description>
+/// <description>Removal of comments (single-line, multi-line, XML) while preserving strings</description>
 /// </item>
 /// <item>
 /// <description>Removal of preprocessor directives (#region, #pragma, #if)</description>
@@ -46,6 +46,7 @@ public static class CSharpMinifier
     public static string Minify(string content, FuseOptions options)
     {
         // Step 1: Remove comments safely (respecting string literals)
+        // This must be done first to prevent comments from interfering with other regex patterns
         content = RemoveComments(content, options);
 
         // Step 2: Remove preprocessor directives
@@ -80,6 +81,9 @@ public static class CSharpMinifier
     /// <summary>
     /// Removes single-line, multi-line, and XML documentation comments while preserving string literals.
     /// </summary>
+    /// <param name="content">The content to process.</param>
+    /// <param name="options">The options to check if comment removal is enabled.</param>
+    /// <returns>The content with comments removed.</returns>
     private static string RemoveComments(string content, FuseOptions options)
     {
         if (!options.RemoveCSharpComments && !options.ApplyAllOptions)
@@ -87,24 +91,31 @@ public static class CSharpMinifier
             return content;
         }
 
-        // Regex to match strings OR comments.
-        // We capture strings in Group 1 & 2, and comments in Group 3 & 4.
-        // This ensures that if a comment marker appears inside a string, it is treated as part of the string.
+        // Comprehensive Regex to match strings OR comments.
+        // We capture strings in groups 1-5 to "protect" them.
+        // We capture comments in groups 6-7 to remove them.
+        //
+        // The order is critical: Strings must be matched first so that comment markers
+        // inside strings (e.g. var url = "http://example.com") are treated as content.
+        //
+        // Groups:
+        // 1. Interpolated Verbatim: $@"..." or @$"..."
+        // 2. Verbatim: @"..."
+        // 3. Interpolated: $"..."
+        // 4. Regular: "..."
+        // 5. Single-line comment: //...
+        // 6. Multi-line comment: /*...*/
 
-        // Group 1: Verbatim strings (@"...") - handles double quotes ""
-        // Group 2: Regular strings ("...") - handles escaped quotes \"
-        // Group 3: Single-line comments (//...)
-        // Group 4: Multi-line comments (/*...*/)
-
-        string pattern = @"(@""(?:""""|[^""])*"")|(""(?:\\.|[^""\\])*"")|(//[^\r\n]*)|(/\*[\s\S]*?\*/)";
+        string pattern =
+            @"(\$@""[^""]*(?:""""[^""]*)*"")|(@\$""[^""]*(?:""""[^""]*)*"")|(@""[^""]*(?:""""[^""]*)*"")|(\$""[^""\\]*(?:\\.[^""\\]*)*"")|(""[^""\\]*(?:\\.[^""\\]*)*"")|(//[^\r\n]*)|(/\*[\s\S]*?\*/)";
 
         return Regex.Replace(content, pattern, m =>
         {
-            // If it's a string (Group 1 or 2 matched), keep it exactly as is.
-            if (m.Groups[1].Success || m.Groups[2].Success)
+            // If it's a string (Groups 1-5 matched), keep it exactly as is.
+            if (m.Groups[1].Success || m.Groups[2].Success || m.Groups[3].Success || m.Groups[4].Success || m.Groups[5].Success)
                 return m.Value;
 
-            // It's a comment (Group 3 or 4 matched), remove it.
+            // It's a comment (Group 6 or 7 matched), remove it.
             return "";
         });
     }
@@ -117,8 +128,7 @@ public static class CSharpMinifier
         // Standard removal: Regions only
         if (options.RemoveCSharpRegions && !options.ApplyAllOptions && !options.AggressiveCSharpReduction)
         {
-            content = Regex.Replace(content, @"^\s*#(region|endregion)[^\r\n]*", "", RegexOptions.Multiline);
-            return content;
+            return Regex.Replace(content, @"^\s*#(region|endregion)[^\r\n]*", "", RegexOptions.Multiline);
         }
 
         // Aggressive removal: ALL directives (#region, #if, #pragma, #define, etc.)
@@ -126,7 +136,7 @@ public static class CSharpMinifier
         // rely on newlines to terminate. If we flatten without removing them, we break the code.
         if (options.AggressiveCSharpReduction || options.ApplyAllOptions)
         {
-            content = Regex.Replace(content, @"^\s*#.*", "", RegexOptions.Multiline);
+            return Regex.Replace(content, @"^\s*#.*", "", RegexOptions.Multiline);
         }
 
         return content;
@@ -216,9 +226,9 @@ public static class CSharpMinifier
         //     set;
         // }
         // To: public int Id { get; set; }
-        content = Regex.Replace(content, @"\{\s*get;\s*set;\s*\}", "{ get; set; }");
-        content = Regex.Replace(content, @"\{\s*get;\s*\}", "{ get; }");
-        content = Regex.Replace(content, @"\{\s*set;\s*\}", "{ set; }");
+        content = Regex.Replace(content, @"\{\s*get;\s*set;\s*\}", "{get;set;}");
+        content = Regex.Replace(content, @"\{\s*get;\s*\}", "{get;}");
+        content = Regex.Replace(content, @"\{\s*set;\s*\}", "{set;}");
 
         return content;
     }
@@ -232,13 +242,11 @@ public static class CSharpMinifier
     /// </remarks>
     private static string CompressSyntax(string content)
     {
-        // Store string literals to preserve them during minification
         var literals = new List<string>();
 
-        // Regex matches:
-        // 1. Verbatim strings (@"...") handling double-quote escaping ("")
-        // 2. Regular strings ("...") handling backslash escaping (\")
-        string stringPattern = @"@""(?:""""|[^""])*""|""(?:\\.|[^""\\])*""";
+        // Use the same robust pattern for string protection as RemoveComments
+        // This ensures we don't accidentally compress syntax inside a string literal
+        string stringPattern = @"(\$@""[^""]*(?:""""[^""]*)*"")|(@\$""[^""]*(?:""""[^""]*)*"")|(@""[^""]*(?:""""[^""]*)*"")|(\$""[^""\\]*(?:\\.[^""\\]*)*"")|(""[^""\\]*(?:\\.[^""\\]*)*"")";
 
         // Step 1: Protect literals by replacing them with placeholders
         content = Regex.Replace(content, stringPattern, m =>
@@ -281,17 +289,14 @@ public static class CSharpMinifier
         // 1. Remove trailing whitespace from each line
         content = Regex.Replace(content, @"[\t ]+$", "", RegexOptions.Multiline);
 
-        // 2. Condense multiple spaces to single space (preserving indentation at start of line)
-        // Matches 2+ spaces that are NOT at the start of a line
-        content = Regex.Replace(content, @"(?<!^)[ ]{2,}", " ", RegexOptions.Multiline);
+        // 2. Remove lines that are purely whitespace (often left after comment removal)
+        content = Regex.Replace(content, @"^\s+$", "", RegexOptions.Multiline);
 
-        // 3. Remove ALL blank lines.
+        // 3. Condense multiple newlines to single newline
         // Replace 2 or more consecutive newlines with a single newline.
         content = Regex.Replace(content, @"(\r?\n){2,}", "\n");
 
-        // 4. Remove blank lines that contain only whitespace (if any remain)
-        content = Regex.Replace(content, @"^\s+$", "", RegexOptions.Multiline);
-
-        return content;
+        // 4. Remove leading/trailing whitespace from the whole file
+        return content.Trim();
     }
 }
