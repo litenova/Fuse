@@ -45,7 +45,7 @@ public static class CSharpMinifier
     /// <returns>The minified C# content.</returns>
     public static string Minify(string content, FuseOptions options)
     {
-        // Step 1: Remove comments first to prevent interference with other regex patterns
+        // Step 1: Remove comments safely (respecting string literals)
         content = RemoveComments(content, options);
 
         // Step 2: Remove preprocessor directives
@@ -78,7 +78,7 @@ public static class CSharpMinifier
     }
 
     /// <summary>
-    /// Removes single-line, multi-line, and XML documentation comments.
+    /// Removes single-line, multi-line, and XML documentation comments while preserving string literals.
     /// </summary>
     private static string RemoveComments(string content, FuseOptions options)
     {
@@ -87,18 +87,26 @@ public static class CSharpMinifier
             return content;
         }
 
-        // Remove XML documentation comments (/// ...)
-        // Must be done before single-line comments to avoid partial matches
-        content = Regex.Replace(content, @"///[^\r\n]*", "");
+        // Regex to match strings OR comments.
+        // We capture strings in Group 1 & 2, and comments in Group 3 & 4.
+        // This ensures that if a comment marker appears inside a string, it is treated as part of the string.
 
-        // Remove Single-line comments (// ...)
-        // Uses lookbehind (?<!:) to avoid matching URLs like http://
-        content = Regex.Replace(content, @"(?<!:)//(?!/)[^\r\n]*", "");
+        // Group 1: Verbatim strings (@"...") - handles double quotes ""
+        // Group 2: Regular strings ("...") - handles escaped quotes \"
+        // Group 3: Single-line comments (//...)
+        // Group 4: Multi-line comments (/*...*/)
 
-        // Remove Multi-line comments (/* ... */)
-        content = Regex.Replace(content, @"/\*.*?\*/", "", RegexOptions.Singleline);
+        string pattern = @"(@""(?:""""|[^""])*"")|(""(?:\\.|[^""\\])*"")|(//[^\r\n]*)|(/\*[\s\S]*?\*/)";
 
-        return content;
+        return Regex.Replace(content, pattern, m =>
+        {
+            // If it's a string (Group 1 or 2 matched), keep it exactly as is.
+            if (m.Groups[1].Success || m.Groups[2].Success)
+                return m.Value;
+
+            // It's a comment (Group 3 or 4 matched), remove it.
+            return "";
+        });
     }
 
     /// <summary>
@@ -204,8 +212,8 @@ public static class CSharpMinifier
         // From:
         // public int Id
         // {
-        //    get;
-        //    set;
+        //     get;
+        //     set;
         // }
         // To: public int Id { get; set; }
         content = Regex.Replace(content, @"\{\s*get;\s*set;\s*\}", "{ get; set; }");
@@ -230,8 +238,6 @@ public static class CSharpMinifier
         // Regex matches:
         // 1. Verbatim strings (@"...") handling double-quote escaping ("")
         // 2. Regular strings ("...") handling backslash escaping (\")
-        // Note: Interpolated strings ($"...") are handled because the quote part matches #2, 
-        // leaving the $ as a token which is preserved.
         string stringPattern = @"@""(?:""""|[^""])*""|""(?:\\.|[^""\\])*""";
 
         // Step 1: Protect literals by replacing them with placeholders
@@ -249,7 +255,7 @@ public static class CSharpMinifier
         content = Regex.Replace(content, @"\s*([{};,:()=\[\]])\s*", "$1");
 
         // Step 3: Collapse all remaining whitespace sequences (including newlines) to a single space
-        // This handles the keywords: "public    static   void" -> "public static void"
+        // This handles the keywords: "public static void" -> "public static void"
         // It also merges lines: "int x; \n int y;" -> "int x;int y;" (because ; was handled above)
         content = Regex.Replace(content, @"\s+", " ");
 

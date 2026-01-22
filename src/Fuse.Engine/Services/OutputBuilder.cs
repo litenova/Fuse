@@ -157,11 +157,12 @@ public sealed class OutputBuilder : IOutputBuilder
                     // Add opening file marker
                     // Format: <|path/to/file|>
                     sb.Append($"<|{normalizedPath}|>");
-                    sb.AppendLine(); // Newline after header is still useful for separation
 
                     // Add metadata if requested
                     if (options.IncludeMetadata)
                     {
+                        // If metadata is included, we DO need a newline to separate it from the header
+                        sb.AppendLine();
                         sb.AppendLine($"[Size: {fileInfo.Info.Length} bytes | Modified: {fileInfo.Info.LastWriteTime:yyyy-MM-dd HH:mm:ss}]");
                     }
 
