@@ -24,7 +24,7 @@ namespace Fuse.Engine.Services;
 ///             <description>Managing output file streams and encoding (UTF-8).</description>
 ///         </item>
 ///         <item>
-///             <description>Formatting file content with clear delimiters for LLM parsing.</description>
+///             <description>Formatting file content using semantic XML tags (<c>&lt;fuse:file&gt;</c>) for optimal LLM parsing.</description>
 ///         </item>
 ///         <item>
 ///             <description>Tracking token usage using the <see cref="TikToken"/> tokenizer.</description>
@@ -79,8 +79,7 @@ public sealed class OutputBuilder : IOutputBuilder
     /// <exception cref="IOException">Thrown if the output file exists and overwrite is disabled.</exception>
     public async Task BuildOutputAsync(List<FileProcessingInfo> files, FuseOptions options, CancellationToken cancellationToken)
     {
-        // 1. Determine Base Filename
-        // We need a clean base name (e.g., "fused_src") to append part numbers to later (e.g., "fused_src_part1.txt")
+        // 1. Determine Base Filename (without extension or path)
         string baseFileName;
         if (!string.IsNullOrWhiteSpace(options.OutputFileName))
         {
@@ -89,37 +88,50 @@ public sealed class OutputBuilder : IOutputBuilder
 
             // Strip extension if present so we can handle it consistently
             if (Path.HasExtension(baseFileName))
+            {
                 baseFileName = Path.GetFileNameWithoutExtension(baseFileName);
+            }
         }
         else
         {
             // Auto-generate name based on source directory and timestamp
-            // Format: fused_DirectoryName_YYYYMMDDHHMMSS
+            // Format: fused_DirectoryName_YYYY-MM-DD_HH-mm
             var allSuffix = options.ApplyAllOptions ? "_all" : string.Empty;
-            baseFileName = $"fused_{Path.GetFileName(options.SourceDirectory)}{allSuffix}_{DateTime.Now:yyyyMMddHHmmss}";
+
+            // Sanitize directory name: replace dots with underscores to avoid confusion with file extensions
+            // Example: "My.Project" -> "My_Project"
+            var dirName = Path.GetFileName(options.SourceDirectory).Replace('.', '_');
+
+            // Use a readable timestamp format (ISO-8601 inspired but filesystem safe)
+            var timestamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm");
+
+            baseFileName = $"fused_{dirName}{allSuffix}_{timestamp}";
         }
 
         // 2. State Tracking
-        long totalGlobalTokens = 0; // Total tokens across ALL parts
-        long currentFileTokens = 0; // Tokens in the CURRENT active output file
-        int processedFileCount = 0; // Number of files successfully written
-        int currentPart = 1;        // Current part number for splitting
+        long totalGlobalTokens = 0;    // Total tokens across ALL parts
+        long currentFileTokens = 0;    // Tokens in the CURRENT active output file
+        int processedFileCount = 0;    // Number of files successfully written
+        int currentPart = 1;           // Current part number for splitting
+        bool hasSplitOccurred = false; // Tracks if we ever needed to split (affects naming)
 
-        // Track created files for final summary
         var createdFilePaths = new List<string>();
-
-        // Create a linked cancellation token for internal token limit enforcement
         var localCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
-        // 3. Initialize First File Stream
-        // We open the first file immediately to write the header
-        var (currentStream, currentWriter, currentFilePath) = await CreateNewOutputFileAsync(
-            options.OutputDirectory, baseFileName, currentPart, options);
-        createdFilePaths.Add(currentFilePath);
+        // 3. Setup Temporary File
+        // We write to a .tmp file first, then rename it with the final token count/part number when done.
+        // This ensures filenames accurately reflect their content size (e.g., _554k.txt).
+        var tempFilePath = Path.Combine(options.OutputDirectory, $"{baseFileName}.tmp");
+
+        // Ensure output directory exists
+        Directory.CreateDirectory(options.OutputDirectory);
+
+        // Open the initial stream
+        var (currentStream, currentWriter) = CreateStream(tempFilePath);
 
         try
         {
-            // Write initial header to the first file
+            // Write header to the first file
             await WriteMetadataHeaderAsync(currentWriter, options, currentPart);
 
             // Display progress bar using Spectre.Console
@@ -139,7 +151,10 @@ public sealed class OutputBuilder : IOutputBuilder
                     foreach (var fileInfo in files)
                     {
                         // Check for cancellation (either user-initiated or token limit reached)
-                        if (localCts.IsCancellationRequested) break;
+                        if (localCts.IsCancellationRequested)
+                        {
+                            break;
+                        }
 
                         // Process content first (read, minify, trim)
                         var processedContent = await _contentProcessor.ProcessContentAsync(fileInfo, options, localCts.Token);
@@ -155,67 +170,70 @@ public sealed class OutputBuilder : IOutputBuilder
                         // Calculate tokens for this specific file entry
                         var fileTokenCount = _tokenizer.Encode(processedContent).Count;
 
-                        // Add overhead for file markers.
-                        // Structure: <|path|>\n [Content] \n<|/|>\n
-                        // This adds approximately 20-25 tokens depending on path length.
-                        var markerOverhead = 25;
+                        // Add overhead for <fuse:file ...> tags + attributes + newlines
+                        // Approx 30 tokens is a safe buffer for the XML structure
+                        var markerOverhead = 30;
                         var totalEntryTokens = fileTokenCount + markerOverhead;
 
-                        // CHECK FOR SPLIT CONDITION
-                        // Logic: If we have a split limit, AND adding this file would exceed it,
-                        // AND we aren't at the start of a new file (to prevent infinite loops on single huge files).
+                        // --- SPLIT LOGIC ---
+                        // Check if adding this file would exceed the split threshold.
+                        // We ensure currentFileTokens > 0 to prevent infinite loops if a single file is larger than the limit.
                         if (options.SplitTokens.HasValue &&
                             (currentFileTokens + totalEntryTokens > options.SplitTokens.Value) &&
                             currentFileTokens > 0)
                         {
-                            // 1. Close current file resources
+                            // 1. Close current temp file resources
                             await currentWriter.DisposeAsync();
                             await currentStream.DisposeAsync();
 
-                            // 2. Rotate state
+                            // 2. Finalize the current part (Rename .tmp -> _partX_100k.txt)
+                            // Since we are splitting, isMultiPart is definitely true.
+                            var finalPath = FinalizeFile(tempFilePath, options.OutputDirectory, baseFileName, currentPart, currentFileTokens, options.Overwrite, true);
+                            createdFilePaths.Add(finalPath);
+
+                            _console.MarkupLine($"[dim]Part {currentPart} complete ({FormatTokenCount(currentFileTokens)}). Starting Part {currentPart + 1}...[/]");
+
+                            // 3. Reset State for next part
                             currentPart++;
                             currentFileTokens = 0;
+                            hasSplitOccurred = true;
 
-                            // 3. Open new file for the next part
-                            (currentStream, currentWriter, currentFilePath) = await CreateNewOutputFileAsync(
-                                options.OutputDirectory, baseFileName, currentPart, options);
-                            createdFilePaths.Add(currentFilePath);
+                            // 4. Open new temp file
+                            (currentStream, currentWriter) = CreateStream(tempFilePath);
 
-                            // 4. Write header for the new part
+                            // 5. Write header for new part
                             await WriteMetadataHeaderAsync(currentWriter, options, currentPart);
-
-                            _console.MarkupLine($"[dim]Split limit reached. Starting Part {currentPart}...[/]");
                         }
 
-                        // Build the output block for this file
+                        // --- CONTENT WRITING (Semantic XML) ---
                         var sb = new StringBuilder();
 
                         // Normalize path to forward slashes for consistency and token efficiency
                         var normalizedPath = fileInfo.RelativePath.Replace('\\', '/');
 
-                        // 1. Opening Tag + Newline
-                        // Placing content on a new line prevents tokenizer merging issues
-                        sb.AppendLine($"<|{normalizedPath}|>");
-
-                        // 2. Metadata (Optional)
+                        // 1. Opening Tag with Attributes
+                        // Format: <fuse:file path="src/Program.cs" size="1024">
+                        sb.Append($"<fuse:file path=\"{normalizedPath}\"");
                         if (options.IncludeMetadata)
                         {
-                            sb.AppendLine($"[Size: {fileInfo.Info.Length} bytes | Modified: {fileInfo.Info.LastWriteTime:yyyy-MM-dd HH:mm:ss}]");
+                            // Add metadata as attributes on the same line
+                            sb.Append($" size=\"{fileInfo.Info.Length}\" modified=\"{fileInfo.Info.LastWriteTime:yyyy-MM-dd HH:mm:ss}\"");
                         }
 
-                        // 3. Content
+                        sb.AppendLine(">"); // Close the opening tag and add newline
+
+                        // 2. Content
                         sb.Append(processedContent);
 
-                        // 4. Ensure content ends with newline before closing tag
+                        // 3. Ensure content ends with newline before closing tag
                         // This prevents the closing tag from being appended to the last line of code
                         if (!processedContent.EndsWith('\n'))
                         {
                             sb.AppendLine();
                         }
 
-                        // 5. Closing Tag + Newline
-                        // We add a newline after the closing tag to separate it from the next file header
-                        sb.AppendLine("<|/|>");
+                        // 4. Closing Tag + Newline
+                        sb.AppendLine("</fuse:file>");
 
                         // Write to current stream
                         await currentWriter.WriteAsync(sb.ToString());
@@ -236,7 +254,30 @@ public sealed class OutputBuilder : IOutputBuilder
                     }
                 });
 
-            // Display final statistics
+            // --- FINALIZE LAST FILE ---
+            // Close the stream first to release the file lock
+            await currentWriter.DisposeAsync();
+            await currentStream.DisposeAsync();
+            currentWriter = null;
+            currentStream = null;
+
+            if (currentFileTokens > 0)
+            {
+                // If hasSplitOccurred is true, this is the last part of a multi-part set (e.g., Part 3).
+                // If hasSplitOccurred is false, this is just a single file (Part 1), so we pass false to omit "_part1".
+                var finalPath = FinalizeFile(tempFilePath, options.OutputDirectory, baseFileName, currentPart, currentFileTokens, options.Overwrite, hasSplitOccurred);
+                createdFilePaths.Add(finalPath);
+            }
+            else
+            {
+                // Clean up empty temp file if nothing was written (e.g., all files were filtered out)
+                if (File.Exists(tempFilePath))
+                {
+                    File.Delete(tempFilePath);
+                }
+            }
+
+            // --- FINAL SUMMARY ---
             _console.MarkupLine($"[bold]Processing Complete[/]");
             _console.MarkupLine($"[bold]Total Files:[/][green] {processedFileCount}/{files.Count}[/]");
 
@@ -244,63 +285,104 @@ public sealed class OutputBuilder : IOutputBuilder
             foreach (var path in createdFilePaths)
             {
                 var fileInfo = new FileInfo(path);
-                var sizeKb = fileInfo.Length / 1024.0;
-                _console.MarkupLine($"[bold]Output:[/][underline blue] {fileInfo.Name}[/] ([green]{sizeKb:N2} KB[/])");
+                var sizeKB = fileInfo.Length / 1024.0;
+                _console.MarkupLine($"[bold]Output:[/][underline blue] {fileInfo.Name}[/] ([green]{sizeKB:N2} KB[/])");
             }
 
             if (options.ShowTokenCount)
+            {
                 _console.MarkupLine($"[bold]Total Tokens:[/][yellow] {totalGlobalTokens:N0}[/]");
+            }
         }
         finally
         {
             // Ensure streams are properly disposed even if an exception occurs
-            if (currentWriter != null) await currentWriter.DisposeAsync();
-            if (currentStream != null) await currentStream.DisposeAsync();
+            if (currentWriter != null)
+            {
+                await currentWriter.DisposeAsync();
+            }
+
+            if (currentStream != null)
+            {
+                await currentStream.DisposeAsync();
+            }
+
+            // Safety cleanup for temp file
+            if (File.Exists(tempFilePath))
+            {
+                File.Delete(tempFilePath);
+            }
         }
     }
 
     /// <summary>
-    ///     Creates a new output file stream and writer for a specific part.
+    ///     Helper to open a stream for the temporary file.
     /// </summary>
-    /// <param name="directory">The output directory.</param>
-    /// <param name="baseName">The base filename (without extension).</param>
-    /// <param name="part">The part number (1-based).</param>
-    /// <param name="options">The fusion options.</param>
-    /// <returns>A tuple containing the stream, the writer, and the full file path.</returns>
-    /// <exception cref="IOException">Thrown if the file exists and overwrite is disabled.</exception>
-    private Task<(FileStream, StreamWriter, string)> CreateNewOutputFileAsync(
-        string directory,
-        string baseName,
-        int part,
-        FuseOptions options)
+    /// <param name="path">The path to the temporary file.</param>
+    /// <returns>A tuple containing the file stream and stream writer.</returns>
+    private static (FileStream, StreamWriter) CreateStream(string path)
     {
-        string fileName;
-
-        // Naming Convention:
-        // If SplitTokens is set, we ALWAYS append _partX to ensure consistent naming.
-        // If not set, we use the base name (single file mode).
-        if (options.SplitTokens.HasValue)
-        {
-            fileName = $"{baseName}_part{part}.txt";
-        }
-        else
-        {
-            fileName = $"{baseName}.txt";
-        }
-
-        var fullPath = Path.Combine(directory, fileName);
-
-        // Check for existing file and overwrite permission
-        if (File.Exists(fullPath) && !options.Overwrite)
-        {
-            throw new IOException($"The file '{fullPath}' already exists and overwrite is disabled.");
-        }
-
-        // Open output file stream with buffered writing (4KB buffer)
-        var stream = new FileStream(fullPath, FileMode.Create, FileAccess.Write, FileShare.None, 4096, true);
+        var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 4096, true);
         var writer = new StreamWriter(stream, Encoding.UTF8);
+        return (stream, writer);
+    }
 
-        return Task.FromResult((stream, writer, fullPath));
+    /// <summary>
+    ///     Renames the temporary file to the final filename with token count and optional part number.
+    /// </summary>
+    /// <param name="tempPath">The path to the temporary file.</param>
+    /// <param name="directory">The output directory.</param>
+    /// <param name="baseName">The base filename.</param>
+    /// <param name="part">The part number.</param>
+    /// <param name="tokenCount">The token count for this file.</param>
+    /// <param name="overwrite">Whether to overwrite existing files.</param>
+    /// <param name="isMultiPart">Whether this file is part of a multi-part set.</param>
+    /// <returns>The full path to the finalized file.</returns>
+    private string FinalizeFile(string tempPath, string directory, string baseName, int part, long tokenCount, bool overwrite, bool isMultiPart)
+    {
+        // Format tokens: 800000 -> 800k, 500 -> 500t
+        var tokenString = FormatTokenCount(tokenCount);
+
+        // Construct filename
+        // If multi-part: name_part1_800k.txt
+        // If single-part: name_50k.txt
+        var partSuffix = isMultiPart ? $"_part{part}" : "";
+        var fileName = $"{baseName}{partSuffix}_{tokenString}.txt";
+        var finalPath = Path.Combine(directory, fileName);
+
+        if (File.Exists(finalPath))
+        {
+            if (!overwrite)
+            {
+                // Fallback if overwrite disabled: try appending a timestamp to avoid collision
+                fileName = $"{baseName}{partSuffix}_{tokenString}_{DateTime.Now:mmss}.txt";
+                finalPath = Path.Combine(directory, fileName);
+            }
+            else
+            {
+                File.Delete(finalPath);
+            }
+        }
+
+        File.Move(tempPath, finalPath);
+        return finalPath;
+    }
+
+    /// <summary>
+    ///     Formats a token count into a readable string (e.g., 1k, 500t).
+    /// </summary>
+    /// <param name="count">The raw token count.</param>
+    /// <returns>A formatted string representation.</returns>
+    private static string FormatTokenCount(long count)
+    {
+        if (count < 1000)
+        {
+            return $"{count}t";
+        }
+
+        // Round to nearest whole number for thousands (e.g., 554.3k -> 554k)
+        // The :0 format specifier ensures no decimal places are shown
+        return $"{count / 1000.0:0}k";
     }
 
     /// <summary>
@@ -316,8 +398,6 @@ public sealed class OutputBuilder : IOutputBuilder
     private static async Task WriteMetadataHeaderAsync(StreamWriter writer, FuseOptions options, int partNumber)
     {
         var sb = new StringBuilder();
-
-        // Find the project root (Solution or Git root) to calculate relative base path
         var rootPath = FindRootDirectory(options.SourceDirectory);
         var basePathLabel = "Source Path";
         var pathValue = options.SourceDirectory;
@@ -325,31 +405,30 @@ public sealed class OutputBuilder : IOutputBuilder
         if (rootPath != null)
         {
             basePathLabel = "Base Path";
-
-            // Calculate relative path from the root (e.g., "src/MyService")
             pathValue = Path.GetRelativePath(rootPath, options.SourceDirectory).Replace('\\', '/');
-
-            // If the source directory IS the root, represent it as "/"
-            if (pathValue == ".") pathValue = "/";
+            if (pathValue == ".")
+            {
+                pathValue = "/";
+            }
         }
 
-        // Write the header block
         sb.AppendLine("# FUSE CONTEXT");
         sb.AppendLine($"# {basePathLabel}: {pathValue}");
 
-        // Add Part Metadata if splitting is active
+        // Only write Part number if we are actually in a split scenario (or configured to split)
+        // Note: Since we write the header *before* we know if we will split, we check the Option.
+        // If the user requested splitting, we include the part number for consistency.
         if (options.SplitTokens.HasValue)
         {
             sb.AppendLine($"# Part: {partNumber}");
         }
 
-        // Describe the file format explicitly for the LLM
+        // Describe the semantic XML file format explicitly for the LLM
         sb.AppendLine("# File Format:");
-        sb.AppendLine("# <|path/to/file|>");
+        sb.AppendLine("# <fuse:file path=\"path/to/file\" size=\"bytes\">");
         sb.AppendLine("# [Content]");
-        sb.AppendLine("# <|/|>");
-        sb.AppendLine(); // Empty line to separate header from first file
-
+        sb.AppendLine("# </fuse:file>");
+        sb.AppendLine();
         await writer.WriteAsync(sb.ToString());
     }
 
@@ -390,22 +469,30 @@ public sealed class OutputBuilder : IOutputBuilder
     private static bool IsContentTrivial(string content)
     {
         if (string.IsNullOrWhiteSpace(content))
+        {
             return true;
+        }
 
         var trimmed = content.Trim();
 
         // Check for empty JSON object "{}"
         if (trimmed == "{}")
+        {
             return true;
+        }
 
         // Check for empty JSON array "[]"
         if (trimmed == "[]")
+        {
             return true;
+        }
 
         // Check for empty XML/HTML self-closing tags that might be leftovers (rare but possible)
         // e.g. <root />
         if (trimmed.StartsWith('<') && trimmed.EndsWith("/>") && trimmed.Length < 10)
+        {
             return true;
+        }
 
         return false;
     }
