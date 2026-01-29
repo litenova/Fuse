@@ -104,6 +104,7 @@ public class FuseCliCommand : CommandBase
 
             // Token options
             MaxTokens = MaxTokens,
+            SplitTokens = SplitTokens,
             ShowTokenCount = ShowTokenCount,
 
             // Test project options

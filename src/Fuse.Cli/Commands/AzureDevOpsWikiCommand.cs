@@ -97,10 +97,8 @@ public sealed class AzureDevOpsWikiCommand : CommandBase
 
             // Token options
             MaxTokens = MaxTokens,
+            SplitTokens = SplitTokens,
             ShowTokenCount = ShowTokenCount,
-
-            // Test project options (typically not relevant for wikis)
-            ExcludeTestProjects = ExcludeTestProjects,
 
             // Default content transformations
             UseCondensing = true,

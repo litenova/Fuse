@@ -183,14 +183,22 @@ public abstract class CommandBase
     /// <summary>
     ///     Gets or sets the maximum token count limit.
     /// </summary>
-    /// <value>The maximum number of tokens, or null for unlimited.</value>
-    [CliOption(Description = "Stops processing when token count is reached.")]
+    [CliOption(Description = "Stops processing completely when token count is reached.")]
     public int? MaxTokens { get; set; }
+
+    /// <summary>
+    ///     Gets or sets the token threshold for file splitting.
+    /// </summary>
+    /// <remarks>
+    ///     Defaults to 800,000 to ensure files fit within standard 1M context windows (Gemini 1.5 Pro, etc.)
+    ///     with a safety buffer.
+    /// </remarks>
+    [CliOption(Description = "Split output into multiple files when this token count is exceeded.")]
+    public int? SplitTokens { get; set; } = 800000;
 
     /// <summary>
     ///     Gets or sets a value indicating whether to display token count in the output.
     /// </summary>
-    /// <value><c>true</c> to show token count; otherwise, <c>false</c>. Defaults to <c>true</c>.</value>
     [CliOption(Description = "Displays the final estimated token count upon completion.")]
     public bool ShowTokenCount { get; set; } = true;
 

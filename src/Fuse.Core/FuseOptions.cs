@@ -200,15 +200,16 @@ public sealed record FuseOptions
     ///     Gets the maximum number of tokens allowed in the output.
     /// </summary>
     /// <value>The token limit, or <c>null</c> for unlimited. Defaults to <c>null</c>.</value>
-    /// <remarks>
-    ///     When set, processing will stop once this token count is reached.
-    ///     Useful for preparing content for LLMs with context length limits.
-    /// </remarks>
     public int? MaxTokens { get; init; }
+
+    /// <summary>
+    ///     Gets the token threshold at which to split the output into a new file.
+    /// </summary>
+    /// <value>The token count to split at. Defaults to 800,000 via CLI.</value>
+    public int? SplitTokens { get; init; }
 
     /// <summary>
     ///     Gets a value indicating whether to display token count in the output summary.
     /// </summary>
-    /// <value><c>true</c> to show token count; otherwise, <c>false</c>. Defaults to <c>false</c>.</value>
     public bool ShowTokenCount { get; init; }
 }
