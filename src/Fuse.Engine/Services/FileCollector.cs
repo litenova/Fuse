@@ -51,7 +51,18 @@ namespace Fuse.Engine.Services;
 public sealed class FileCollector : IFileCollector
 {
     /// <summary>
-    ///     Common test project directory suffixes to identify test projects.
+    ///     Unit test project directory suffixes (excludes integration/e2e/benchmarks).
+    /// </summary>
+    private static readonly string[] UnitTestProjectSuffixes =
+    [
+        "UnitTests", "UnitTest", "Tests", "Test", "Testing",
+        "TestProject", "TestSuite", "TestLib", "TestData", "TestFramework",
+        "TestUtils", "TestUtilities", "TestHelper", "TestHelpers", "TestCommon",
+        "TestShared", "TestSupport"
+    ];
+
+    /// <summary>
+    ///     Common test project directory suffixes to identify all test projects.
     /// </summary>
     private static readonly string[] TestProjectSuffixes =
     [
@@ -127,8 +138,9 @@ public sealed class FileCollector : IFileCollector
             // Filter 3: Exclude files in excluded directories
             .Where(f => !IsInExcludedFolder(f.RelativePath, config.ExcludeDirectories))
 
-            // Filter 4: Exclude test projects if requested
+            // Filter 4: Exclude test projects if requested (all tests or just unit tests)
             .Where(f => !options.ExcludeTestProjects || !IsInTestProjectFolder(f.RelativePath))
+            .Where(f => !options.ExcludeUnitTestProjects || !IsInUnitTestProjectFolder(f.RelativePath))
 
             // Filter 5: Apply file size limit if specified
             .Where(f => options.MaxFileSizeKB == 0 || f.Info.Length <= options.MaxFileSizeKB * 1024)
@@ -170,6 +182,23 @@ public sealed class FileCollector : IFileCollector
         var pathParts = relativePath.Split(Path.DirectorySeparatorChar);
         return pathParts.Any(part =>
             TestProjectSuffixes.Any(suffix =>
+                part.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    /// <summary>
+    ///     Determines if a file path is within a unit test project directory.
+    /// </summary>
+    /// <param name="relativePath">The relative path to check.</param>
+    /// <returns><c>true</c> if the path is in a unit test project folder; otherwise, <c>false</c>.</returns>
+    /// <remarks>
+    ///     This method checks each directory component against unit test project naming conventions only,
+    ///     excluding integration tests, end-to-end tests, and benchmarks.
+    /// </remarks>
+    private static bool IsInUnitTestProjectFolder(string relativePath)
+    {
+        var pathParts = relativePath.Split(Path.DirectorySeparatorChar);
+        return pathParts.Any(part =>
+            UnitTestProjectSuffixes.Any(suffix =>
                 part.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)));
     }
 

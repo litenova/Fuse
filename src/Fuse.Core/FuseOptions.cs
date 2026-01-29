@@ -181,6 +181,16 @@ public sealed record FuseOptions
     public bool ExcludeTestProjects { get; init; } = false;
 
     /// <summary>
+    ///     Gets a value indicating whether to exclude only unit test project directories.
+    /// </summary>
+    /// <value><c>true</c> to exclude unit test projects only; otherwise, <c>false</c>. Defaults to <c>false</c>.</value>
+    /// <remarks>
+    ///     When enabled, this excludes only unit test projects (e.g., UnitTests, Tests, TestProject)
+    ///     while keeping integration tests, end-to-end tests, and benchmarks.
+    /// </remarks>
+    public bool ExcludeUnitTestProjects { get; init; } = false;
+
+    /// <summary>
     ///     Gets a value indicating whether to respect .gitignore file rules.
     /// </summary>
     /// <value><c>true</c> to honor .gitignore; otherwise, <c>false</c>. Defaults to <c>true</c>.</value>

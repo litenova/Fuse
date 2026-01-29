@@ -107,6 +107,7 @@ public sealed class DotNetCommand : CommandBase
 
             // Test project options
             ExcludeTestProjects = ExcludeTestProjects,
+            ExcludeUnitTestProjects = ExcludeUnitTestProjects,
 
             // .NET-specific options
             // If 'All' is true, it overrides the individual flags to true
@@ -178,6 +179,17 @@ public sealed class DotNetCommand : CommandBase
     /// <value><c>true</c> to minify HTML/Razor; otherwise, <c>false</c>. Defaults to <c>true</c>.</value>
     [CliOption(Description = "Minify HTML and Razor files.")]
     public bool MinifyHtmlAndRazor { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether to exclude only unit test project directories.
+    /// </summary>
+    /// <value><c>true</c> to exclude unit test projects only; otherwise, <c>false</c>. Defaults to <c>false</c>.</value>
+    /// <remarks>
+    /// This excludes projects like UnitTests, Tests, TestProject, but keeps
+    /// IntegrationTests, EndToEndTests, E2ETests, and Benchmarks.
+    /// </remarks>
+    [CliOption(Description = "Exclude only unit test project directories (keeps integration tests and benchmarks).")]
+    public bool ExcludeUnitTestProjects { get; set; } = false;
 
     /// <summary>
     /// Gets or sets a value indicating whether to apply all available optimizations.

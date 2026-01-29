@@ -89,8 +89,9 @@ public sealed class OutputBuilder : IOutputBuilder
         else
         {
             // Auto-generate name based on source directory and timestamp
-            // Format: fused_DirectoryName_YYYYMMDDHHMMSS.txt
-            outputFileName = $"fused_{Path.GetFileName(options.SourceDirectory)}_{DateTime.Now:yyyyMMddHHmmss}.txt";
+            // Format: fused_DirectoryName_YYYYMMDDHHMMSS.txt (or fused_DirectoryName_all_YYYYMMDDHHMMSS.txt if --all is used)
+            var allSuffix = options.ApplyAllOptions ? "_all" : string.Empty;
+            outputFileName = $"fused_{Path.GetFileName(options.SourceDirectory)}{allSuffix}_{DateTime.Now:yyyyMMddHHmmss}.txt";
         }
 
         // Construct full output path
