@@ -111,6 +111,7 @@ public sealed class OutputBuilder : IOutputBuilder
         bool hasSplitOccurred = false; // Tracks if we ever needed to split (affects naming)
 
         var createdFilePaths = new List<string>();
+        var fileTokenStats = new List<FileTokenInfo>();
         var localCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
         // 3. Setup Temporary File
@@ -150,6 +151,9 @@ public sealed class OutputBuilder : IOutputBuilder
 
                 // Calculate tokens for this specific file entry
                 var fileTokenCount = _tokenizer.Encode(processedContent).Count;
+
+                // Track file token stats for analysis
+                fileTokenStats.Add(new FileTokenInfo(fileInfo.RelativePath, fileTokenCount));
 
                 // Add overhead for <file path="..."> tags + newlines
                 // Approx 30 tokens is a safe buffer for the XML structure
@@ -248,12 +252,20 @@ public sealed class OutputBuilder : IOutputBuilder
 
             // --- RETURN RESULT ---
             var duration = DateTime.Now - startTime;
+            
+            // Get top 5 token consumers
+            var topTokenFiles = fileTokenStats
+                .OrderByDescending(f => f.Count)
+                .Take(5)
+                .ToList();
+            
             return new FusionResult(
                 createdFilePaths,
                 totalGlobalTokens,
                 processedFileCount,
                 files.Count,
-                duration);
+                duration,
+                topTokenFiles);
         }
         finally
         {

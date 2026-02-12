@@ -117,9 +117,6 @@ public sealed class FuseEngine
     /// </example>
     public async Task FuseAsync(FuseOptions options, CancellationToken cancellationToken)
     {
-        // Display starting step
-        _consoleUI.WriteStep($"Starting fusion for {options.SourceDirectory}");
-
         try
         {
             // ===== Step 1: Resolve Configuration =====
@@ -128,7 +125,6 @@ public sealed class FuseEngine
 
             // ===== Step 2: Collect Files =====
             // Search for files matching the configuration
-            _consoleUI.WriteStep("Searching for files...");
             var files = _fileCollector.CollectFiles(options, config);
             _consoleUI.WriteStep($"Found {files.Count} files to process.");
 
@@ -185,6 +181,20 @@ public sealed class FuseEngine
                 : $"{result.TotalTokens}";
 
             _consoleUI.WriteResult($"Stats:  {totalSizeKB:F0} KB • {tokensFormatted} tokens");
+            
+            // Display top token consumers
+            if (result.TopTokenFiles.Count > 0)
+            {
+                _consoleUI.WriteResult("\nTop Token Consumers:");
+                for (int i = 0; i < result.TopTokenFiles.Count; i++)
+                {
+                    var file = result.TopTokenFiles[i];
+                    var count = file.Count >= 1000
+                        ? $"{file.Count / 1000.0:F1}k"
+                        : file.Count.ToString();
+                    _consoleUI.WriteResult($"{i + 1}. {file.Path} ({count})");
+                }
+            }
         }
     }
 
