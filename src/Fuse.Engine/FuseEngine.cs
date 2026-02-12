@@ -181,7 +181,7 @@ public sealed class FuseEngine
                 : $"{result.TotalTokens}";
 
             _consoleUI.WriteResult($"Stats:  {totalSizeKB:F0} KB • {tokensFormatted} tokens");
-            
+
             // Display top token consumers
             if (result.TopTokenFiles.Count > 0)
             {

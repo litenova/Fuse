@@ -252,13 +252,13 @@ public sealed class OutputBuilder : IOutputBuilder
 
             // --- RETURN RESULT ---
             var duration = DateTime.Now - startTime;
-            
+
             // Get top 5 token consumers
             var topTokenFiles = fileTokenStats
                 .OrderByDescending(f => f.Count)
                 .Take(5)
                 .ToList();
-            
+
             return new FusionResult(
                 createdFilePaths,
                 totalGlobalTokens,
