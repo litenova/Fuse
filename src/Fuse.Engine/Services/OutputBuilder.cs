@@ -23,7 +23,7 @@ namespace Fuse.Engine.Services;
 ///             <description>Managing output file streams and encoding (UTF-8).</description>
 ///         </item>
 ///         <item>
-///             <description>Formatting file content using semantic XML tags (<c>&lt;fuse:file&gt;</c>) for optimal LLM parsing.</description>
+///             <description>Formatting file content using simplified XML tags (<c>&lt;file&gt;</c>) for optimal LLM parsing.</description>
 ///         </item>
 ///         <item>
 ///             <description>Tracking token usage using the <see cref="TikToken"/> tokenizer.</description>
@@ -89,17 +89,18 @@ public sealed class OutputBuilder : IOutputBuilder
         else
         {
             // Auto-generate name based on source directory and timestamp
-            // Format: fused_DirectoryName_YYYY-MM-DD_HH-mm
+            // Format: ProjectName_YYYY-MM-DD_HHmm
             var allSuffix = options.ApplyAllOptions ? "_all" : string.Empty;
 
             // Sanitize directory name: replace dots with underscores to avoid confusion with file extensions
             // Example: "My.Project" -> "My_Project"
             var dirName = Path.GetFileName(options.SourceDirectory).Replace('.', '_');
 
-            // Use a readable timestamp format (ISO-8601 inspired but filesystem safe)
-            var timestamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm");
+            // Use Project First format with date and time separate
+            var dateStamp = DateTime.Now.ToString("yyyy-MM-dd");
+            var timeStamp = DateTime.Now.ToString("HHmm");
 
-            baseFileName = $"fused_{dirName}{allSuffix}_{timestamp}";
+            baseFileName = $"{dirName}{allSuffix}_{dateStamp}_{timeStamp}";
         }
 
         // 2. State Tracking
@@ -150,7 +151,7 @@ public sealed class OutputBuilder : IOutputBuilder
                 // Calculate tokens for this specific file entry
                 var fileTokenCount = _tokenizer.Encode(processedContent).Count;
 
-                // Add overhead for <fuse:file ...> tags + attributes + newlines
+                // Add overhead for <file path="..."> tags + newlines
                 // Approx 30 tokens is a safe buffer for the XML structure
                 var markerOverhead = 30;
                 var totalEntryTokens = fileTokenCount + markerOverhead;
@@ -183,22 +184,15 @@ public sealed class OutputBuilder : IOutputBuilder
                     await WriteMetadataHeaderAsync(currentWriter, options, currentPart);
                 }
 
-                // --- CONTENT WRITING (Semantic XML) ---
+                // --- CONTENT WRITING (Simplified XML) ---
                 var sb = new StringBuilder();
 
                 // Normalize path to forward slashes for consistency and token efficiency
                 var normalizedPath = fileInfo.RelativePath.Replace('\\', '/');
 
-                // 1. Opening Tag with Attributes
-                // Format: <fuse:file path="src/Program.cs" size="1024">
-                sb.Append($"<fuse:file path=\"{normalizedPath}\"");
-                if (options.IncludeMetadata)
-                {
-                    // Add metadata as attributes on the same line
-                    sb.Append($" size=\"{fileInfo.Info.Length}\" modified=\"{fileInfo.Info.LastWriteTime:yyyy-MM-dd HH:mm:ss}\"");
-                }
-
-                sb.AppendLine(">"); // Close the opening tag and add newline
+                // 1. Opening Tag with path attribute
+                // Format: <file path="src/Program.cs">
+                sb.AppendLine($"<file path=\"{normalizedPath}\">");
 
                 // 2. Content
                 sb.Append(processedContent);
@@ -211,7 +205,7 @@ public sealed class OutputBuilder : IOutputBuilder
                 }
 
                 // 4. Closing Tag + Newline
-                sb.AppendLine("</fuse:file>");
+                sb.AppendLine("</file>");
 
                 // Write to current stream
                 await currentWriter.WriteAsync(sb.ToString());
@@ -353,50 +347,15 @@ public sealed class OutputBuilder : IOutputBuilder
     }
 
     /// <summary>
-    ///     Writes the context metadata header to the output file.
+    ///     Writes a minimal header to the output file.
     /// </summary>
     /// <param name="writer">The stream writer to write to.</param>
     /// <param name="options">The fusion options.</param>
     /// <param name="partNumber">The current part number.</param>
-    /// <remarks>
-    ///     The header provides context to the LLM about the project structure,
-    ///     the file format being used, and which part of the split this file represents.
-    /// </remarks>
     private static async Task WriteMetadataHeaderAsync(StreamWriter writer, FuseOptions options, int partNumber)
     {
-        var sb = new StringBuilder();
-        var rootPath = FindRootDirectory(options.SourceDirectory);
-        var basePathLabel = "Source Path";
-        var pathValue = options.SourceDirectory;
-
-        if (rootPath != null)
-        {
-            basePathLabel = "Base Path";
-            pathValue = Path.GetRelativePath(rootPath, options.SourceDirectory).Replace('\\', '/');
-            if (pathValue == ".")
-            {
-                pathValue = "/";
-            }
-        }
-
-        sb.AppendLine("# FUSE CONTEXT");
-        sb.AppendLine($"# {basePathLabel}: {pathValue}");
-
-        // Only write Part number if we are actually in a split scenario (or configured to split)
-        // Note: Since we write the header *before* we know if we will split, we check the Option.
-        // If the user requested splitting, we include the part number for consistency.
-        if (options.SplitTokens.HasValue)
-        {
-            sb.AppendLine($"# Part: {partNumber}");
-        }
-
-        // Describe the semantic XML file format explicitly for the LLM
-        sb.AppendLine("# File Format:");
-        sb.AppendLine("# <fuse:file path=\"path/to/file\" size=\"bytes\">");
-        sb.AppendLine("# [Content]");
-        sb.AppendLine("# </fuse:file>");
-        sb.AppendLine();
-        await writer.WriteAsync(sb.ToString());
+        // No header - start directly with file content
+        await Task.CompletedTask;
     }
 
     /// <summary>
