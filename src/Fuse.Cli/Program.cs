@@ -57,6 +57,7 @@ Cli.Ext.ConfigureServices(services =>
     services.AddTransient<FuseCliCommand>();
     services.AddTransient<DotNetCommand>();
     services.AddTransient<AzureDevOpsWikiCommand>();
+    services.AddTransient<McpServeCommand>();
 
     // NOTE: Add additional command registrations here as new commands are created
     // Example: services.AddTransient<PythonCommand>();

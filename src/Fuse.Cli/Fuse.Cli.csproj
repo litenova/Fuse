@@ -18,8 +18,10 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\Fuse.Engine\Fuse.Engine.csproj"/>
-        <PackageReference Include="DotMake.CommandLine" Version="3.1.0"/>
-        <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.1"/>
+        <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.3" />
+        <PackageReference Include="ModelContextProtocol" Version="0.8.0-preview.1" />
+        <ProjectReference Include="..\Fuse.Engine\Fuse.Engine.csproj" />
+        <PackageReference Include="DotMake.CommandLine" Version="3.1.0" />
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.3" />
     </ItemGroup>
 </Project>

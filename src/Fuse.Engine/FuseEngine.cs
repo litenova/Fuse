@@ -60,22 +60,61 @@ public sealed class FuseEngine
     private readonly IOutputBuilder _outputBuilder;
 
     /// <summary>
+    ///     The content processor for in-memory fusion operations.
+    /// </summary>
+    private readonly IContentProcessor _contentProcessor;
+
+    /// <summary>
     ///     Initializes a new instance of the <see cref="FuseEngine" /> class.
     /// </summary>
     /// <param name="consoleUI">The console UI for output display.</param>
     /// <param name="configResolver">The configuration resolver service.</param>
     /// <param name="fileCollector">The file collector service.</param>
     /// <param name="outputBuilder">The output builder service.</param>
+    /// <param name="contentProcessor">The content processor service.</param>
     public FuseEngine(
         IConsoleUI consoleUI,
         IConfigurationResolver configResolver,
         IFileCollector fileCollector,
-        IOutputBuilder outputBuilder)
+        IOutputBuilder outputBuilder,
+        IContentProcessor contentProcessor)
     {
         _consoleUI = consoleUI;
         _configResolver = configResolver;
         _fileCollector = fileCollector;
         _outputBuilder = outputBuilder;
+        _contentProcessor = contentProcessor;
+    }
+
+    /// <summary>
+    ///     Executes an in-memory file fusion operation and returns the fused content directly.
+    /// </summary>
+    /// <param name="options">The options controlling the fusion operation.</param>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <returns>
+    ///     A <see cref="FusionResult" /> where the first entry in <c>GeneratedPaths</c>
+    ///     contains the fused content string (not a file path).
+    /// </returns>
+    /// <remarks>
+    ///     This method uses an <see cref="Services.InMemoryOutputBuilder" /> to avoid disk I/O,
+    ///     making it suitable for MCP server mode where low-latency, streaming responses are needed.
+    /// </remarks>
+    public async Task<FusionResult> FuseInMemoryAsync(FuseOptions options, CancellationToken cancellationToken)
+    {
+        // Resolve configuration
+        var config = _configResolver.Resolve(options);
+
+        // Collect files
+        var files = _fileCollector.CollectFiles(options, config);
+
+        if (files.Count == 0)
+        {
+            return new FusionResult([], 0, 0, 0, TimeSpan.Zero, []);
+        }
+
+        // Use the in-memory output builder for zero-disk-IO fusion
+        var inMemoryBuilder = new Services.InMemoryOutputBuilder(_contentProcessor);
+        return await inMemoryBuilder.BuildOutputAsync(files, options, cancellationToken);
     }
 
     /// <summary>

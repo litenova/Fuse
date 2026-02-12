@@ -270,12 +270,75 @@ Fuse.Minifiers    → Infrastructure — File-type-specific minification
 ```
 
 Key components:
-- **FuseEngine** — Central orchestrator: resolves config → collects files → builds output.
+- **FuseEngine** — Central orchestrator: resolves config → collects files → builds output. Also supports `FuseInMemoryAsync` for zero-disk-IO fusion.
 - **ProjectTemplateRegistry** — Static registry of all 25+ template configurations.
 - **FileCollector** — Enumerates files with filtering (extensions, directories, gitignore, binary detection, test projects, glob patterns).
 - **ContentProcessor** — Reads files, applies trimming/condensation, dispatches to the appropriate minifier.
 - **OutputBuilder** — Writes the fused output with token tracking (TikToken), file splitting, and filename generation.
+- **InMemoryOutputBuilder** — In-memory variant of OutputBuilder for MCP server mode (no disk I/O).
 - **GitIgnoreParser** — Walks the directory tree collecting `.gitignore` patterns.
+- **McpServeCommand** — CLI command (`fuse serve`) that starts the MCP server on stdio.
+- **FuseTools** — MCP tool definitions (`get_optimized_context`) for AI agent integration.
+- **FuseResources** — MCP resource definitions (`fuse://` URI scheme) for passive context reading.
+
+---
+
+## MCP Server (AI Agent Integration)
+
+Fuse can run as a **Model Context Protocol (MCP) server**, allowing AI agents (GitHub Copilot, Claude Desktop, etc.) to invoke Fuse programmatically to generate optimized context on demand.
+
+### Starting the MCP Server
+
+```bash
+fuse serve
+```
+
+This starts a persistent process that communicates via **stdio** using JSON-RPC (the MCP standard). All logging is redirected to stderr so stdout remains clean for protocol messages.
+
+### Exposed MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `get_optimized_context` | Generates minified, token-efficient context from a directory. Supports template selection, token limits, extension filtering, and aggressive minification. |
+
+### Exposed MCP Resources
+
+| URI Pattern | Description |
+|---|---|
+| `fuse://{template}/{path}` | Read fused content for a given template and path. Use `dotnet`, `python`, `node`, `generic`, etc. |
+
+### VS Code / Copilot Configuration
+
+Add the following to your VS Code **MCP settings** (`.vscode/mcp.json` or user-level `settings.json`):
+
+```json
+{
+  "servers": {
+    "fuse": {
+      "type": "stdio",
+      "command": "fuse",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+> **Note:** The `fuse` command must be available on your PATH (install via `dotnet tool install -g Fuse`).
+
+### Claude Desktop Configuration
+
+Add to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "fuse": {
+      "command": "fuse",
+      "args": ["serve"]
+    }
+  }
+}
+```
 
 ---
 
