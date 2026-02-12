@@ -212,4 +212,10 @@ public sealed record FuseOptions
     ///     Gets a value indicating whether to display token count in the output summary.
     /// </summary>
     public bool ShowTokenCount { get; init; }
+
+    /// <summary>
+    ///     Gets a value indicating whether to track and display the top token-consuming files.
+    /// </summary>
+    /// <value><c>true</c> to track and display top token consumers; otherwise, <c>false</c>. Defaults to <c>false</c>.</value>
+    public bool TrackTopTokenFiles { get; init; } = false;
 }

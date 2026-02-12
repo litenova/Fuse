@@ -194,5 +194,11 @@ public abstract class CommandBase
     [CliOption(Description = "Displays the final estimated token count upon completion.")]
     public bool ShowTokenCount { get; set; } = true;
 
+    /// <summary>
+    ///     Gets or sets a value indicating whether to track and display the top token-consuming files.
+    /// </summary>
+    [CliOption(Description = "Tracks and displays the top 5 files consuming the most tokens.")]
+    public bool TrackTopTokenFiles { get; set; } = false;
+
     #endregion
 }

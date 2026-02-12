@@ -103,6 +103,7 @@ public sealed class DotNetCommand : CommandBase
             MaxTokens = MaxTokens,
             SplitTokens = SplitTokens,
             ShowTokenCount = ShowTokenCount,
+            TrackTopTokenFiles = TrackTopTokenFiles,
 
             // Test project options
             ExcludeTestProjects = ExcludeTestProjects,

@@ -97,6 +97,7 @@ public sealed class AzureDevOpsWikiCommand : CommandBase
             MaxTokens = MaxTokens,
             SplitTokens = SplitTokens,
             ShowTokenCount = ShowTokenCount,
+            TrackTopTokenFiles = TrackTopTokenFiles,
 
             // Default content transformations
             UseCondensing = true,

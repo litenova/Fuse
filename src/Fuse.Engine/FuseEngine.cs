@@ -126,7 +126,6 @@ public sealed class FuseEngine
             // ===== Step 2: Collect Files =====
             // Search for files matching the configuration
             var files = _fileCollector.CollectFiles(options, config);
-            _consoleUI.WriteStep($"Found {files.Count} files to process.");
 
             // Handle case where no files were found
             if (files.Count == 0)
@@ -161,7 +160,7 @@ public sealed class FuseEngine
     private void DisplayResults(FusionResult result, FuseOptions options)
     {
         // Display success message
-        _consoleUI.WriteSuccess($"Fused {result.ProcessedFileCount} files in {result.Duration.TotalSeconds:F1}s");
+        _consoleUI.WriteSuccess("Fusion complete!");
 
         // Display output files
         foreach (var path in result.GeneratedPaths)
@@ -180,12 +179,12 @@ public sealed class FuseEngine
                 ? $"{result.TotalTokens / 1000.0:F0}k"
                 : $"{result.TotalTokens}";
 
-            _consoleUI.WriteResult($"Stats:  {totalSizeKB:F0} KB • {tokensFormatted} tokens");
+            _consoleUI.WriteResult($"Stats:  {totalSizeKB:F0} KB • {tokensFormatted} tokens • {result.ProcessedFileCount}/{result.TotalFileCount} files • {result.Duration.TotalSeconds:F1}s");
 
-            // Display top token consumers
-            if (result.TopTokenFiles.Count > 0)
+            // Display top token consumers (if tracking was enabled)
+            if (options.TrackTopTokenFiles && result.TopTokenFiles.Count > 0)
             {
-                _consoleUI.WriteResult("Top Token Consumers:");
+                _consoleUI.WriteResult("\nTop Token Consumers:");
                 for (int i = 0; i < result.TopTokenFiles.Count; i++)
                 {
                     var file = result.TopTokenFiles[i];
