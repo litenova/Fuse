@@ -7,7 +7,6 @@
 
 using DotMake.CommandLine;
 using Fuse.Engine;
-using Spectre.Console;
 
 namespace Fuse.Cli.Commands;
 
@@ -40,11 +39,6 @@ namespace Fuse.Cli.Commands;
 public abstract class CommandBase
 {
     /// <summary>
-    ///     The console interface for output display.
-    /// </summary>
-    protected readonly IAnsiConsole _console;
-
-    /// <summary>
     ///     The fusion engine for executing the fusion operation.
     /// </summary>
     protected readonly FuseEngine _engine;
@@ -53,11 +47,9 @@ public abstract class CommandBase
     ///     Initializes a new instance of the <see cref="CommandBase" /> class.
     /// </summary>
     /// <param name="engine">The fusion engine instance.</param>
-    /// <param name="console">The console for output.</param>
-    protected CommandBase(FuseEngine engine, IAnsiConsole console)
+    protected CommandBase(FuseEngine engine)
     {
         _engine = engine;
-        _console = console;
     }
 
     #region Test Project Options

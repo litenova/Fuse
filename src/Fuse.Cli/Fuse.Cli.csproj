@@ -21,6 +21,5 @@
         <ProjectReference Include="..\Fuse.Engine\Fuse.Engine.csproj"/>
         <PackageReference Include="DotMake.CommandLine" Version="3.1.0"/>
         <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.1"/>
-        <PackageReference Include="Spectre.Console" Version="0.54.0"/>
     </ItemGroup>
 </Project>

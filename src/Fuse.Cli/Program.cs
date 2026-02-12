@@ -8,12 +8,13 @@
 using DotMake.CommandLine;
 using Fuse.Cli;
 using Fuse.Cli.Commands;
+using Fuse.Cli.Services;
+using Fuse.Core.Abstractions;
 using Fuse.Engine;
 using Fuse.Engine.FileSystem;
 using Fuse.Engine.Git;
 using Fuse.Engine.Services;
 using Microsoft.Extensions.DependencyInjection;
-using Spectre.Console;
 
 // ============================================================================
 // FUSE CLI APPLICATION ENTRY POINT
@@ -33,8 +34,8 @@ using Spectre.Console;
 Cli.Ext.ConfigureServices(services =>
 {
     // ----- Presentation Layer -----
-    // Register the Spectre.Console instance for rich terminal output
-    services.AddSingleton<IAnsiConsole>(AnsiConsole.Console);
+    // Register the console UI for output display
+    services.AddSingleton<IConsoleUI, ConsoleUI>();
 
     // ----- Engine and Services -----
     // Register the main fusion engine as singleton (stateless)

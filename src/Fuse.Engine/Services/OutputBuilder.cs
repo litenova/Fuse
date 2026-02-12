@@ -7,7 +7,6 @@
 
 using System.Text;
 using Fuse.Core;
-using Spectre.Console;
 using TiktokenSharp;
 
 namespace Fuse.Engine.Services;
@@ -40,11 +39,6 @@ namespace Fuse.Engine.Services;
 public sealed class OutputBuilder : IOutputBuilder
 {
     /// <summary>
-    ///     The console interface for progress display and user feedback.
-    /// </summary>
-    private readonly IAnsiConsole _console;
-
-    /// <summary>
     ///     The content processor for transforming raw file content (minification, trimming).
     /// </summary>
     private readonly IContentProcessor _contentProcessor;
@@ -57,11 +51,9 @@ public sealed class OutputBuilder : IOutputBuilder
     /// <summary>
     ///     Initializes a new instance of the <see cref="OutputBuilder" /> class.
     /// </summary>
-    /// <param name="console">The console for output and progress display.</param>
     /// <param name="contentProcessor">The content processor for file transformations.</param>
-    public OutputBuilder(IAnsiConsole console, IContentProcessor contentProcessor)
+    public OutputBuilder(IContentProcessor contentProcessor)
     {
-        _console = console;
         _contentProcessor = contentProcessor;
 
         // Initialize tokenizer with the cl100k_base encoding (used by GPT-4 and GPT-3.5-turbo)
@@ -70,15 +62,17 @@ public sealed class OutputBuilder : IOutputBuilder
 
     /// <inheritdoc />
     /// <summary>
-    ///     Builds the fused output file(s) with progress display, token tracking, and automatic splitting.
+    ///     Builds the fused output file(s) with token tracking and automatic splitting.
     /// </summary>
     /// <param name="files">The list of files to include in the output.</param>
     /// <param name="options">The fusion options controlling output generation.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
-    /// <returns>A task representing the asynchronous build operation.</returns>
+    /// <returns>A task representing the asynchronous build operation, returning a FusionResult with statistics.</returns>
     /// <exception cref="IOException">Thrown if the output file exists and overwrite is disabled.</exception>
-    public async Task BuildOutputAsync(List<FileProcessingInfo> files, FuseOptions options, CancellationToken cancellationToken)
+    public async Task<FusionResult> BuildOutputAsync(List<FileProcessingInfo> files, FuseOptions options, CancellationToken cancellationToken)
     {
+        // Track start time for duration calculation
+        var startTime = DateTime.Now;
         // 1. Determine Base Filename (without extension or path)
         string baseFileName;
         if (!string.IsNullOrWhiteSpace(options.OutputFileName))
@@ -134,125 +128,106 @@ public sealed class OutputBuilder : IOutputBuilder
             // Write header to the first file
             await WriteMetadataHeaderAsync(currentWriter, options, currentPart);
 
-            // Display progress bar using Spectre.Console
-            await _console.Progress()
-                .Columns(
-                    new TaskDescriptionColumn(),
-                    new ProgressBarColumn(),
-                    new PercentageColumn(),
-                    new SpinnerColumn()
-                )
-                .StartAsync(async ctx =>
+            // Process each file in the list
+            foreach (var fileInfo in files)
+            {
+                // Check for cancellation (either user-initiated or token limit reached)
+                if (localCts.IsCancellationRequested)
                 {
-                    // Create progress task with total file count
-                    var task = ctx.AddTask("[green]Fusing files[/]", new ProgressTaskSettings { MaxValue = files.Count });
+                    break;
+                }
 
-                    // Process each file in the list
-                    foreach (var fileInfo in files)
-                    {
-                        // Check for cancellation (either user-initiated or token limit reached)
-                        if (localCts.IsCancellationRequested)
-                        {
-                            break;
-                        }
+                // Process content first (read, minify, trim)
+                var processedContent = await _contentProcessor.ProcessContentAsync(fileInfo, options, localCts.Token);
 
-                        // Process content first (read, minify, trim)
-                        var processedContent = await _contentProcessor.ProcessContentAsync(fileInfo, options, localCts.Token);
+                // SKIP EMPTY OR TRIVIAL FILES
+                // We skip if content is whitespace, or if it's just empty JSON/Array structures
+                if (IsContentTrivial(processedContent))
+                {
+                    continue;
+                }
 
-                        // SKIP EMPTY OR TRIVIAL FILES
-                        // We skip if content is whitespace, or if it's just empty JSON/Array structures
-                        if (IsContentTrivial(processedContent))
-                        {
-                            task.Increment(1);
-                            continue;
-                        }
+                // Calculate tokens for this specific file entry
+                var fileTokenCount = _tokenizer.Encode(processedContent).Count;
 
-                        // Calculate tokens for this specific file entry
-                        var fileTokenCount = _tokenizer.Encode(processedContent).Count;
+                // Add overhead for <fuse:file ...> tags + attributes + newlines
+                // Approx 30 tokens is a safe buffer for the XML structure
+                var markerOverhead = 30;
+                var totalEntryTokens = fileTokenCount + markerOverhead;
 
-                        // Add overhead for <fuse:file ...> tags + attributes + newlines
-                        // Approx 30 tokens is a safe buffer for the XML structure
-                        var markerOverhead = 30;
-                        var totalEntryTokens = fileTokenCount + markerOverhead;
+                // --- SPLIT LOGIC ---
+                // Check if adding this file would exceed the split threshold.
+                // We ensure currentFileTokens > 0 to prevent infinite loops if a single file is larger than the limit.
+                if (options.SplitTokens.HasValue &&
+                    (currentFileTokens + totalEntryTokens > options.SplitTokens.Value) &&
+                    currentFileTokens > 0)
+                {
+                    // 1. Close current temp file resources
+                    await currentWriter.DisposeAsync();
+                    await currentStream.DisposeAsync();
 
-                        // --- SPLIT LOGIC ---
-                        // Check if adding this file would exceed the split threshold.
-                        // We ensure currentFileTokens > 0 to prevent infinite loops if a single file is larger than the limit.
-                        if (options.SplitTokens.HasValue &&
-                            (currentFileTokens + totalEntryTokens > options.SplitTokens.Value) &&
-                            currentFileTokens > 0)
-                        {
-                            // 1. Close current temp file resources
-                            await currentWriter.DisposeAsync();
-                            await currentStream.DisposeAsync();
+                    // 2. Finalize the current part (Rename .tmp -> _partX_100k.txt)
+                    // Since we are splitting, isMultiPart is definitely true.
+                    var finalPath = FinalizeFile(tempFilePath, options.OutputDirectory, baseFileName, currentPart, currentFileTokens, options.Overwrite, true);
+                    createdFilePaths.Add(finalPath);
 
-                            // 2. Finalize the current part (Rename .tmp -> _partX_100k.txt)
-                            // Since we are splitting, isMultiPart is definitely true.
-                            var finalPath = FinalizeFile(tempFilePath, options.OutputDirectory, baseFileName, currentPart, currentFileTokens, options.Overwrite, true);
-                            createdFilePaths.Add(finalPath);
+                    // 3. Reset State for next part
+                    currentPart++;
+                    currentFileTokens = 0;
+                    hasSplitOccurred = true;
 
-                            _console.MarkupLine($"[dim]Part {currentPart} complete ({FormatTokenCount(currentFileTokens)}). Starting Part {currentPart + 1}...[/]");
+                    // 4. Open new temp file
+                    (currentStream, currentWriter) = CreateStream(tempFilePath);
 
-                            // 3. Reset State for next part
-                            currentPart++;
-                            currentFileTokens = 0;
-                            hasSplitOccurred = true;
+                    // 5. Write header for new part
+                    await WriteMetadataHeaderAsync(currentWriter, options, currentPart);
+                }
 
-                            // 4. Open new temp file
-                            (currentStream, currentWriter) = CreateStream(tempFilePath);
+                // --- CONTENT WRITING (Semantic XML) ---
+                var sb = new StringBuilder();
 
-                            // 5. Write header for new part
-                            await WriteMetadataHeaderAsync(currentWriter, options, currentPart);
-                        }
+                // Normalize path to forward slashes for consistency and token efficiency
+                var normalizedPath = fileInfo.RelativePath.Replace('\\', '/');
 
-                        // --- CONTENT WRITING (Semantic XML) ---
-                        var sb = new StringBuilder();
+                // 1. Opening Tag with Attributes
+                // Format: <fuse:file path="src/Program.cs" size="1024">
+                sb.Append($"<fuse:file path=\"{normalizedPath}\"");
+                if (options.IncludeMetadata)
+                {
+                    // Add metadata as attributes on the same line
+                    sb.Append($" size=\"{fileInfo.Info.Length}\" modified=\"{fileInfo.Info.LastWriteTime:yyyy-MM-dd HH:mm:ss}\"");
+                }
 
-                        // Normalize path to forward slashes for consistency and token efficiency
-                        var normalizedPath = fileInfo.RelativePath.Replace('\\', '/');
+                sb.AppendLine(">"); // Close the opening tag and add newline
 
-                        // 1. Opening Tag with Attributes
-                        // Format: <fuse:file path="src/Program.cs" size="1024">
-                        sb.Append($"<fuse:file path=\"{normalizedPath}\"");
-                        if (options.IncludeMetadata)
-                        {
-                            // Add metadata as attributes on the same line
-                            sb.Append($" size=\"{fileInfo.Info.Length}\" modified=\"{fileInfo.Info.LastWriteTime:yyyy-MM-dd HH:mm:ss}\"");
-                        }
+                // 2. Content
+                sb.Append(processedContent);
 
-                        sb.AppendLine(">"); // Close the opening tag and add newline
+                // 3. Ensure content ends with newline before closing tag
+                // This prevents the closing tag from being appended to the last line of code
+                if (!processedContent.EndsWith('\n'))
+                {
+                    sb.AppendLine();
+                }
 
-                        // 2. Content
-                        sb.Append(processedContent);
+                // 4. Closing Tag + Newline
+                sb.AppendLine("</fuse:file>");
 
-                        // 3. Ensure content ends with newline before closing tag
-                        // This prevents the closing tag from being appended to the last line of code
-                        if (!processedContent.EndsWith('\n'))
-                        {
-                            sb.AppendLine();
-                        }
+                // Write to current stream
+                await currentWriter.WriteAsync(sb.ToString());
 
-                        // 4. Closing Tag + Newline
-                        sb.AppendLine("</fuse:file>");
+                // Update counters
+                currentFileTokens += totalEntryTokens;
+                totalGlobalTokens += totalEntryTokens;
+                processedFileCount++;
 
-                        // Write to current stream
-                        await currentWriter.WriteAsync(sb.ToString());
-
-                        // Update counters
-                        currentFileTokens += totalEntryTokens;
-                        totalGlobalTokens += totalEntryTokens;
-                        processedFileCount++;
-                        task.Increment(1);
-
-                        // Check Global MaxTokens (Hard Stop)
-                        // If the total tokens across ALL parts exceeds the absolute max, we stop entirely.
-                        if (options.MaxTokens.HasValue && totalGlobalTokens > options.MaxTokens.Value)
-                        {
-                            _console.MarkupLine($"[yellow]Global token limit of {options.MaxTokens:N0} reached. Stopping.[/]");
-                            await localCts.CancelAsync();
-                        }
-                    }
-                });
+                // Check Global MaxTokens (Hard Stop)
+                // If the total tokens across ALL parts exceeds the absolute max, we stop entirely.
+                if (options.MaxTokens.HasValue && totalGlobalTokens > options.MaxTokens.Value)
+                {
+                    await localCts.CancelAsync();
+                }
+            }
 
             // --- FINALIZE LAST FILE ---
             // Close the stream first to release the file lock
@@ -277,22 +252,14 @@ public sealed class OutputBuilder : IOutputBuilder
                 }
             }
 
-            // --- FINAL SUMMARY ---
-            _console.MarkupLine($"[bold]Processing Complete[/]");
-            _console.MarkupLine($"[bold]Total Files:[/][green] {processedFileCount}/{files.Count}[/]");
-
-            // Display each created file with its size in KB
-            foreach (var path in createdFilePaths)
-            {
-                var fileInfo = new FileInfo(path);
-                var sizeKB = fileInfo.Length / 1024.0;
-                _console.MarkupLine($"[bold]Output:[/][underline blue] {fileInfo.Name}[/] ([green]{sizeKB:N2} KB[/])");
-            }
-
-            if (options.ShowTokenCount)
-            {
-                _console.MarkupLine($"[bold]Total Tokens:[/][yellow] {totalGlobalTokens:N0}[/]");
-            }
+            // --- RETURN RESULT ---
+            var duration = DateTime.Now - startTime;
+            return new FusionResult(
+                createdFilePaths,
+                totalGlobalTokens,
+                processedFileCount,
+                files.Count,
+                duration);
         }
         finally
         {

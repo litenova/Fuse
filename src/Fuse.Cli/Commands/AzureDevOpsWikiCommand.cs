@@ -8,7 +8,6 @@
 using DotMake.CommandLine;
 using Fuse.Core;
 using Fuse.Engine;
-using Spectre.Console;
 
 namespace Fuse.Cli.Commands;
 
@@ -49,7 +48,7 @@ public sealed class AzureDevOpsWikiCommand : CommandBase
     /// <remarks>
     ///     Parameterless constructor required by DotMake.CommandLine source generator.
     /// </remarks>
-    public AzureDevOpsWikiCommand() : base(null!, null!)
+    public AzureDevOpsWikiCommand() : base(null!)
     {
     }
 
@@ -57,8 +56,7 @@ public sealed class AzureDevOpsWikiCommand : CommandBase
     ///     Initializes a new instance of the <see cref="AzureDevOpsWikiCommand" /> class.
     /// </summary>
     /// <param name="engine">The fusion engine instance.</param>
-    /// <param name="console">The console for output.</param>
-    public AzureDevOpsWikiCommand(FuseEngine engine, IAnsiConsole console) : base(engine, console)
+    public AzureDevOpsWikiCommand(FuseEngine engine) : base(engine)
     {
     }
 

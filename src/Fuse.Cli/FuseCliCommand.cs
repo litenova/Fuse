@@ -9,7 +9,6 @@ using DotMake.CommandLine;
 using Fuse.Cli.Commands;
 using Fuse.Core;
 using Fuse.Engine;
-using Spectre.Console;
 
 namespace Fuse.Cli;
 
@@ -51,7 +50,7 @@ public class FuseCliCommand : CommandBase
     /// <remarks>
     ///     Parameterless constructor required by DotMake.CommandLine source generator.
     /// </remarks>
-    public FuseCliCommand() : base(null!, null!)
+    public FuseCliCommand() : base(null!)
     {
     }
 
@@ -59,8 +58,7 @@ public class FuseCliCommand : CommandBase
     ///     Initializes a new instance of the <see cref="FuseCliCommand" /> class.
     /// </summary>
     /// <param name="engine">The fusion engine instance.</param>
-    /// <param name="console">The console for output.</param>
-    public FuseCliCommand(FuseEngine engine, IAnsiConsole console) : base(engine, console)
+    public FuseCliCommand(FuseEngine engine) : base(engine)
     {
     }
 

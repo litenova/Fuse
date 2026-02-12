@@ -6,8 +6,8 @@
 // -----------------------------------------------------------------------
 
 using Fuse.Core;
+using Fuse.Core.Abstractions;
 using Fuse.Engine.Services;
-using Spectre.Console;
 
 namespace Fuse.Engine;
 
@@ -45,9 +45,9 @@ public sealed class FuseEngine
     private readonly IConfigurationResolver _configResolver;
 
     /// <summary>
-    ///     The console interface for displaying status and output.
+    ///     The console UI for displaying status and output.
     /// </summary>
-    private readonly IAnsiConsole _console;
+    private readonly IConsoleUI _consoleUI;
 
     /// <summary>
     ///     The service responsible for collecting files to process.
@@ -62,17 +62,17 @@ public sealed class FuseEngine
     /// <summary>
     ///     Initializes a new instance of the <see cref="FuseEngine" /> class.
     /// </summary>
-    /// <param name="console">The console for output display.</param>
+    /// <param name="consoleUI">The console UI for output display.</param>
     /// <param name="configResolver">The configuration resolver service.</param>
     /// <param name="fileCollector">The file collector service.</param>
     /// <param name="outputBuilder">The output builder service.</param>
     public FuseEngine(
-        IAnsiConsole console,
+        IConsoleUI consoleUI,
         IConfigurationResolver configResolver,
         IFileCollector fileCollector,
         IOutputBuilder outputBuilder)
     {
-        _console = console;
+        _consoleUI = consoleUI;
         _configResolver = configResolver;
         _fileCollector = fileCollector;
         _outputBuilder = outputBuilder;
@@ -117,24 +117,8 @@ public sealed class FuseEngine
     /// </example>
     public async Task FuseAsync(FuseOptions options, CancellationToken cancellationToken)
     {
-        // Record start time for duration calculation
-        var startTime = DateTime.Now;
-
-        // Display header rule
-        _console.Write(new Rule());
-
-        // Display operation summary table
-        var table = new Table()
-            .Border(TableBorder.None)
-            .HideHeaders();
-
-        table.AddColumn(new TableColumn("").NoWrap());
-        table.AddColumn(new TableColumn(""));
-        table.AddRow("[bold]Source:[/]", options.SourceDirectory);
-        table.AddRow("[bold]Output Dir:[/]", options.OutputDirectory);
-        table.AddRow("[bold]Template:[/]", options.Template?.ToString() ?? "[grey]Generic (Default)[/]");
-
-        _console.Write(table);
+        // Display starting step
+        _consoleUI.WriteStep($"Starting fusion for {options.SourceDirectory}");
 
         try
         {
@@ -144,32 +128,81 @@ public sealed class FuseEngine
 
             // ===== Step 2: Collect Files =====
             // Search for files matching the configuration
-            _console.MarkupLine("Searching for files...");
+            _consoleUI.WriteStep("Searching for files...");
             var files = _fileCollector.CollectFiles(options, config);
-            _console.MarkupLine($"Found [green]{files.Count}[/] files to process.");
+            _consoleUI.WriteStep($"Found {files.Count} files to process.");
 
             // Handle case where no files were found
             if (files.Count == 0)
             {
-                _console.MarkupLine("[yellow]Warning:[/] No files found matching the criteria. Aborting.");
+                _consoleUI.WriteError("No files found matching the criteria. Aborting.");
                 return;
             }
 
             // ===== Step 3: Build Output =====
             // Process files and generate the fused output
-            await _outputBuilder.BuildOutputAsync(files, options, cancellationToken);
+            var result = await _outputBuilder.BuildOutputAsync(files, options, cancellationToken);
+
+            // ===== Step 4: Display Results =====
+            DisplayResults(result, options);
         }
         catch (Exception ex)
         {
             // Display any errors that occurred during processing
-            _console.WriteException(ex, ExceptionFormats.ShortenPaths);
+            _consoleUI.WriteError($"Error: {ex.Message}");
+            if (ex.InnerException != null)
+            {
+                _consoleUI.WriteError($"  {ex.InnerException.Message}");
+            }
         }
-        finally
+    }
+
+    /// <summary>
+    ///     Displays the fusion results using the console UI.
+    /// </summary>
+    /// <param name="result">The fusion result containing paths, tokens, and statistics.</param>
+    /// <param name="options">The fusion options.</param>
+    private void DisplayResults(FusionResult result, FuseOptions options)
+    {
+        // Display success message
+        _consoleUI.WriteSuccess($"Fused {result.ProcessedFileCount} files in {result.Duration.TotalSeconds:F1}s");
+
+        // Display output files
+        foreach (var path in result.GeneratedPaths)
         {
-            // Calculate and display operation duration
-            var duration = DateTime.Now - startTime;
-            var ruleTitle = $"[bold green]Operation Complete[/][dim]({duration.TotalSeconds:F1}s)[/]";
-            _console.Write(new Rule(ruleTitle).LeftJustified());
+            var fileInfo = new FileInfo(path);
+            var sizeKB = fileInfo.Length / 1024.0;
+            var friendlyPath = GetFriendlyPath(path);
+            _consoleUI.WriteResult($"Output: {friendlyPath}");
         }
+
+        // Display statistics
+        if (options.ShowTokenCount)
+        {
+            var totalSizeKB = result.GeneratedPaths.Sum(p => new FileInfo(p).Length) / 1024.0;
+            var tokensFormatted = result.TotalTokens >= 1000
+                ? $"{result.TotalTokens / 1000.0:F0}k"
+                : $"{result.TotalTokens}";
+
+            _consoleUI.WriteResult($"Stats:  {totalSizeKB:F0} KB • {tokensFormatted} tokens");
+        }
+    }
+
+    /// <summary>
+    ///     Converts a full file path to a user-friendly path by replacing
+    ///     the user profile directory with ~.
+    /// </summary>
+    /// <param name="path">The full file path to convert.</param>
+    /// <returns>A user-friendly path with ~ substitution.</returns>
+    private static string GetFriendlyPath(string path)
+    {
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        if (!string.IsNullOrEmpty(userProfile) && path.StartsWith(userProfile, StringComparison.OrdinalIgnoreCase))
+        {
+            return "~" + path.Substring(userProfile.Length);
+        }
+
+        return path;
     }
 }

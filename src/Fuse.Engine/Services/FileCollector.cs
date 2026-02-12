@@ -9,7 +9,6 @@ using DotNet.Globbing;
 using Fuse.Core;
 using Fuse.Engine.FileSystem;
 using Fuse.Engine.Git;
-using Spectre.Console;
 
 namespace Fuse.Engine.Services;
 
@@ -75,11 +74,6 @@ public sealed class FileCollector : IFileCollector
     ];
 
     /// <summary>
-    ///     Console interface for output (reserved for future verbose mode).
-    /// </summary>
-    private readonly IAnsiConsole _console;
-
-    /// <summary>
     ///     The file system abstraction for file operations.
     /// </summary>
     private readonly PhysicalFileSystem _fileSystem;
@@ -94,12 +88,10 @@ public sealed class FileCollector : IFileCollector
     /// </summary>
     /// <param name="fileSystem">The file system implementation.</param>
     /// <param name="gitIgnoreParser">The .gitignore parser.</param>
-    /// <param name="console">The console for output.</param>
-    public FileCollector(PhysicalFileSystem fileSystem, GitIgnoreParser gitIgnoreParser, IAnsiConsole console)
+    public FileCollector(PhysicalFileSystem fileSystem, GitIgnoreParser gitIgnoreParser)
     {
         _fileSystem = fileSystem;
         _gitIgnoreParser = gitIgnoreParser;
-        _console = console;
     }
 
     /// <inheritdoc />

@@ -8,7 +8,6 @@
         <ProjectReference Include="..\Fuse.Core\Fuse.Core.csproj"/>
         <ProjectReference Include="..\Fuse.Minifiers\Fuse.Minifiers.csproj"/>
         <PackageReference Include="DotNet.Glob" Version="3.1.3"/>
-        <PackageReference Include="Spectre.Console" Version="0.54.0"/>
         <PackageReference Include="TiktokenSharp" Version="1.2.0"/>
     </ItemGroup>
 </Project>

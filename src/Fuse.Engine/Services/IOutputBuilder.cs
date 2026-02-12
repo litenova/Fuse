@@ -46,7 +46,7 @@ public interface IOutputBuilder
     /// <param name="files">The list of files to include in the output.</param>
     /// <param name="options">The fusion options controlling output generation.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
-    /// <returns>A task representing the asynchronous build operation.</returns>
+    /// <returns>A task representing the asynchronous build operation, returning a FusionResult with generated paths and statistics.</returns>
     /// <remarks>
     ///     <para>
     ///         The output format for each file is:
@@ -65,8 +65,8 @@ public interface IOutputBuilder
     /// <example>
     ///     <code>
     /// var files = collector.CollectFiles(options, config);
-    /// await outputBuilder.BuildOutputAsync(files, options, cancellationToken);
+    /// var result = await outputBuilder.BuildOutputAsync(files, options, cancellationToken);
     /// </code>
     /// </example>
-    Task BuildOutputAsync(List<FileProcessingInfo> files, FuseOptions options, CancellationToken cancellationToken);
+    Task<FusionResult> BuildOutputAsync(List<FileProcessingInfo> files, FuseOptions options, CancellationToken cancellationToken);
 }

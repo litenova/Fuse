@@ -8,7 +8,6 @@
 using DotMake.CommandLine;
 using Fuse.Core;
 using Fuse.Engine;
-using Spectre.Console;
 
 namespace Fuse.Cli.Commands;
 
@@ -55,7 +54,7 @@ public sealed class DotNetCommand : CommandBase
     /// <remarks>
     /// Parameterless constructor required by DotMake.CommandLine source generator.
     /// </remarks>
-    public DotNetCommand() : base(null!, null!)
+    public DotNetCommand() : base(null!)
     {
     }
 
@@ -63,8 +62,7 @@ public sealed class DotNetCommand : CommandBase
     /// Initializes a new instance of the <see cref="DotNetCommand" /> class.
     /// </summary>
     /// <param name="engine">The fusion engine instance.</param>
-    /// <param name="console">The console for output.</param>
-    public DotNetCommand(FuseEngine engine, IAnsiConsole console) : base(engine, console)
+    public DotNetCommand(FuseEngine engine) : base(engine)
     {
     }
 
