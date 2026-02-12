@@ -185,7 +185,7 @@ public sealed class FuseEngine
             // Display top token consumers
             if (result.TopTokenFiles.Count > 0)
             {
-                _consoleUI.WriteResult("\nTop Token Consumers:");
+                _consoleUI.WriteResult("Top Token Consumers:");
                 for (int i = 0; i < result.TopTokenFiles.Count; i++)
                 {
                     var file = result.TopTokenFiles[i];
