@@ -1,32 +1,32 @@
 @echo off
 setlocal
 
-echo [92mCleaning previous nupkg output...[0m
+powershell -NoProfile -Command "Write-Host 'Cleaning previous nupkg output...' -ForegroundColor Cyan"
 if exist ".\src\Fuse.Cli\nupkg" rd /s /q ".\src\Fuse.Cli\nupkg"
 
 echo.
-echo [92mBuilding and Packing Fuse...[0m
+powershell -NoProfile -Command "Write-Host 'Building and packing Fuse...' -ForegroundColor Cyan"
 dotnet pack ".\src\Fuse.Cli\Fuse.Cli.csproj" -c Release -v q --nologo
 if %ERRORLEVEL% NEQ 0 (
-    echo [91mBuild failed.[0m
+    powershell -NoProfile -Command "Write-Host 'Build failed.' -ForegroundColor Red"
     pause
     exit /b 1
 )
 
 echo.
-echo [92mUninstalling previous version (if any)...[0m
+powershell -NoProfile -Command "Write-Host 'Uninstalling previous version (if any)...' -ForegroundColor Cyan"
 dotnet tool uninstall -g Fuse 2>nul
 
 echo.
-echo [92mInstalling Fuse globally...[0m
+powershell -NoProfile -Command "Write-Host 'Installing Fuse globally...' -ForegroundColor Cyan"
 dotnet tool install -g Fuse --add-source ".\src\Fuse.Cli\nupkg" -v q
 
 if %ERRORLEVEL% NEQ 0 (
-    echo [91mInstallation failed.[0m
+    powershell -NoProfile -Command "Write-Host 'Installation failed.' -ForegroundColor Red"
     pause
     exit /b 1
 )
 
 echo.
-echo [92mSuccess! Type 'fuse --help' to get started.[0m
+powershell -NoProfile -Command "Write-Host 'Success! Type fuse --help to get started.' -ForegroundColor Green"
 pause
