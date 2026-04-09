@@ -130,8 +130,8 @@ public sealed class OutputBuilder : IOutputBuilder
             // Write header to the first file
             await WriteMetadataHeaderAsync(currentWriter, options, currentPart);
 
-            // Process each file in the list
-            foreach (var fileInfo in files)
+            // Process each file from biggest to smallest (by raw file size)
+            foreach (var fileInfo in files.OrderByDescending(f => f.Info.Length))
             {
                 // Check for cancellation (either user-initiated or token limit reached)
                 if (localCts.IsCancellationRequested)

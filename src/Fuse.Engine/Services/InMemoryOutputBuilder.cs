@@ -65,7 +65,8 @@ public sealed class InMemoryOutputBuilder : IOutputBuilder
 
         using var localCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
-        foreach (var fileInfo in files)
+        // Process files from biggest to smallest (by raw file size)
+        foreach (var fileInfo in files.OrderByDescending(f => f.Info.Length))
         {
             if (localCts.IsCancellationRequested)
                 break;

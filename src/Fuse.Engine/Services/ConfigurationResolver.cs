@@ -48,7 +48,7 @@ public sealed class ConfigurationResolver : IConfigurationResolver
             return new ResolvedConfiguration(
                 options.OnlyExtensions,
                 options.ExcludeDirectories ?? [],
-                []
+                options.ExcludePatterns ?? []
             );
 
         // Rule 2: If no template is specified, use generic defaults
@@ -56,7 +56,7 @@ public sealed class ConfigurationResolver : IConfigurationResolver
             return new ResolvedConfiguration(
                 options.IncludeExtensions ?? ["*.*"], // Default to all files if no template
                 options.ExcludeDirectories ?? [],
-                []
+                options.ExcludePatterns ?? []
             );
 
         // Rule 3: Template is specified - get its defaults
@@ -81,11 +81,16 @@ public sealed class ConfigurationResolver : IConfigurationResolver
         if (options.ExcludeDirectories != null)
             excludeDirectories.AddRange(options.ExcludeDirectories);
 
+        // Merge user-defined exclusion patterns with template patterns
+        var allPatterns = patterns.ToList();
+        if (options.ExcludePatterns != null)
+            allPatterns.AddRange(options.ExcludePatterns);
+
         // Return the merged configuration with duplicates removed
         return new ResolvedConfiguration(
             extensions.Distinct().ToArray(),
             excludeDirectories.Distinct().ToArray(),
-            patterns.ToArray()
+            allPatterns.Distinct().ToArray()
         );
     }
 }
