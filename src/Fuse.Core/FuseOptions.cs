@@ -42,7 +42,7 @@ public sealed record FuseOptions
     ///     Gets the directory where the fused output file will be written.
     /// </summary>
     /// <value>The absolute path to the output directory. Defaults to the user's Documents folder.</value>
-    public string OutputDirectory { get; init; } = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+    public string OutputDirectory { get; init; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Fuse");
 
     /// <summary>
     ///     Gets the project template to use for default file extensions and exclusions.

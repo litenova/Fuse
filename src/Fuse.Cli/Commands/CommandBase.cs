@@ -107,7 +107,7 @@ public abstract class CommandBase
     /// </summary>
     /// <value>The path where the output file will be written. Defaults to the user's Documents folder.</value>
     [CliOption(Description = "Path to the output directory.")]
-    public string Output { get; set; } = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+    public string Output { get; set; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Fuse");
 
     /// <summary>
     ///     Gets or sets directory names to exclude from scanning.
