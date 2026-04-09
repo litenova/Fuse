@@ -103,7 +103,7 @@ public sealed class McpServeCommand
                 options.ServerInfo = new()
                 {
                     Name = "fuse",
-                    Version = "1.1.0"
+                    Version = "1.0.0"
                 };
                 options.ServerInstructions =
                     "Fuse is a codebase context optimizer. Use the 'get_optimized_context' tool " +
