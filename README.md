@@ -265,7 +265,7 @@ Each template defines sensible file extensions and excluded directories for its 
 
 ### Template Highlights
 
-- **DotNet** — Includes `.cs`, `.razor`, `.cshtml`, `.csproj`, `.json`, `.yml`, `.scss`, `.sql`, and more (`.txt` is excluded intentionally — add it back with `--include-extensions .txt` if needed). Excludes `bin`, `obj`, `.vs`, `packages`, `artifacts`, `TestResults`. Filters out generated files (`*.Designer.cs`, `*.g.cs`), lock files, minified assets, and resource files.
+- **DotNet** — Core extensions: `.cs`, `.razor`, `.cshtml`, `.xaml`, `.csproj`, `.props`, `.targets`, `.config`, `.json`, `.xml`, `.yml`, `.yaml`, `.md`, `.scss`, `.css`, `.html`, `.htm`, `.editorconfig`. Excludes `bin`, `obj`, `.vs`, `packages`, `artifacts`, `TestResults`. Filters out generated files (`*.Designer.cs`, `*.g.cs`), lock files, minified assets, and resource files. Opt-in extras via `--include-extensions`: `.sql`, `.bat`, `.sh`, `.ps1`, `.cmd`, `.scriban`, `.feature`, `.nuspec`, `.txt`.
 - **Infrastructure** — Includes `.tf`, `.tfvars`, `.yaml`, `.yml`, `.json`, `.sh`, `.ps1`, `.hcl`. Excludes Terraform state files, plan files, lock files, and crash logs.
 - **AzureDevOpsWiki** — Includes only `.md` files, excludes `.git` and `.attachments`.
 

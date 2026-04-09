@@ -64,12 +64,24 @@ public static class ProjectTemplateRegistry
 
         // ===== .NET Template =====
         // Comprehensive template for C#, F#, VB.NET, and ASP.NET projects
+        // Opt-in extensions (add via --include-extensions if needed):
+        //   .sql        — SQL migration / query scripts
+        //   .bat .cmd   — Windows batch scripts
+        //   .sh         — Shell scripts
+        //   .ps1        — PowerShell scripts
+        //   .scriban    — Scriban template files
+        //   .feature    — SpecFlow / Reqnroll feature files
+        //   .nuspec     — NuGet packaging manifests
+        //   .txt        — Plain text files
         builder[ProjectTemplate.DotNet] = (
             [
-                ".cs", ".xaml", ".cshtml", ".csproj", ".config", ".json", ".xml",
-                ".razor", ".md", ".props", ".targets", ".yml", ".yaml", ".scriban",
-                ".bat", ".sh", ".ps1", ".cmd", ".nuspec", ".scss", ".css", ".html", ".htm",
-                ".sql", ".feature", ".editorconfig"
+                ".cs", ".razor", ".cshtml", ".xaml",
+                ".csproj", ".props", ".targets", ".config",
+                ".json", ".xml",
+                ".yml", ".yaml",
+                ".md",
+                ".scss", ".css", ".html", ".htm",
+                ".editorconfig"
             ],
             [
                 "bin", "obj", ".vs", ".git", ".idea",
