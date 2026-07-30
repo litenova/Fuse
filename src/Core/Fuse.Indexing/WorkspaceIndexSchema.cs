@@ -28,9 +28,14 @@ public static class WorkspaceIndexSchema
     ///     <para>
     ///     Version 17 (v4.2 R60): <c>tfm_availability</c> records the target-framework availability of canonical
     ///     multi-target semantic declarations and graph facts.
+    ///     <para>
+    ///     Version 18 (v4.4): <c>files.index_detail</c> records whether full source, declarations only, or
+    ///     inventory metadata was retained. Full-text rows move to contentless-delete FTS5 keyed by
+    ///     <c>search_documents</c>, and the unused <c>git_cochange</c> table is removed.
+    ///     </para>
     ///     </para>
     /// </remarks>
-    public const int TargetVersion = 17;
+    public const int TargetVersion = 18;
 
     /// <summary>
     ///     The extraction-contract version: what the indexer extracts (symbol, edge, chunk, and route semantics),
@@ -48,8 +53,10 @@ public static class WorkspaceIndexSchema
     ///     recording its target-framework availability.
     ///     Version 3 (v4.2): tier-1 build capture projects cross-project <c>tests</c> edges before the graph is
     ///     stored, so <c>fuse_test</c> selects the same covering tests as the ordinary semantic workspace path.
+    ///     Version 4 (v4.4): generated files retain declarations and routes but omit method bodies and comments;
+    ///     files above the source limit retain inventory metadata only.
     /// </remarks>
-    public const int ExtractionContractVersion = 3;
+    public const int ExtractionContractVersion = 4;
 
     /// <summary>
     ///     Database-level pragmas applied once at schema creation. WAL journaling and
@@ -57,7 +64,10 @@ public static class WorkspaceIndexSchema
     /// </summary>
     public const string CreatePragmas =
         "PRAGMA journal_mode = WAL;" +
-        "PRAGMA synchronous = NORMAL;";
+        "PRAGMA synchronous = NORMAL;" +
+        "PRAGMA wal_autocheckpoint = 1000;" +
+        "PRAGMA journal_size_limit = 67108864;" +
+        "PRAGMA auto_vacuum = INCREMENTAL;";
 
     /// <summary>
     ///     Idempotent DDL creating every Fuse-owned relational table and index, plus the
@@ -83,6 +93,7 @@ public static class WorkspaceIndexSchema
           is_generated INTEGER NOT NULL DEFAULT 0,
           is_test INTEGER NOT NULL DEFAULT 0,
           language TEXT NULL,
+          index_detail TEXT NOT NULL DEFAULT 'full',
           indexed_at_utc TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_files_hash ON files(content_hash);
@@ -237,17 +248,14 @@ public static class WorkspaceIndexSchema
         CREATE INDEX IF NOT EXISTS idx_options_name ON options_bindings(options_name);
         CREATE INDEX IF NOT EXISTS idx_options_section ON options_bindings(config_section);
 
-        CREATE TABLE IF NOT EXISTS git_cochange(
-          path_a TEXT NOT NULL,
-          path_b TEXT NOT NULL,
-          count INTEGER NOT NULL,
-          pmi REAL NOT NULL,
-          jaccard REAL NOT NULL,
-          last_seen_utc TEXT NULL,
-          PRIMARY KEY(path_a, path_b)
+        CREATE TABLE IF NOT EXISTS search_documents(
+          document_id INTEGER PRIMARY KEY,
+          chunk_id TEXT NOT NULL UNIQUE,
+          file_id INTEGER NOT NULL,
+          FOREIGN KEY(chunk_id) REFERENCES chunks(chunk_id) ON DELETE CASCADE,
+          FOREIGN KEY(file_id) REFERENCES files(file_id) ON DELETE CASCADE
         );
-        CREATE INDEX IF NOT EXISTS idx_cochange_a ON git_cochange(path_a);
-        CREATE INDEX IF NOT EXISTS idx_cochange_b ON git_cochange(path_b);
+        CREATE INDEX IF NOT EXISTS idx_search_documents_file ON search_documents(file_id);
 
         CREATE TABLE IF NOT EXISTS check_sessions(
           session_id TEXT PRIMARY KEY,
@@ -270,8 +278,9 @@ public static class WorkspaceIndexSchema
     /// </summary>
     /// <remarks>
     ///     Column order matters: the relevance weights in the search query (see the store's search path)
-    ///     are positional. <c>chunk_id</c> is unindexed and used only to join hits back to the
-    ///     <c>chunks</c> table. <c>subtokens</c> holds the subword expansion of the chunk's identifiers
+    ///     are positional. The integer FTS row id joins through <c>search_documents</c> to a chunk. The
+    ///     contentless-delete table avoids retaining a second stored copy of indexed source text. <c>subtokens</c>
+    ///     holds the subword expansion of the chunk's identifiers
     ///     (computed in C# by <see cref="IdentifierSplitter" /> and stored as text), so a prose query word
     ///     matches a compound name; it is weighted below the exact name but above the body. <c>stems</c> holds
     ///     the Porter-stemmed form of the chunk's identifiers and comments (computed in C# by
@@ -280,7 +289,6 @@ public static class WorkspaceIndexSchema
     /// </remarks>
     public const string CreateFtsDdl =
         "CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts USING fts5(" +
-        "  chunk_id UNINDEXED," +
         "  path, name, symbols, signature, comments, body, subtokens, stems," +
-        "  tokenize = 'unicode61');";
+        "  content = '', contentless_delete = 1, tokenize = 'unicode61');";
 }

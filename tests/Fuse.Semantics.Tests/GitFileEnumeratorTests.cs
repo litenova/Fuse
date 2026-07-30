@@ -4,77 +4,51 @@ using Xunit;
 
 namespace Fuse.Semantics.Tests;
 
-// Git-native enumeration: a git work tree is listed by git (tracked plus untracked-not-ignored, excluding ignored
-// files and nested worktrees); a non-git directory returns null so the caller falls back to the directory walk.
 public sealed class GitFileEnumeratorTests : IDisposable
 {
-    private readonly string _root =
-        Path.Combine(Path.GetTempPath(), "fuse-gitenum-tests", Guid.NewGuid().ToString("N"));
-    private readonly GitFileEnumerator _enumerator = new();
-
-    public GitFileEnumeratorTests() => Directory.CreateDirectory(_root);
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "fuse-git-inventory", Guid.NewGuid().ToString("N"));
 
     [Fact]
-    public async Task ReturnsNullForNonGitDirectory()
+    public async Task CleanTrackedFilesExposeBlobIdsAndDirtyFilesRequireDiskHashing()
     {
-        File.WriteAllText(Path.Combine(_root, "Loose.cs"), "class Loose { }");
+        Directory.CreateDirectory(Path.Combine(_root, "src"));
+        await RunGitAsync("init", "-q");
+        await File.WriteAllTextAsync(Path.Combine(_root, "src", "Catalog.cs"), "public sealed class Catalog { }");
+        await RunGitAsync("add", "src/Catalog.cs");
 
-        var result = await _enumerator.TryListAsync(_root, CancellationToken.None);
+        var enumerator = new GitFileEnumerator();
+        var clean = await enumerator.TryDescribeAsync(_root, CancellationToken.None);
 
-        Assert.Null(result);
+        Assert.NotNull(clean);
+        Assert.Contains("src/Catalog.cs", clean!.Paths);
+        Assert.NotNull(clean.GetCleanBlobId("src/Catalog.cs"));
+
+        await File.WriteAllTextAsync(Path.Combine(_root, "src", "Catalog.cs"), "public sealed class Catalog { public int Count => 1; }");
+        var dirty = await enumerator.TryDescribeAsync(_root, CancellationToken.None);
+
+        Assert.NotNull(dirty);
+        Assert.Contains("src/Catalog.cs", dirty!.DirtyPaths);
+        Assert.Null(dirty.GetCleanBlobId("src/Catalog.cs"));
     }
 
-    [Fact]
-    public async Task ListsTrackedAndUntrackedButNotIgnoredOrNestedWorktree()
+    private async Task RunGitAsync(params string[] arguments)
     {
-        if (!TryInitGitRepo())
-            return; // git not available in this environment; the fallback path is covered by the scanner tests.
-
-        File.WriteAllText(Path.Combine(_root, ".gitignore"), "ignored.cs\n");
-        File.WriteAllText(Path.Combine(_root, "Tracked.cs"), "class Tracked { }");
-        File.WriteAllText(Path.Combine(_root, "Untracked.cs"), "class Untracked { }");
-        File.WriteAllText(Path.Combine(_root, "ignored.cs"), "class Ignored { }");
-        RunGit("add", "Tracked.cs", ".gitignore");
-
-        // A real embedded repository (its own .git) must not be recursed by the outer repo's listing.
-        if (!RunGit("init", "nested"))
-            return; // nested init unsupported here; the fallback and filter paths are covered elsewhere.
-        File.WriteAllText(Path.Combine(_root, "nested", "Nested.cs"), "class Nested { }");
-
-        var result = await _enumerator.TryListAsync(_root, CancellationToken.None);
-
-        Assert.NotNull(result);
-        var names = result!.Select(p => p.Replace('\\', '/')).ToList();
-        Assert.Contains(names, p => p.EndsWith("Tracked.cs", StringComparison.Ordinal));
-        Assert.Contains(names, p => p.EndsWith("Untracked.cs", StringComparison.Ordinal));
-        Assert.DoesNotContain(names, p => p.EndsWith("ignored.cs", StringComparison.Ordinal));
-        // git reports an embedded repository as a single "nested/" directory marker and does not recurse it, so
-        // its files never appear; the pipeline then drops the directory marker via its existence check.
-        Assert.DoesNotContain(names, p => p.EndsWith("Nested.cs", StringComparison.Ordinal));
-    }
-
-    private bool TryInitGitRepo()
-    {
-        try
+        var startInfo = new ProcessStartInfo
         {
-            return RunGit("init") && RunGit("config", "user.email", "t@e.st") && RunGit("config", "user.name", "t");
-        }
-        catch (Exception)
-        {
-            return false;
-        }
-    }
+            FileName = "git",
+            WorkingDirectory = _root,
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        foreach (var argument in arguments)
+            startInfo.ArgumentList.Add(argument);
 
-    private bool RunGit(params string[] args)
-    {
-        var startInfo = new ProcessStartInfo { FileName = "git", WorkingDirectory = _root, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var arg in args)
-            startInfo.ArgumentList.Add(arg);
         using var process = Process.Start(startInfo);
-        if (process is null)
-            return false;
-        process.WaitForExit();
-        return process.ExitCode == 0;
+        Assert.NotNull(process);
+        await process!.WaitForExitAsync();
+        Assert.True(process.ExitCode == 0, await process.StandardError.ReadToEndAsync());
     }
 
     public void Dispose()
@@ -84,9 +58,11 @@ public sealed class GitFileEnumeratorTests : IDisposable
             if (Directory.Exists(_root))
                 Directory.Delete(_root, recursive: true);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (IOException)
         {
-            // Best-effort cleanup; git pack files can linger briefly on Windows.
+        }
+        catch (UnauthorizedAccessException)
+        {
         }
     }
 }

@@ -190,7 +190,7 @@ public sealed class FreshnessReconcileTests : IAsyncLifetime
         return new SemanticIndexer(
             new DotNetWorkspaceDiscoverer(),
             new RoslynWorkspaceLoader(),
-            new WorkspaceFileScanner(pipeline, new FileHashService()),
+            new WorkspaceFileScanner(pipeline),
             new SemanticSymbolExtractor(),
             new SyntaxSymbolExtractor(),
             new SyntaxRouteExtractor(),

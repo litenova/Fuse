@@ -11,12 +11,11 @@ namespace Fuse.Benchmarks;
 ///     caught by a recorded metric rather than shipping unmeasured (findings 4 and 9).
 /// </summary>
 /// <remarks>
-///     Runs three configurations over the same index, so the gate covers what users run and re-adjudicates the
-///     priors as default-on features:
+///     Runs two configurations over the same index, so the gate covers the lexical channel and the shipping
+///     dependency-centrality prior:
 ///     <list type="bullet">
-///         <item><description><c>lexical</c>: the base channels alone (no embedder, both structural priors off).</description></item>
-///         <item><description><c>default</c>: the shipping configuration (centrality on, git co-change prior off after D6 was discharged net-negative).</description></item>
-///         <item><description><c>default-plus-cochange</c>: the shipping default with the dropped co-change prior re-added, keeping its effect measured and guarded.</description></item>
+///         <item><description><c>lexical</c>: the base lexical channel with dependency centrality off.</description></item>
+///         <item><description><c>default</c>: the shipping configuration with dependency centrality on.</description></item>
 ///     </list>
 ///     Ranking metrics come from <see cref="Metrics" /> (MRR, recall@k, nDCG@k). This suite is the required gate
 ///     on any change to field weights, tokenization, query expansion, or priors.
@@ -61,15 +60,12 @@ public sealed class RankingSuite : IEvalSuite
             return Skipped(notes);
         }
 
-        // The dense channel was retired (K1); every config now ranks on the lexical channel. The three configs
-        // isolate the priors: "lexical" is the bare lexical channel, "default" is the shipping default (centrality
-        // on, co-change OFF since D6 was discharged net-negative), and "default-plus-cochange" re-adds the dropped
-        // co-change prior so the gate keeps its effect measured and a future re-introduction stays guarded.
-        var configs = new (string Label, bool Centrality, bool CoChange)[]
+        // The dense channel and git co-change prior were retired. The remaining configurations isolate the
+        // lexical channel and the dependency-centrality prior.
+        var configs = new (string Label, bool Centrality)[]
         {
-            ("lexical", false, false),
-            ("default", true, false),
-            ("default-plus-cochange", true, true),
+            ("lexical", false),
+            ("default", true),
         };
 
         // config label -> per-task ranked metrics
@@ -107,7 +103,7 @@ public sealed class RankingSuite : IEvalSuite
 
                         var localization = await engine.LocalizeAsync(new LocalizationRequest(
                             repo.Path!, Query: task.Title, MaxCandidates: CandidateK,
-                            EnableCentralityPrior: config.Centrality, EnableCoChangePrior: config.CoChange), cancellationToken);
+                            EnableCentralityPrior: config.Centrality), cancellationToken);
 
                         // Ranked list in score order, deduped by path preserving the first (highest) occurrence.
                         var ranked = new List<string>();
@@ -156,9 +152,6 @@ public sealed class RankingSuite : IEvalSuite
             notes.Add($"config {config.Label} (n {rows.Count}): MRR {mrr:F3}, {string.Join(", ", recallParts)}, nDCG@10 {ndcg:F3}");
         }
 
-        // A6 re-adjudication: default vs default-no-cochange on the same tasks.
-        AddCoChangeDelta(perConfig, notes);
-
         // Headline scorecard: the shipping-default recall@10 and MRR (as F1 slot is unused, we surface it in notes).
         var defRecall10 = Metrics.Mean(defaultRows.Select(r => r.RecallAtK[10]).ToList());
         var defMrr = Metrics.Mean(defaultRows.Select(r => r.ReciprocalRank).ToList());
@@ -166,21 +159,6 @@ public sealed class RankingSuite : IEvalSuite
         var scorecard = new Scorecard(defaultRows.Count, defRecall10, ciLow, ciHigh, defMrr, defMrr, 0, 0);
 
         return new SuiteResult(Name, Description, null, scorecard, [], notes);
-    }
-
-    private static void AddCoChangeDelta(IReadOnlyDictionary<string, List<RankRow>> perConfig, List<string> notes)
-    {
-        // The shipping default now has co-change OFF; "default-plus-cochange" re-adds it. The delta (on minus off)
-        // is the effect of re-introducing the dropped prior, and it should stay non-positive (D6 discharged).
-        var withCoChange = perConfig["default-plus-cochange"];
-        var withoutCoChange = perConfig["default"];
-        if (withCoChange.Count == 0 || withCoChange.Count != withoutCoChange.Count)
-            return;
-        var mrrOn = Metrics.Mean(withCoChange.Select(r => r.ReciprocalRank).ToList());
-        var mrrOff = Metrics.Mean(withoutCoChange.Select(r => r.ReciprocalRank).ToList());
-        var recallOn = Metrics.Mean(withCoChange.Select(r => r.RecallAtK[10]).ToList());
-        var recallOff = Metrics.Mean(withoutCoChange.Select(r => r.RecallAtK[10]).ToList());
-        notes.Add($"A6 co-change prior delta (on minus off): MRR {mrrOn - mrrOff:+0.000;-0.000;0.000}, recall@10 {recallOn - recallOff:+0.0%;-0.0%;0.0%}");
     }
 
     // The changed files a task touched, normalized. This is the ranking ground truth (finding: recall is bounded

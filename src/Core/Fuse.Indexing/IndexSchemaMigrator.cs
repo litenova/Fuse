@@ -23,8 +23,11 @@ internal sealed class IndexSchemaMigrator
     /// </summary>
     /// <param name="connectionFactory">The connection factory for the index database.</param>
     /// <param name="logger">An optional logger for migration diagnostics.</param>
-    public IndexSchemaMigrator(WorkspaceIndexConnectionFactory _, ILogger? logger = null) =>
+    public IndexSchemaMigrator(WorkspaceIndexConnectionFactory connectionFactory, ILogger? logger = null)
+    {
+        ArgumentNullException.ThrowIfNull(connectionFactory);
         _logger = logger;
+    }
 
     /// <summary>
     ///     Reads the current schema version and, if it is below the target, drops all Fuse-owned
@@ -57,11 +60,22 @@ internal sealed class IndexSchemaMigrator
     /// </remarks>
     public static async Task RebuildAsync(SqliteConnection connection, CancellationToken cancellationToken)
     {
-        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
-        await DropAllObjectsAsync(connection, transaction, cancellationToken);
-        await ExecuteAsync(connection, transaction, WorkspaceIndexSchema.CreateTablesDdl, cancellationToken);
-        await SetVersionAsync(connection, transaction, WorkspaceIndexSchema.TargetVersion, cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        // SQLite ignores PRAGMA foreign_keys changes inside an active transaction. Disable enforcement before the
+        // rebuild transaction so legacy tables with references in an arbitrary sqlite_master order can be removed
+        // as one owned derived-data unit, then restore enforcement before this connection is returned to the pool.
+        await ExecuteAsync(connection, null, "PRAGMA foreign_keys = OFF;", cancellationToken);
+        try
+        {
+            await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+            await DropAllObjectsAsync(connection, transaction, cancellationToken);
+            await ExecuteAsync(connection, transaction, WorkspaceIndexSchema.CreateTablesDdl, cancellationToken);
+            await SetVersionAsync(connection, transaction, WorkspaceIndexSchema.TargetVersion, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        finally
+        {
+            await ExecuteAsync(connection, null, "PRAGMA foreign_keys = ON;", CancellationToken.None);
+        }
     }
 
     /// <summary>
@@ -239,7 +253,6 @@ internal sealed class IndexSchemaMigrator
             }
         }
 
-        await ExecuteAsync(connection, transaction, "PRAGMA foreign_keys = OFF;", cancellationToken);
         foreach (var (type, name, _) in objects.OrderByDescending(o => o.IsVirtual))
         {
             var quoted = name.Replace("\"", "\"\"", StringComparison.Ordinal);
@@ -247,7 +260,6 @@ internal sealed class IndexSchemaMigrator
         }
 
         await ExecuteAsync(connection, transaction, "DELETE FROM schema_version;", cancellationToken);
-        await ExecuteAsync(connection, transaction, "PRAGMA foreign_keys = ON;", cancellationToken);
     }
 
     private static async Task SetVersionAsync(

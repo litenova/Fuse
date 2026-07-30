@@ -116,21 +116,6 @@ public interface IWorkspaceIndexStore : IAsyncDisposable
     /// <returns>The file-to-file edges (self-edges excluded).</returns>
     Task<IReadOnlyList<FileDependencyEdge>> GetFileDependencyEdgesAsync(CancellationToken cancellationToken);
 
-    /// <summary>Replaces the persisted git co-change table with a freshly mined set of file-pair couplings.</summary>
-    /// <param name="records">The co-change pairs to store; the table is cleared first so a re-mine is authoritative.</param>
-    /// <param name="cancellationToken">A token to cancel the write.</param>
-    /// <returns>A task that completes when the batch is committed.</returns>
-    Task UpsertCoChangesAsync(IReadOnlyList<CoChangeRecord> records, CancellationToken cancellationToken);
-
-    /// <summary>
-    ///     Returns the co-change rows touching any of the given files (matching either column), for the open-ended
-    ///     scorer's co-change prior.
-    /// </summary>
-    /// <param name="normalizedPaths">The seed file paths whose co-changers to fetch.</param>
-    /// <param name="cancellationToken">A token to cancel the read.</param>
-    /// <returns>The matching co-change pairs; empty when none were mined (no git history, or this unset).</returns>
-    Task<IReadOnlyList<CoChangeRecord>> GetCoChangesForAsync(IReadOnlyCollection<string> normalizedPaths, CancellationToken cancellationToken);
-
     /// <summary>Inserts or updates semantic edges.</summary>
     /// <param name="edges">The edges to upsert.</param>
     /// <param name="cancellationToken">A token to cancel the write.</param>

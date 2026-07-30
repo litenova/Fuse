@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Security.Cryptography;
 using System.Text;
 using Fuse.Collection;
 using Fuse.Collection.Options;
@@ -11,17 +13,19 @@ namespace Fuse.Semantics;
 /// </summary>
 /// <remarks>
 ///     Reuses <see cref="FileCollectionPipeline" /> for discovery (gitignore, extension, and exclusion
-///     rules), then hashes each file once and classifies it from its path and a short content prefix.
+///     rules), then reuses clean Git blob ids or streams a SHA-256 hash for working-tree files. Generated files
+///     are classified from their path and an 8 KiB content prefix.
 ///     Test and generated files are included and flagged, not excluded: retrieval decides how to treat
 ///     them.
 /// </remarks>
 public sealed class WorkspaceFileScanner
 {
-    private const int ContentPrefixBytes = 2048;
+    private const int ContentPrefixBytes = 8 * 1024;
+    private const int HashBufferBytes = 64 * 1024;
 
     /// <summary>
-    ///     The default per-file size cap (bytes) above which a file is skipped rather than read into the index
-    ///     (R35). A generated giant or a mislabeled binary would otherwise cost memory and time for no signal.
+    ///     The default per-file size cap (bytes) above which a file retains inventory metadata only. A generated
+    ///     giant or a mislabeled binary would otherwise cost memory and time for no useful syntax signal.
     ///     Override with the <c>FUSE_MAX_FILE_BYTES</c> environment variable.
     /// </summary>
     public const long DefaultMaxFileBytes = 5L * 1024 * 1024;
@@ -32,21 +36,17 @@ public sealed class WorkspaceFileScanner
     private static readonly string[] DefaultExtensions = [".cs", ".csproj", ".props", ".targets", ".json"];
 
     private readonly FileCollectionPipeline _pipeline;
-    private readonly FileHashService _hashService;
-    // For a git work tree, enumerate the files git itself reports (tracked plus untracked-not-ignored), which
-    // excludes other worktrees, embedded repositories, and ignored trees by construction. Best-effort: a non-git
-    // directory falls back to the directory walk. Field-initialized like the indexer's co-change collector.
+    // For a Git work tree, use Git's inventory instead of a raw directory walk. It excludes ignored trees and
+    // provides clean blob ids, so unchanged tracked source does not need a full content hash.
     private readonly GitFileEnumerator _gitFiles = new();
 
     /// <summary>
     ///     Initializes a new instance of the <see cref="WorkspaceFileScanner" /> class.
     /// </summary>
     /// <param name="pipeline">The collection pipeline used to discover files.</param>
-    /// <param name="hashService">The service used to compute content hashes.</param>
-    public WorkspaceFileScanner(FileCollectionPipeline pipeline, FileHashService hashService)
+    public WorkspaceFileScanner(FileCollectionPipeline pipeline)
     {
         _pipeline = pipeline;
-        _hashService = hashService;
     }
 
     /// <summary>
@@ -60,15 +60,15 @@ public sealed class WorkspaceFileScanner
 
     /// <summary>
     ///     Discovers files under a root directory and builds their index records, also reporting the files skipped
-    ///     (too large, unreadable, permission-denied) so one hostile file never aborts the index (R35).
+    ///     (unreadable or permission-denied) so one hostile file never aborts the index (R35).
     /// </summary>
     /// <param name="request">The scan request.</param>
     /// <param name="cancellationToken">A token to cancel the scan.</param>
     /// <returns>The index records and the skipped files with reasons.</returns>
     public async Task<FileScanResult> ScanWithSkipsAsync(FileScanRequest request, CancellationToken cancellationToken)
     {
-        // Prefer git's own view of the working tree; null (not a git repo) falls back to the directory walk.
-        var candidateFiles = await _gitFiles.TryListAsync(request.RootDirectory, cancellationToken);
+        // Prefer Git's own view of the working tree; null (not a Git repo) falls back to the directory walk.
+        var gitInventory = await _gitFiles.TryDescribeAsync(request.RootDirectory, cancellationToken);
 
         var options = new CollectionOptions(
             sourceDirectory: request.RootDirectory,
@@ -82,30 +82,26 @@ public sealed class WorkspaceFileScanner
             excludeTestProjects: false,
             excludeUnitTestProjects: false,
             respectGitIgnore: true,
-            candidateFiles: candidateFiles);
+            candidateFiles: gitInventory?.Paths);
 
         var collection = await _pipeline.CollectAsync(options, cancellationToken);
         var records = new List<IndexedFileRecord>(collection.Files.Count);
         var skipped = new List<SkippedFile>();
+        var detailLimited = new List<DetailLimitedFile>();
         var maxFileBytes = ResolveMaxFileBytes();
 
         foreach (var file in collection.Files)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            // R35: one hostile file (oversized, unreadable, permission-denied, or a mid-scan IO error) must never
-            // abort the whole index. Skip it with a recorded reason and keep indexing the good files.
-            if (maxFileBytes > 0 && file.FileInfo.Length > maxFileBytes)
-            {
-                skipped.Add(new SkippedFile(file.NormalizedRelativePath, $"too large ({file.FileInfo.Length} bytes > {maxFileBytes} cap)"));
-                continue;
-            }
-
             try
             {
-                var bytes = await File.ReadAllBytesAsync(file.FullPath, cancellationToken);
-                var hash = _hashService.ComputeHash(bytes);
-                var prefix = DecodePrefix(bytes);
+                var blobId = gitInventory?.GetCleanBlobId(file.NormalizedRelativePath);
+                var probe = await ProbeFileAsync(file.FullPath, blobId, cancellationToken);
+                var isGenerated = FileClassifier.IsGenerated(file.NormalizedRelativePath, probe.Prefix);
+                var detailLevel = maxFileBytes > 0 && file.FileInfo.Length > maxFileBytes
+                    ? IndexDetailLevel.InventoryOnly
+                    : isGenerated ? IndexDetailLevel.Declarations : IndexDetailLevel.Full;
 
                 records.Add(new IndexedFileRecord(
                     Path: file.RelativePath,
@@ -113,9 +109,18 @@ public sealed class WorkspaceFileScanner
                     Extension: file.Extension,
                     SizeBytes: file.FileInfo.Length,
                     MtimeUtcTicks: file.FileInfo.LastWriteTimeUtc.Ticks,
-                    ContentHash: hash,
-                    IsGenerated: FileClassifier.IsGenerated(file.NormalizedRelativePath, prefix),
-                    IsTest: FileClassifier.IsTestFile(file.NormalizedRelativePath, prefix)));
+                    ContentHash: probe.ContentHash,
+                    IsGenerated: isGenerated,
+                    IsTest: FileClassifier.IsTestFile(file.NormalizedRelativePath, probe.Prefix),
+                    DetailLevel: detailLevel));
+
+                if (detailLevel == IndexDetailLevel.InventoryOnly)
+                {
+                    detailLimited.Add(new DetailLimitedFile(
+                        file.NormalizedRelativePath,
+                        detailLevel,
+                        $"too large ({file.FileInfo.Length} bytes > {maxFileBytes} cap)"));
+                }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
             {
@@ -123,23 +128,83 @@ public sealed class WorkspaceFileScanner
             }
         }
 
-        return new FileScanResult(records, skipped);
+        return new FileScanResult(records, skipped, detailLimited);
     }
 
     // The per-file size cap from FUSE_MAX_FILE_BYTES, or the default; a non-positive override disables the cap.
     private static long ResolveMaxFileBytes() =>
         long.TryParse(Environment.GetEnvironmentVariable(MaxFileBytesEnvVar), out var bytes) ? bytes : DefaultMaxFileBytes;
 
+    private async Task<FileContentProbe> ProbeFileAsync(
+        string path,
+        string? cleanBlobId,
+        CancellationToken cancellationToken)
+    {
+        await using var stream = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            HashBufferBytes,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+
+        var header = new byte[ContentPrefixBytes];
+        var headerLength = 0;
+        if (cleanBlobId is not null)
+        {
+            while (headerLength < header.Length)
+            {
+                var read = await stream.ReadAsync(header.AsMemory(headerLength), cancellationToken);
+                if (read == 0)
+                    break;
+                headerLength += read;
+            }
+
+            return new FileContentProbe($"git:{cleanBlobId}", DecodePrefix(header, headerLength));
+        }
+
+        var buffer = ArrayPool<byte>.Shared.Rent(HashBufferBytes);
+        try
+        {
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            while (true)
+            {
+                var read = await stream.ReadAsync(buffer.AsMemory(0, HashBufferBytes), cancellationToken);
+                if (read == 0)
+                    break;
+
+                hash.AppendData(buffer, 0, read);
+                var headerRemaining = header.Length - headerLength;
+                if (headerRemaining > 0)
+                {
+                    var copyLength = Math.Min(headerRemaining, read);
+                    Buffer.BlockCopy(buffer, 0, header, headerLength, copyLength);
+                    headerLength += copyLength;
+                }
+            }
+
+            return new FileContentProbe(
+                "sha256:" + Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant(),
+                DecodePrefix(header, headerLength));
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+
     // Decode a UTF-8 prefix for the test/generated content heuristics, skipping a BOM if present.
-    private static string DecodePrefix(byte[] bytes)
+    private static string DecodePrefix(byte[] bytes, int byteCount)
     {
         var start = 0;
-        if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+        if (byteCount >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
             start = 3;
 
-        var length = Math.Min(ContentPrefixBytes, bytes.Length - start);
+        var length = Math.Min(ContentPrefixBytes, byteCount - start);
         return length <= 0 ? string.Empty : Encoding.UTF8.GetString(bytes, start, length);
     }
+
+    private sealed record FileContentProbe(string ContentHash, string Prefix);
 }
 
 /// <summary>
@@ -156,12 +221,20 @@ public sealed record FileScanRequest(
 ///     skipped (R35), so one hostile file never aborts the index and the skips are visible in doctor.
 /// </summary>
 /// <param name="Files">The files that were read and turned into index records.</param>
-/// <param name="Skipped">The files skipped (too large, unreadable, permission-denied) and why.</param>
+/// <param name="Skipped">The unreadable or permission-denied files skipped during inventory.</param>
+/// <param name="DetailLimited">Files retained at declarations or inventory-only detail, with their reasons.</param>
 public sealed record FileScanResult(
     IReadOnlyList<IndexedFileRecord> Files,
-    IReadOnlyList<SkippedFile> Skipped);
+    IReadOnlyList<SkippedFile> Skipped,
+    IReadOnlyList<DetailLimitedFile> DetailLimited);
 
 /// <summary>A file the scanner skipped during indexing, with the reason (R35).</summary>
 /// <param name="Path">The file's normalized relative path.</param>
-/// <param name="Reason">A short human-readable reason (too large, IO error, access denied).</param>
+/// <param name="Reason">A short human-readable reason (IO error or access denied).</param>
 public sealed record SkippedFile(string Path, string Reason);
+
+/// <summary>A file whose retained index detail is intentionally limited, with the reason.</summary>
+/// <param name="Path">The file's normalized relative path.</param>
+/// <param name="DetailLevel">The stored level of index detail.</param>
+/// <param name="Reason">The reason full source detail was not retained.</param>
+public sealed record DetailLimitedFile(string Path, IndexDetailLevel DetailLevel, string Reason);

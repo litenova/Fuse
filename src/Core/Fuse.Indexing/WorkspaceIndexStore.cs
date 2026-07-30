@@ -72,10 +72,16 @@ public sealed class WorkspaceIndexStore : IWorkspaceIndexStore
     public const string IndexIntegrityMetaKey = "index_integrity";
 
     /// <summary>
-    ///     The <c>index_meta</c> key under which an index pass records the files skipped during scanning (R35:
-    ///     too large, unreadable, permission-denied), so <c>doctor</c> can surface them.
+    ///     The <c>index_meta</c> key under which an index pass records unreadable or permission-denied files, so
+    ///     <c>doctor</c> can surface them.
     /// </summary>
     public const string SkippedFilesMetaKey = "skipped_files";
+
+    /// <summary>
+    ///     The <c>index_meta</c> key listing files retained at declarations or inventory-only detail, so status
+    ///     and doctor can name the path and reason rather than silently omitting source detail.
+    /// </summary>
+    public const string DetailLimitedFilesMetaKey = "detail_limited_files";
 
     /// <summary>
     ///     The <c>index_meta</c> key under which an index pass stamps the per-project semantic-load diagnosis (R43):
@@ -503,15 +509,6 @@ public sealed class WorkspaceIndexStore : IWorkspaceIndexStore
     /// <inheritdoc />
     public Task<IReadOnlyList<FileDependencyEdge>> GetFileDependencyEdgesAsync(CancellationToken cancellationToken) =>
         _graph.GetFileDependencyEdgesAsync(cancellationToken);
-
-    /// <inheritdoc />
-    public Task UpsertCoChangesAsync(IReadOnlyList<CoChangeRecord> records, CancellationToken cancellationToken) =>
-        _graph.UpsertCoChangesAsync(records, cancellationToken);
-
-    /// <inheritdoc />
-    public Task<IReadOnlyList<CoChangeRecord>> GetCoChangesForAsync(
-        IReadOnlyCollection<string> normalizedPaths, CancellationToken cancellationToken) =>
-        _graph.GetCoChangesForAsync(normalizedPaths, cancellationToken);
 
     /// <inheritdoc />
     public ValueTask DisposeAsync()

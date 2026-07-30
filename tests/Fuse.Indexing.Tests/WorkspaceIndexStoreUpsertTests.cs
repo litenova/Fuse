@@ -47,34 +47,6 @@ public sealed class WorkspaceIndexStoreUpsertTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task CoChangesRoundTripAndQueryMatchesEitherColumn()
-    {
-        await _store.UpsertCoChangesAsync(
-            [
-                new CoChangeRecord("src/A.cs", "src/B.cs", 3, 1.2, 0.6, "2024-03-01T00:00:00Z"),
-                new CoChangeRecord("src/A.cs", "src/C.cs", 2, 0.5, 0.3, null),
-                new CoChangeRecord("src/D.cs", "src/E.cs", 4, 2.0, 0.8, null)
-            ],
-            CancellationToken.None);
-
-        // A seed of B matches the (A,B) row via path_b; a seed of A matches both (A,B) and (A,C).
-        var forB = await _store.GetCoChangesForAsync(["src/B.cs"], CancellationToken.None);
-        var ab = Assert.Single(forB);
-        Assert.Equal("src/A.cs", ab.PathA);
-        Assert.Equal(3, ab.Count);
-        Assert.Equal(0.6, ab.Jaccard, 5);
-
-        var forA = await _store.GetCoChangesForAsync(["src/A.cs"], CancellationToken.None);
-        Assert.Equal(2, forA.Count);
-        Assert.DoesNotContain(forA, r => r.PathA == "src/D.cs" || r.PathB == "src/D.cs");
-
-        // A re-mine replaces the whole table rather than accumulating.
-        await _store.UpsertCoChangesAsync([new CoChangeRecord("src/X.cs", "src/Y.cs", 2, 0.1, 0.2, null)], CancellationToken.None);
-        Assert.Empty(await _store.GetCoChangesForAsync(["src/A.cs"], CancellationToken.None));
-        Assert.Single(await _store.GetCoChangesForAsync(["src/X.cs"], CancellationToken.None));
-    }
-
-    [Fact]
     public async Task EdgesPersistBetweenNodes()
     {
         await SeedOrderServiceFileAsync();
@@ -156,16 +128,12 @@ public sealed class WorkspaceIndexStoreUpsertTests : IAsyncLifetime
         await _store.UpsertFilesAsync(
             [new IndexedFileRecord("src/Old.cs", "src/Old.cs", ".cs", 20, 2, "old")],
             CancellationToken.None);
-        await _store.UpsertCoChangesAsync(
-            [new CoChangeRecord("src/Old.cs", "src/OrderService.cs", 2, 0.4, 0.5, null)],
-            CancellationToken.None);
 
         var removed = await _store.PruneFilesAsync(["src/OrderService.cs"], CancellationToken.None);
 
         Assert.Equal(1, removed);
         Assert.Equal(1, await CountAsync("files"));
         Assert.Equal(0, await ScalarAsync("SELECT count(*) FROM files WHERE normalized_path = 'src/Old.cs';"));
-        Assert.Empty(await _store.GetCoChangesForAsync(["src/OrderService.cs"], CancellationToken.None));
     }
 
     [Fact]

@@ -1,5 +1,6 @@
 using Fuse.Indexing;
 using Fuse.Semantics.Analyzers;
+using System.Text;
 
 namespace Fuse.Semantics;
 
@@ -16,6 +17,8 @@ namespace Fuse.Semantics;
 /// </remarks>
 public sealed class SemanticIndexer
 {
+    private const int SyntaxExtractionParallelism = 4;
+    private const string PendingSyntaxBatchMetaKey = "pending_syntax_batch";
     private readonly DotNetWorkspaceDiscoverer _discoverer;
     private readonly RoslynWorkspaceLoader _loader;
     private readonly WorkspaceFileScanner _scanner;
@@ -25,7 +28,6 @@ public sealed class SemanticIndexer
     private readonly FileHashService _hashService;
     private readonly SemanticAnalysisRunner _analysisRunner;
     private readonly LanguageSyntaxProviderRegistry _syntaxProviders;
-    private readonly GitCoChangeCollector _coChangeCollector = new();
     private readonly BuildCaptureClient _buildCaptureClient = new();
     // R42: the warm-solution cache doctor's live diagnosis reuses, so a second doctor in a session skips the full
     // MSBuild load. Shared with the refactorers, so a warm solution loaded by either serves the other.
@@ -168,23 +170,7 @@ public sealed class SemanticIndexer
         await store.SetMetaAsync(StaleAsOfMetaKey, "0", cancellationToken);
         await StampIntegrityAsync(store, cancellationToken); // R31: record the post-build integrity result.
         await StampSkippedFilesAsync(store, scan.Skipped, cancellationToken); // R35: record skipped files.
-
-        // Mine git co-change couplings so the open-ended scorer can recover sibling files of a multi-file change.
-        // Best-effort and bounded (a commit cap, wide commits skipped); a non-repository or a git failure is a
-        // no-op, so it never breaks indexing. Only the full pass mines; the syntax-first fast path skips it.
-        // R41: only mine co-change when it is enabled (FUSE_COCHANGE). The prior is default-off (D6), so the
-        // git log walk - a large share of the index hot path - is wasted work on the default index path.
-        if (GitCoChangeCollector.IsCollectionEnabled())
-        {
-            try
-            {
-                await _coChangeCollector.CollectAndStoreAsync(root, store, cancellationToken);
-            }
-            catch (Exception) when (!cancellationToken.IsCancellationRequested)
-            {
-                // Co-change is an optional prior; a mining or write failure must not fail the index.
-            }
-        }
+        await StampDetailLimitedFilesAsync(store, scan.DetailLimited, cancellationToken);
 
         await WorkspaceIndexManifest.CompleteAsync(root, store, files, cancellationToken);
 
@@ -339,14 +325,14 @@ public sealed class SemanticIndexer
         await WorkspaceIndexManifest.BeginBuildAsync(root, store, cancellationToken);
         var scan = await ScanFilesAsync(root, cancellationToken);
         var files = scan.Files;
-        await store.ClearFileDataAsync(files.Select(file => file.NormalizedPath).ToArray(), cancellationToken);
         var snapshot = new RoslynWorkspaceSnapshot(
             SemanticLoadSucceeded: false,
             Projects: [],
             Diagnostics: [new DiagnosticRecord(DiagnosticSeverity.Info, "syntax-first", "Syntax-tier index served first; the semantic graph upgrades in the background.")],
             ProjectReports: []);
 
-        var result = await IndexSyntaxAsync(root, store, files, snapshot, cancellationToken);
+        await store.ReplaceTfmAvailabilityAsync([], cancellationToken);
+        var result = await IndexSyntaxIncrementallyAsync(root, store, files, snapshot, cancellationToken);
         await store.SetMetaAsync("index_mode", result.Mode, cancellationToken);
         // Syntax is now the completed default index depth. Compiler work starts only after an explicit semantic
         // request, so this store is not waiting for an automatic background upgrade.
@@ -365,14 +351,25 @@ public sealed class SemanticIndexer
         await store.PruneFilesAsync(files.Select(file => file.NormalizedPath).ToArray(), cancellationToken);
         await store.SetMetaAsync(StaleAsOfMetaKey, "0", cancellationToken);
         await StampSkippedFilesAsync(store, scan.Skipped, cancellationToken); // R35: surface skips from the first pass.
+        await StampDetailLimitedFilesAsync(store, scan.DetailLimited, cancellationToken);
         await WorkspaceIndexManifest.CompleteAsync(root, store, files, cancellationToken);
         return result;
     }
 
     /// <summary>
-    ///     Maximum number of files committed in one upgrade batch before yielding the SQLite writer (R14).
+    ///     Maximum number of files committed in one syntax batch before yielding the SQLite writer.
     /// </summary>
-    internal const int UpgradeCommitFileBatchSize = 50;
+    internal const int SyntaxCommitFileBatchSize = 32;
+
+    /// <summary>
+    ///     Maximum source bytes retained in one syntax batch before yielding the SQLite writer.
+    /// </summary>
+    internal const long SyntaxCommitSourceBatchBytes = 16L * 1024 * 1024;
+
+    /// <summary>
+    ///     Maximum number of files committed in one semantic-upgrade batch before yielding the SQLite writer.
+    /// </summary>
+    internal const int UpgradeCommitFileBatchSize = 32;
 
     /// <summary>
     ///     Upgrades a syntax-first index to the full semantic graph by running the complete indexing pass, then
@@ -424,18 +421,6 @@ public sealed class SemanticIndexer
         await store.PruneFilesAsync(files.Select(file => file.NormalizedPath).ToArray(), cancellationToken);
         await store.SetMetaAsync(StaleAsOfMetaKey, "0", cancellationToken);
         await StampIntegrityAsync(store, cancellationToken); // R31: record the post-upgrade integrity result.
-
-        // R41: only mine co-change when enabled (FUSE_COCHANGE); the default-off prior (D6) makes it wasted work.
-        if (GitCoChangeCollector.IsCollectionEnabled())
-        {
-            try
-            {
-                await _coChangeCollector.CollectAndStoreAsync(root, store, cancellationToken);
-            }
-            catch (Exception) when (!cancellationToken.IsCancellationRequested)
-            {
-            }
-        }
 
         await WorkspaceIndexManifest.CompleteAsync(root, store, files, cancellationToken);
 
@@ -497,6 +482,29 @@ public sealed class SemanticIndexer
         await store.SetMetaAsync(WorkspaceIndexStore.SkippedFilesMetaKey, summary, cancellationToken);
     }
 
+    private static async Task StampDetailLimitedFilesAsync(
+        IWorkspaceIndexStore store,
+        IReadOnlyList<DetailLimitedFile> detailLimited,
+        CancellationToken cancellationToken)
+    {
+        const int maxListed = 20;
+        var summary = detailLimited.Count == 0
+            ? "0"
+            : $"{detailLimited.Count}: " + string.Join(
+                "; ",
+                detailLimited.Take(maxListed).Select(file => $"{file.Path} ({ToDetailValue(file.DetailLevel)}: {file.Reason})"))
+              + (detailLimited.Count > maxListed ? $"; and {detailLimited.Count - maxListed} more" : string.Empty);
+        await store.SetMetaAsync(WorkspaceIndexStore.DetailLimitedFilesMetaKey, summary, cancellationToken);
+    }
+
+    private static string ToDetailValue(IndexDetailLevel detailLevel) => detailLevel switch
+    {
+        IndexDetailLevel.Full => "full",
+        IndexDetailLevel.Declarations => "declarations",
+        IndexDetailLevel.InventoryOnly => "inventory_only",
+        _ => throw new ArgumentOutOfRangeException(nameof(detailLevel), detailLevel, "unknown index detail level"),
+    };
+
     /// <summary>
     ///     Re-indexes a single changed file in place: clears that file's stored rows and re-extracts its
     ///     syntax-level data (symbols, chunks, full-text, routes), without rebuilding the whole index.
@@ -520,33 +528,39 @@ public sealed class SemanticIndexer
         CancellationToken cancellationToken)
     {
         var root = Path.GetFullPath(rootDirectory);
-        var absolute = Path.Combine(root, normalizedPath.Replace('/', Path.DirectorySeparatorChar));
-
-        if (!File.Exists(absolute))
+        var scan = await ScanFilesAsync(root, cancellationToken);
+        var file = scan.Files.FirstOrDefault(candidate =>
+            string.Equals(candidate.NormalizedPath, normalizedPath, StringComparison.Ordinal));
+        if (file is null)
         {
             await store.DeleteFileAsync(normalizedPath, cancellationToken);
             return 0;
         }
 
-        await store.DeleteFileDataAsync(normalizedPath, cancellationToken);
+        return await ReindexFileRecordAsync(root, file, store, cancellationToken);
+    }
 
-        var info = new FileInfo(absolute);
-        var bytes = await File.ReadAllBytesAsync(absolute, cancellationToken);
-        var content = System.Text.Encoding.UTF8.GetString(bytes);
-        var hash = _hashService.ComputeHash(bytes);
-        var provider = _syntaxProviders.ForExtension(info.Extension);
+    private async Task<int> ReindexFileRecordAsync(
+        string root,
+        IndexedFileRecord file,
+        IWorkspaceIndexStore store,
+        CancellationToken cancellationToken)
+    {
+        await store.DeleteFileDataAsync(file.NormalizedPath, cancellationToken);
+        var provider = _syntaxProviders.ForExtension(file.Extension);
         await store.UpsertFilesAsync(
-            [new IndexedFileRecord(normalizedPath, normalizedPath, info.Extension, info.Length, info.LastWriteTimeUtc.Ticks, hash, Language: provider?.Language)],
+            [file with { Language = provider?.Language }],
             cancellationToken);
 
-        if (provider is null)
+        if (provider is null || file.DetailLevel == IndexDetailLevel.InventoryOnly)
             return 0;
 
-        var extracted = provider.Extract(normalizedPath, content);
+        var content = await File.ReadAllTextAsync(Path.Combine(root, file.Path), cancellationToken);
+        var extracted = provider.Extract(file.NormalizedPath, content);
         await store.UpsertSymbolsAsync(extracted.Symbols, cancellationToken);
-        await store.UpsertChunksAsync(extracted.Chunks, cancellationToken);
-        if (string.Equals(info.Extension, ".cs", StringComparison.OrdinalIgnoreCase))
-            await store.UpsertRoutesAsync(_routeExtractor.Extract(normalizedPath, content), cancellationToken);
+        await store.UpsertChunksAsync(RetainChunksForDetail(file, extracted.Chunks).ToList(), cancellationToken);
+        if (string.Equals(file.Extension, ".cs", StringComparison.OrdinalIgnoreCase))
+            await store.UpsertRoutesAsync(_routeExtractor.Extract(file.NormalizedPath, content), cancellationToken);
         return extracted.Symbols.Count;
     }
 
@@ -579,15 +593,15 @@ public sealed class SemanticIndexer
         var root = Path.GetFullPath(rootDirectory);
         var stored = await store.GetAllFileHashesAsync(cancellationToken);
         var scan = await ScanFilesAsync(root, cancellationToken);
-        var current = scan.Files.ToDictionary(file => file.NormalizedPath, file => file.ContentHash, StringComparer.Ordinal);
+        var current = scan.Files.ToDictionary(file => file.NormalizedPath, StringComparer.Ordinal);
 
-        var changed = new List<string>();
-        foreach (var (normalizedPath, currentHash) in current)
+        var changed = new List<IndexedFileRecord>();
+        foreach (var (normalizedPath, file) in current)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (!stored.TryGetValue(normalizedPath, out var storedHash)
-                || !string.Equals(currentHash, storedHash, StringComparison.Ordinal))
-                changed.Add(normalizedPath);
+                || !string.Equals(file.ContentHash, storedHash, StringComparison.Ordinal))
+                changed.Add(file);
         }
 
         // A stored-only path is either deleted or no longer part of the scannable inventory. Delete its row even
@@ -600,6 +614,7 @@ public sealed class SemanticIndexer
         {
             await store.SetMetaAsync(StaleAsOfMetaKey, "0", cancellationToken);
             await StampSkippedFilesAsync(store, scan.Skipped, cancellationToken);
+            await StampDetailLimitedFilesAsync(store, scan.DetailLimited, cancellationToken);
             await WorkspaceIndexManifest.CompleteAsync(root, store, scan.Files, cancellationToken);
             return new FreshnessResult(current.Count, 0, 0, Stamped: false);
         }
@@ -613,9 +628,9 @@ public sealed class SemanticIndexer
         }
 
         var reconciled = 0;
-        foreach (var path in changed)
+        foreach (var file in changed)
         {
-            await ReindexFileAsync(root, path, store, cancellationToken);
+            await ReindexFileRecordAsync(root, file, store, cancellationToken);
             reconciled++;
         }
 
@@ -627,6 +642,7 @@ public sealed class SemanticIndexer
 
         await store.SetMetaAsync(StaleAsOfMetaKey, "0", cancellationToken);
         await StampSkippedFilesAsync(store, scan.Skipped, cancellationToken);
+        await StampDetailLimitedFilesAsync(store, scan.DetailLimited, cancellationToken);
         await WorkspaceIndexManifest.CompleteAsync(root, store, scan.Files, cancellationToken);
         return new FreshnessResult(current.Count, reconciled, 0, Stamped: false);
     }
@@ -785,11 +801,13 @@ public sealed class SemanticIndexer
         var parallelOptions = new ParallelOptions
         {
             CancellationToken = cancellationToken,
-            MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount)
+            MaxDegreeOfParallelism = SyntaxExtractionParallelism
         };
         await Parallel.ForEachAsync(Enumerable.Range(0, files.Count), parallelOptions, async (i, ct) =>
         {
             var file = files[i];
+            if (file.DetailLevel == IndexDetailLevel.InventoryOnly)
+                return;
             var provider = _syntaxProviders.ForExtension(file.Extension);
             if (provider is null)
                 return;
@@ -799,7 +817,10 @@ public sealed class SemanticIndexer
             var fileRoutes = file.Extension == ".cs"
                 ? _routeExtractor.Extract(file.NormalizedPath, content).ToList()
                 : [];
-            perFile[i] = (extracted.Symbols.ToList(), extracted.Chunks.ToList(), fileRoutes);
+            perFile[i] = (
+                extracted.Symbols.ToList(),
+                RetainChunksForDetail(file, extracted.Chunks).ToList(),
+                fileRoutes);
         });
 
         var symbols = new List<SymbolRecord>();
@@ -1050,15 +1071,129 @@ public sealed class SemanticIndexer
             replaceTfmAvailability: false);
     }
 
-    private async Task<SemanticIndexResult> IndexSyntaxAsync(
+    private async Task<SemanticIndexResult> IndexSyntaxIncrementallyAsync(
         string root,
         IWorkspaceIndexStore store,
         IReadOnlyList<IndexedFileRecord> files,
         RoslynWorkspaceSnapshot snapshot,
         CancellationToken cancellationToken)
     {
+        var stored = await store.GetAllFileHashesAsync(cancellationToken);
+        var pendingPaths = await ReadPendingSyntaxPathsAsync(store, cancellationToken);
+        var currentPaths = files.Select(file => file.NormalizedPath).ToHashSet(StringComparer.Ordinal);
+        var changed = files
+            .Where(file => !stored.TryGetValue(file.NormalizedPath, out var storedHash)
+                || !string.Equals(storedHash, file.ContentHash, StringComparison.Ordinal)
+                || pendingPaths is null
+                || pendingPaths.Contains(file.NormalizedPath))
+            .OrderBy(file => file.NormalizedPath, StringComparer.Ordinal)
+            .ToArray();
+        var removed = stored.Keys
+            .Where(path => !currentPaths.Contains(path))
+            .OrderBy(path => path, StringComparer.Ordinal)
+            .ToArray();
+
+        var ftsReplacements = 0;
+        foreach (var batch in BatchSyntaxFiles(changed))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await store.SetMetaAsync(
+                PendingSyntaxBatchMetaKey,
+                EncodePendingSyntaxPaths(batch.Select(file => file.NormalizedPath)),
+                cancellationToken);
+            await store.ClearFileDataAsync(batch.Select(file => file.NormalizedPath).ToArray(), cancellationToken);
+            var batchResult = await IndexSyntaxAsync(
+                root,
+                store,
+                batch,
+                snapshot,
+                cancellationToken,
+                resetTfmAvailability: false);
+            ftsReplacements += batchResult.ChunkCount;
+        }
+
+        foreach (var path in removed)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await store.DeleteFileAsync(path, cancellationToken);
+        }
+
+        await store.SetMetaAsync(PendingSyntaxBatchMetaKey, string.Empty, cancellationToken);
+        await store.SetMetaAsync("last_index_file_upserts", changed.Length.ToString(System.Globalization.CultureInfo.InvariantCulture), cancellationToken);
+        await store.SetMetaAsync("last_index_fts_replacements", ftsReplacements.ToString(System.Globalization.CultureInfo.InvariantCulture), cancellationToken);
+
+        var state = await store.GetStateAsync(cancellationToken);
+        var routeCount = await store.GetRouteCountAsync(cancellationToken);
+        return new SemanticIndexResult(
+            "syntax",
+            state.FileCount,
+            0,
+            state.SymbolCount,
+            state.ChunkCount,
+            routeCount,
+            snapshot.Diagnostics);
+    }
+
+    private static async Task<IReadOnlySet<string>?> ReadPendingSyntaxPathsAsync(
+        IWorkspaceIndexStore store,
+        CancellationToken cancellationToken)
+    {
+        var encoded = await store.GetMetaAsync(PendingSyntaxBatchMetaKey, cancellationToken);
+        if (string.IsNullOrEmpty(encoded))
+            return new HashSet<string>(StringComparer.Ordinal);
+
+        try
+        {
+            var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(encoded));
+            return decoded.Split('\0', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.Ordinal);
+        }
+        catch (FormatException)
+        {
+            // An interrupted or manually damaged marker must bias toward a safe complete extraction, not a stale
+            // file row whose derived data was cleared just before cancellation.
+            return null;
+        }
+    }
+
+    private static string EncodePendingSyntaxPaths(IEnumerable<string> paths) =>
+        Convert.ToBase64String(Encoding.UTF8.GetBytes(string.Join('\0', paths)));
+
+    private static IEnumerable<IReadOnlyList<IndexedFileRecord>> BatchSyntaxFiles(
+        IReadOnlyList<IndexedFileRecord> files)
+    {
+        var batch = new List<IndexedFileRecord>(SyntaxCommitFileBatchSize);
+        long sourceBytes = 0;
+        foreach (var file in files)
+        {
+            var wouldExceedFileLimit = batch.Count >= SyntaxCommitFileBatchSize;
+            var wouldExceedByteLimit = batch.Count > 0
+                && sourceBytes + file.SizeBytes > SyntaxCommitSourceBatchBytes;
+            if (wouldExceedFileLimit || wouldExceedByteLimit)
+            {
+                yield return batch;
+                batch = new List<IndexedFileRecord>(SyntaxCommitFileBatchSize);
+                sourceBytes = 0;
+            }
+
+            batch.Add(file);
+            sourceBytes += file.SizeBytes;
+        }
+
+        if (batch.Count > 0)
+            yield return batch;
+    }
+
+    private async Task<SemanticIndexResult> IndexSyntaxAsync(
+        string root,
+        IWorkspaceIndexStore store,
+        IReadOnlyList<IndexedFileRecord> files,
+        RoslynWorkspaceSnapshot snapshot,
+        CancellationToken cancellationToken,
+        bool resetTfmAvailability = true)
+    {
         // Syntax extraction has no compiler-target view, so prior capture-derived availability would be stale.
-        await store.ReplaceTfmAvailabilityAsync([], cancellationToken);
+        if (resetTfmAvailability)
+            await store.ReplaceTfmAvailabilityAsync([], cancellationToken);
         // Tag each file with its language from the provider that claims its extension, so retrieval can
         // filter or blend by language; a file no provider claims (a config file) stays untagged.
         var taggedFiles = files
@@ -1072,11 +1207,13 @@ public sealed class SemanticIndexer
         var parallelOptions = new ParallelOptions
         {
             CancellationToken = cancellationToken,
-            MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount)
+            MaxDegreeOfParallelism = SyntaxExtractionParallelism
         };
         await Parallel.ForEachAsync(Enumerable.Range(0, files.Count), parallelOptions, async (i, ct) =>
         {
             var file = files[i];
+            if (file.DetailLevel == IndexDetailLevel.InventoryOnly)
+                return;
             // Select the language provider by extension; a file no provider claims (a config file) is skipped.
             var provider = _syntaxProviders.ForExtension(file.Extension);
             if (provider is null)
@@ -1088,7 +1225,10 @@ public sealed class SemanticIndexer
             var fileRoutes = file.Extension == ".cs"
                 ? _routeExtractor.Extract(file.NormalizedPath, content).ToList()
                 : [];
-            perFile[i] = (extracted.Symbols.ToList(), extracted.Chunks.ToList(), fileRoutes);
+            perFile[i] = (
+                extracted.Symbols.ToList(),
+                RetainChunksForDetail(file, extracted.Chunks).ToList(),
+                fileRoutes);
         });
 
         var symbols = new List<SymbolRecord>();
@@ -1123,7 +1263,7 @@ public sealed class SemanticIndexer
         foreach (var file in files)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (file.Extension != ".cs")
+            if (file.Extension != ".cs" || file.DetailLevel == IndexDetailLevel.InventoryOnly)
                 continue;
 
             var content = await File.ReadAllTextAsync(Path.Combine(root, file.Path), cancellationToken);
@@ -1147,12 +1287,45 @@ public sealed class SemanticIndexer
             }
 
             var extracted = _syntaxSymbols.Extract(file.NormalizedPath, syntaxRoot);
-            foreach (var chunk in extracted.Chunks)
+            foreach (var chunk in RetainChunksForDetail(file, extracted.Chunks))
                 chunks.Add(dropChunkSymbolIds ? chunk with { SymbolId = null } : chunk);
             routes.AddRange(_routeExtractor.Extract(file.NormalizedPath, syntaxRoot));
         }
 
         return (chunks, routes);
+    }
+
+    private static IEnumerable<ChunkRecord> RetainChunksForDetail(
+        IndexedFileRecord file,
+        IEnumerable<ChunkRecord> chunks)
+    {
+        foreach (var chunk in chunks)
+        {
+            yield return file.DetailLevel == IndexDetailLevel.Declarations
+                ? chunk with
+                {
+                    Body = null,
+                    Comments = null,
+                    Signature = DeclarationOnlySignature(chunk.Signature),
+                }
+                : chunk;
+        }
+    }
+
+    private static string? DeclarationOnlySignature(string? signature)
+    {
+        if (string.IsNullOrWhiteSpace(signature))
+            return signature;
+
+        var blockStart = signature.IndexOf('{');
+        var expressionBodyStart = signature.IndexOf("=>", StringComparison.Ordinal);
+        var end = blockStart switch
+        {
+            >= 0 when expressionBodyStart >= 0 => Math.Min(blockStart, expressionBodyStart),
+            >= 0 => blockStart,
+            _ => expressionBodyStart,
+        };
+        return end < 0 ? signature : signature[..end].TrimEnd();
     }
 
     // Runs the analyzer set over every loaded project and merges the per-project graphs.

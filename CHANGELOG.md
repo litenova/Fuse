@@ -13,10 +13,13 @@ All notable changes to Fuse are documented here. The format is based on Keep a C
 - Indexing starts at the syntax tier. `fuse index --semantic` explicitly continues into compiler analysis after syntax rows are available. Matching callers join one daemon-owned job instead of colliding with the SQLite writer.
 - Host protocol 11 replaces `fuse/index` with `fuse/indexStart`, `fuse/indexStatus`, and `fuse/indexCancel`. `fuse/openIndexed` includes the current job snapshot while syntax data is being built.
 - `fuse_workspace action=index` now starts or joins the daemon job, `action=status` reports job details without creating an index, and `action=cancel` requests shared-job cancellation. A source edit starts a refresh job before a read returns indexed facts.
+- Syntax refreshes now build their inventory from `git ls-files -s -z` and porcelain-v2 status. Clean tracked files reuse the Git blob id, while dirty and untracked files stream a SHA-256 hash. Unchanged files no longer have their derived rows or FTS documents rewritten.
+- Generated files retain declarations, signatures, routes, and outlines without indexed method bodies or comments. Files over the 5 MiB source limit retain inventory metadata with an `inventory_only` detail level. Schema 18 uses contentless-delete FTS5 documents linked through `search_documents`; existing derived indexes rebuild.
 
 ### Removed
 
 - `fuse localize` and `fuse resolve` are removed. Use `fuse find <query> --kind task` for task localization and `fuse find <query> --kind service|request|route|config|symbol` for exact lookup and wiring resolution.
+- The `git_cochange` table, collector, retrieval prior, ranking diagnostic configuration, and `FUSE_COCHANGE` setting are removed. The recorded historical ranking results remain in the repository.
 
 ## [4.3.0] - 2026-07-16
 

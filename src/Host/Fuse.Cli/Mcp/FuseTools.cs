@@ -327,10 +327,13 @@ public sealed partial class FuseTools
                 {
                     var integrityState = await integrityStore.GetStateAsync(cancellationToken);
                     builder.AppendLine($"index integrity: {IndexIntegrity.Check(integrityState).Summary()}");
-                    // R35: surface the files skipped during indexing (too large, unreadable), so a coverage gap is visible.
+                    // R35: surface files the scanner could not read, so a coverage gap is visible.
                     var skipped = await integrityStore.GetMetaAsync(WorkspaceIndexStore.SkippedFilesMetaKey, cancellationToken);
                     if (!string.IsNullOrWhiteSpace(skipped) && skipped != "0")
                         builder.AppendLine($"skipped files: {skipped}");
+                    var detailLimited = await integrityStore.GetMetaAsync(WorkspaceIndexStore.DetailLimitedFilesMetaKey, cancellationToken);
+                    if (!string.IsNullOrWhiteSpace(detailLimited) && detailLimited != "0")
+                        builder.AppendLine($"detail-limited files: {detailLimited}");
                 }
             }
             catch (Microsoft.Data.Sqlite.SqliteException)
@@ -856,6 +859,9 @@ public sealed partial class FuseTools
             builder.AppendLine($"files indexed: {state.FileCount}");
             builder.AppendLine($"full-text search: {(state.FtsAvailable ? "available" : "unavailable")}");
             builder.AppendLine($"index integrity: {IndexIntegrity.Check(state).Summary()}"); // R31
+            var detailLimited = await store.GetMetaAsync(WorkspaceIndexStore.DetailLimitedFilesMetaKey, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(detailLimited) && detailLimited != "0")
+                builder.AppendLine($"detail-limited files: {detailLimited}");
         }
 
         var daemon = await Fuse.Cli.Rpc.FuseHostClient.TryStatsAsync(root, TimeSpan.FromMilliseconds(500), cancellationToken);

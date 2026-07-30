@@ -8,6 +8,26 @@ namespace Fuse.Indexing;
 public sealed record LanguageCount(string Language, int Count);
 
 /// <summary>
+///     The amount of source-derived data retained for an indexed file.
+/// </summary>
+/// <remarks>
+///     Generated files retain declarations rather than method bodies, while files above the source limit retain
+///     inventory metadata only. The value is stored in <c>files.index_detail</c> so status and doctor can name
+///     why a file has less searchable detail.
+/// </remarks>
+public enum IndexDetailLevel
+{
+    /// <summary>Metadata, declarations, and full-text chunks are retained.</summary>
+    Full,
+
+    /// <summary>Metadata, declarations, signatures, routes, and outlines are retained without source bodies.</summary>
+    Declarations,
+
+    /// <summary>Only inventory metadata is retained because the source exceeds the configured limit.</summary>
+    InventoryOnly,
+}
+
+/// <summary>
 ///     A typed dependency edge resolved to the file level: the two files its endpoints live in and the edge type.
 /// </summary>
 /// <param name="FromPath">The normalized path of the file the edge originates in.</param>
@@ -30,6 +50,7 @@ public sealed record FileDependencyEdge(string FromPath, string ToPath, string K
 /// <param name="IsTest">Whether the file is a test file.</param>
 /// <param name="IndexedAtUtc">When the file was indexed; defaults to now at insert.</param>
 /// <param name="Language">The language tag from the selecting syntax provider (for example <c>csharp</c>, <c>python</c>), or null when no provider claims the extension.</param>
+/// <param name="DetailLevel">The source detail retained for this file.</param>
 public sealed record IndexedFileRecord(
     string Path,
     string NormalizedPath,
@@ -41,7 +62,8 @@ public sealed record IndexedFileRecord(
     bool IsGenerated = false,
     bool IsTest = false,
     DateTimeOffset? IndexedAtUtc = null,
-    string? Language = null);
+    string? Language = null,
+    IndexDetailLevel DetailLevel = IndexDetailLevel.Full);
 
 /// <summary>
 ///     A project tracked by the index. Identity is the project path.
@@ -166,25 +188,6 @@ public sealed record ChunkRecord(
     string? Body = null,
     string? Comments = null,
     string? SymbolsText = null);
-
-/// <summary>
-///     A git co-change relationship between two files: how often they changed in the same commit, and the
-///     strength of that coupling. The pair is stored once with <see cref="PathA" /> ordinally before
-///     <see cref="PathB" />, so a lookup checks both columns.
-/// </summary>
-/// <param name="PathA">One file's normalized (forward-slash, repo-relative) path; ordinally the smaller of the pair.</param>
-/// <param name="PathB">The other file's normalized path; ordinally the larger of the pair.</param>
-/// <param name="Count">The number of mined commits in which both files changed together.</param>
-/// <param name="Pmi">Pointwise mutual information of the pair (log2), a co-occurrence-strength signal.</param>
-/// <param name="Jaccard">The Jaccard coefficient of the two files' commit sets, in <c>[0, 1]</c>.</param>
-/// <param name="LastSeenUtc">The ISO-8601 date of the most recent commit in which both changed, when known.</param>
-public sealed record CoChangeRecord(
-    string PathA,
-    string PathB,
-    int Count,
-    double Pmi,
-    double Jaccard,
-    string? LastSeenUtc);
 
 /// <summary>
 ///     A typed, weighted edge between two semantic nodes.

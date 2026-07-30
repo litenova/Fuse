@@ -3,54 +3,140 @@ using System.Diagnostics;
 namespace Fuse.Semantics;
 
 /// <summary>
-///     Lists a git working tree's files (tracked, plus untracked but not ignored) so the scanner can enumerate a
-///     git repository the way git itself sees it. Other worktrees, embedded repositories, and ignored trees are
-///     excluded by construction, which is the authoritative defense against indexing duplicate or foreign content.
+///     Reads a Git working tree inventory with tracked blob ids and dirty-path state.
 /// </summary>
 /// <remarks>
-///     Best-effort by design: a missing git executable, a directory that is not a work tree, or any failing or
-///     slow git call yields null, so the caller falls back to the directory walk. The single <c>git ls-files</c>
-///     invocation has a fixed argument list (no variable path list), so the external-process command line is
-///     bounded, honoring the bounded-args invariant.
+///     A clean tracked file reuses its Git blob id as the index content identity. Dirty and untracked files must
+///     be read and hashed from disk because the index does not match their working-tree bytes. Git failures return
+///     null so callers can fall back to a filesystem inventory.
 /// </remarks>
 public sealed class GitFileEnumerator
 {
-    // A hard ceiling so a stuck git subprocess (a pager, a credential prompt, a lock) cannot hang indexing.
     private static readonly TimeSpan GitTimeout = TimeSpan.FromSeconds(20);
 
     /// <summary>
-    ///     Lists the working-tree files of a git repository as paths relative to <paramref name="rootDirectory" />.
+    ///     Lists the working-tree files as paths relative to <paramref name="rootDirectory" />.
     /// </summary>
     /// <param name="rootDirectory">The candidate repository root.</param>
-    /// <param name="cancellationToken">A token to cancel the git call.</param>
-    /// <returns>
-    ///     The relative file paths, or null when the directory is not a git work tree or git is unavailable, so the
-    ///     caller can fall back to a directory walk.
-    /// </returns>
+    /// <param name="cancellationToken">A token to cancel the Git calls.</param>
+    /// <returns>The relative file paths, or null when Git cannot describe the work tree.</returns>
     public async Task<IReadOnlyList<string>?> TryListAsync(string rootDirectory, CancellationToken cancellationToken)
     {
-        var root = Path.GetFullPath(rootDirectory);
-
-        // -z gives NUL-separated output so paths with spaces or newlines stay unambiguous. --cached lists tracked
-        // files; --others adds untracked files (new sources not yet committed); --exclude-standard applies
-        // .gitignore, .git/info/exclude, and the global excludes; --deduplicate avoids listing a path twice.
-        var output = await RunGitAsync(
-            root,
-            ["-c", "core.quotepath=false", "ls-files", "--cached", "--others", "--exclude-standard", "--deduplicate", "-z"],
-            cancellationToken);
-        if (output is null)
-            return null;
-
-        var files = output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
-        // A repository with no listable files falls back to the walk (which will also find nothing); a populated
-        // list drives the git-native enumeration in the collection pipeline.
-        return files.Length == 0 ? null : files;
+        var inventory = await TryDescribeAsync(rootDirectory, cancellationToken);
+        return inventory?.Paths;
     }
 
-    // Runs git with a separated argument list (no shell quoting, no command-line concatenation), capturing stdout.
-    // Returns null on any failure or non-zero exit so the caller degrades to the directory walk.
+    /// <summary>
+    ///     Reads tracked blob ids from <c>git ls-files -s -z</c> and dirty paths from porcelain v2 status.
+    /// </summary>
+    /// <param name="rootDirectory">The candidate repository root.</param>
+    /// <param name="cancellationToken">A token to cancel the Git calls.</param>
+    /// <returns>The Git inventory, or null when Git is unavailable or does not describe this directory.</returns>
+    public async Task<GitWorkspaceInventory?> TryDescribeAsync(string rootDirectory, CancellationToken cancellationToken)
+    {
+        var root = Path.GetFullPath(rootDirectory);
+        var indexOutput = await RunGitAsync(
+            root,
+            ["-c", "core.quotepath=false", "ls-files", "-s", "-z"],
+            cancellationToken);
+        if (indexOutput is null)
+            return null;
+
+        var statusOutput = await RunGitAsync(
+            root,
+            ["-c", "core.quotepath=false", "status", "--porcelain=v2", "-z", "--untracked-files=all"],
+            cancellationToken);
+        if (statusOutput is null)
+            return null;
+
+        var tracked = ParseTracked(indexOutput);
+        var dirty = ParseDirtyPaths(statusOutput);
+        var paths = tracked.Keys
+            .Concat(dirty)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(path => path, StringComparer.Ordinal)
+            .ToArray();
+        return new GitWorkspaceInventory(paths, tracked, dirty);
+    }
+
+    private static IReadOnlyDictionary<string, string> ParseTracked(string output)
+    {
+        var tracked = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var entry in output.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var tab = entry.IndexOf('\t');
+            if (tab < 0 || tab == entry.Length - 1)
+                continue;
+
+            var fields = entry[..tab].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (fields.Length < 3 || !string.Equals(fields[2], "0", StringComparison.Ordinal))
+                continue;
+
+            tracked[entry[(tab + 1)..]] = fields[1];
+        }
+
+        return tracked;
+    }
+
+    private static IReadOnlySet<string> ParseDirtyPaths(string output)
+    {
+        var dirty = new HashSet<string>(StringComparer.Ordinal);
+        var records = output.Split('\0');
+        for (var index = 0; index < records.Length; index++)
+        {
+            var record = records[index];
+            if (record.Length < 2)
+                continue;
+
+            switch (record[0])
+            {
+                case '1':
+                    if (HasWorktreeChange(record))
+                        AddPathAfterFields(record, 8, dirty);
+                    break;
+                case '2':
+                    if (HasWorktreeChange(record))
+                    {
+                        AddPathAfterFields(record, 9, dirty);
+                        if (index + 1 < records.Length && records[index + 1].Length > 0)
+                            dirty.Add(records[++index]);
+                    }
+                    break;
+                case 'u':
+                    AddPathAfterFields(record, 10, dirty);
+                    break;
+                case '?':
+                    if (record.Length > 2)
+                        dirty.Add(record[2..]);
+                    break;
+            }
+        }
+
+        return dirty;
+    }
+
+    private static bool HasWorktreeChange(string record) =>
+        record.Length < 4 || record[3] != '.';
+
+    private static void AddPathAfterFields(string record, int fieldCount, ISet<string> paths)
+    {
+        var position = 0;
+        for (var field = 0; field < fieldCount; field++)
+        {
+            position = record.IndexOf(' ', position);
+            if (position < 0)
+                return;
+            position++;
+        }
+
+        if (position < record.Length)
+            paths.Add(record[position..]);
+    }
+
     private static async Task<string?> RunGitAsync(
-        string workingDirectory, IReadOnlyList<string> arguments, CancellationToken cancellationToken)
+        string workingDirectory,
+        IReadOnlyList<string> arguments,
+        CancellationToken cancellationToken)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -77,16 +163,15 @@ public sealed class GitFileEnumerator
             if (!process.Start())
                 return null;
 
-            // Close git's stdin so it gets EOF, never the parent's inherited stdin (the live MCP client pipe in
-            // `fuse mcp serve`); git never reads stdin for these commands.
             process.StandardInput.Close();
-
             var stdoutTask = process.StandardOutput.ReadToEndAsync(linked.Token);
-            _ = process.StandardError.ReadToEndAsync(linked.Token);
+            var stderrTask = process.StandardError.ReadToEndAsync(linked.Token);
             await process.WaitForExitAsync(linked.Token);
-            return process.ExitCode == 0 ? await stdoutTask : null;
+            var stdout = await stdoutTask;
+            await stderrTask;
+            return process.ExitCode == 0 ? stdout : null;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
             TryKill(process);
             return null;
@@ -106,7 +191,26 @@ public sealed class GitFileEnumerator
         }
         catch
         {
-            // Best-effort: the process may have already exited.
         }
     }
+}
+
+/// <summary>
+///     The Git source inventory for one repository root.
+/// </summary>
+/// <param name="Paths">Tracked and working-tree paths that Git reports.</param>
+/// <param name="TrackedBlobIds">The index blob id for each tracked path.</param>
+/// <param name="DirtyPaths">Paths whose working-tree content differs from Git or is untracked.</param>
+public sealed record GitWorkspaceInventory(
+    IReadOnlyList<string> Paths,
+    IReadOnlyDictionary<string, string> TrackedBlobIds,
+    IReadOnlySet<string> DirtyPaths)
+{
+    /// <summary>
+    ///     Returns the clean tracked blob id for a path, or null when the working tree must be hashed from disk.
+    /// </summary>
+    /// <param name="path">The normalized relative path.</param>
+    /// <returns>The clean blob id, or null for dirty, untracked, or unknown files.</returns>
+    public string? GetCleanBlobId(string path) =>
+        !DirtyPaths.Contains(path) && TrackedBlobIds.TryGetValue(path, out var blobId) ? blobId : null;
 }
