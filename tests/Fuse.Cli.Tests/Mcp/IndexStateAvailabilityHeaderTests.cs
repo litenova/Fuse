@@ -3,7 +3,7 @@ using Fuse.Cli.Mcp;
 using Fuse.Indexing;
 using Fuse.Retrieval;
 using Fuse.Semantics;
-using Microsoft.Data.Sqlite;
+using Fuse.Workspace;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -128,51 +128,42 @@ public sealed class IndexStateAvailabilityHeaderTests : IDisposable
     }
 
     [Fact]
-    public async Task Blocked_find_returns_building_header_within_configured_deadline()
+    public async Task Deferred_find_returns_building_header_without_storage_access()
     {
-        var root = Path.Combine(Path.GetTempPath(), "fuse-blocked-find", Guid.NewGuid().ToString("N"));
+        var root = Path.Combine(Path.GetTempPath(), "fuse-deferred-find", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         root.AsIsolatedRepo();
         var databasePath = Fuse.Reduction.Caching.FuseStorePaths.ResolveDatabasePath(root);
-        Directory.CreateDirectory(Path.GetDirectoryName(databasePath)!);
-        await using (var seed = new WorkspaceIndexStore(databasePath))
-        {
-            await seed.InitializeAsync(CancellationToken.None);
-            await seed.UpsertFilesAsync(
-                [new IndexedFileRecord("App.cs", "App.cs", ".cs", 10, DateTime.UtcNow.Ticks, "hash", Language: "csharp")],
-                CancellationToken.None);
-        }
-
-        await using var lockConnection = new SqliteConnection($"Data Source={databasePath}");
-        await lockConnection.OpenAsync();
-        await using var lockCommand = lockConnection.CreateCommand();
-        lockCommand.CommandText = "BEGIN EXCLUSIVE;";
-        await lockCommand.ExecuteNonQueryAsync();
-
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(4));
-        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-        var result = await FuseTools.FuseFindAsync(
-            Indexer,
-            ChangeSource,
-            "App",
-            path: root,
-            kind: "symbol",
-            cancellationToken: cts.Token);
-        stopwatch.Stop();
-
-        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(4), $"find blocked for {stopwatch.Elapsed.TotalSeconds:F1}s");
-        Assert.DoesNotContain(FuseOperationalErrors.IndexBusyPrefix, result);
-        Assert.DoesNotContain(FuseOperationalErrors.InternalErrorPrefix, result);
-        Assert.StartsWith("index_state: building_syntax", result);
-        Assert.Contains("grade: deferred", result);
-        Assert.Contains("availability:", result);
-
         try
         {
-            Directory.Delete(root, recursive: true);
+            var coordinator = _provider.GetRequiredService<IndexCoordinator>();
+            var runtime = new FuseMcpRuntime(
+                new DeferredIndexAccessProvider(root),
+                NullResidentWorkspaceProvider.Instance,
+                coordinator,
+                _provider.GetRequiredService<IWorkspaceIndexJobManager>(),
+                _provider.GetRequiredService<WarmSolutionCache>(),
+                _provider.GetRequiredService<PooledCheckWorker>(),
+                _provider.GetRequiredService<IProcessRunner>());
+
+            var result = await FuseTools.FuseFindAsync(
+                Indexer,
+                ChangeSource,
+                "App",
+                path: root,
+                kind: "symbol",
+                runtime: runtime);
+
+            Assert.False(File.Exists(databasePath));
+            Assert.DoesNotContain(FuseOperationalErrors.IndexBusyPrefix, result);
+            Assert.DoesNotContain(FuseOperationalErrors.InternalErrorPrefix, result);
+            Assert.StartsWith("index_state: building_syntax", result);
+            Assert.Contains("grade: deferred", result);
+            Assert.Contains("availability:", result);
         }
-        catch (IOException)
+        finally
         {
+            Directory.Delete(root, recursive: true);
         }
     }
 
@@ -195,6 +186,21 @@ public sealed class IndexStateAvailabilityHeaderTests : IDisposable
             .Replace("tier-1 build capture not configured", "tier-1 build capture {tier1}", StringComparison.Ordinal)
             .Replace("verify serves oracle-grade", "verify serves {verify-grade}", StringComparison.Ordinal)
             .Replace("verify serves build-grade (fuse_check runs a scoped dotnet build)", "verify serves {verify-grade}", StringComparison.Ordinal);
+
+    private sealed class DeferredIndexAccessProvider(string root) : IIndexAccessProvider
+    {
+        public Task<IndexJobStartResult> StartSyntaxAsync(
+            SemanticIndexer indexer, string path, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<WorkspaceIndexStore> OpenIndexedAsync(
+            SemanticIndexer indexer, string path, CancellationToken cancellationToken) =>
+            throw new ColdStartInProgressException(root);
+
+        public Task<SemanticIndexResult> IndexAsync(
+            SemanticIndexer indexer, string path, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
 }
 
 internal static class AvailabilityHeaderGoldenAssert

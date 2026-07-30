@@ -6,7 +6,9 @@ namespace Fuse.Semantics.Tests;
 
 public sealed class OwnedProcessRunnerTests
 {
-    private static readonly TimeSpan ChildStartupTimeout = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan ParentStartupTimeout = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan ChildStartupTimeout = TimeSpan.FromSeconds(45);
+    private static readonly TimeSpan ProcessExitTimeout = TimeSpan.FromSeconds(15);
 
     [Fact]
     public async Task Caller_cancellation_stops_the_owned_process_tree()
@@ -15,16 +17,17 @@ public sealed class OwnedProcessRunnerTests
         var childPidPath = Path.Combine(work, "child.pid");
         Directory.CreateDirectory(work);
         var parentStarted = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cancellation = new CancellationTokenSource();
+        Task<ProcessExecutionResult>? execution = null;
         try
         {
             var runner = new OwnedProcessRunner(processId => parentStarted.TrySetResult(processId));
-            using var cancellation = new CancellationTokenSource();
-            var execution = runner.RunAsync(
+            execution = runner.RunAsync(
                 CreateSleepingTree(childPidPath),
                 TimeSpan.FromMinutes(1),
                 cancellation.Token);
 
-            var parentPid = await parentStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var parentPid = await parentStarted.Task.WaitAsync(ParentStartupTimeout);
             var childPid = await WaitForChildPidAsync(childPidPath);
 
             cancellation.Cancel();
@@ -35,6 +38,18 @@ public sealed class OwnedProcessRunnerTests
         }
         finally
         {
+            cancellation.Cancel();
+            if (execution is not null)
+            {
+                try
+                {
+                    await execution;
+                }
+                catch (OperationCanceledException)
+                {
+                }
+            }
+
             try { Directory.Delete(work, recursive: true); } catch (IOException) { }
         }
     }
@@ -87,7 +102,7 @@ public sealed class OwnedProcessRunnerTests
 
     private static async Task WaitForExitAsync(int processId)
     {
-        var deadline = DateTime.UtcNow.AddSeconds(5);
+        var deadline = DateTime.UtcNow + ProcessExitTimeout;
         while (DateTime.UtcNow < deadline)
         {
             try

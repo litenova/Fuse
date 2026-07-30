@@ -109,9 +109,12 @@ public sealed class FastWorkspaceStatusTests : IAsyncLifetime, IDisposable
         lockCommand.CommandText = "BEGIN EXCLUSIVE;";
         await lockCommand.ExecuteNonQueryAsync();
 
+        var stopwatch = Stopwatch.StartNew();
         var result = await FuseTools.FuseFindAsync(
             Indexer, ChangeSource, "App", path: _root, kind: "symbol");
+        stopwatch.Stop();
 
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(8), $"find blocked for {stopwatch.Elapsed.TotalSeconds:F1}s");
         Assert.StartsWith("index_state: building_syntax", result);
         Assert.Contains("grade: deferred", result);
         Assert.Contains("availability:", result);
