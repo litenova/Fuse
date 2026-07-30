@@ -21,7 +21,6 @@ public sealed class SemanticIndexer
     private const string PendingSyntaxBatchMetaKey = "pending_syntax_batch";
     private readonly DotNetWorkspaceDiscoverer _discoverer;
     private readonly RoslynWorkspaceLoader _loader;
-    private readonly WorkspaceFileScanner _scanner;
     private readonly SemanticSymbolExtractor _semanticSymbols;
     private readonly SyntaxSymbolExtractor _syntaxSymbols;
     private readonly SyntaxRouteExtractor _routeExtractor;
@@ -30,6 +29,7 @@ public sealed class SemanticIndexer
     private readonly LanguageSyntaxProviderRegistry _syntaxProviders;
     private readonly BuildCaptureClient _buildCaptureClient;
     private readonly IndexFinalizer _finalizer = new();
+    private readonly WorkspaceInventoryPlanner _inventory;
     // R42: the host-owned warm-solution cache lets a second doctor in a session skip the full MSBuild load.
     private readonly WarmSolutionCache _warmSolutions;
 
@@ -68,10 +68,6 @@ public sealed class SemanticIndexer
         return result.Succeeded ? result : null;
     }
 
-    // Non-source file extensions the scanner still needs for project discovery and config indexing, beyond the
-    // source extensions the language providers claim.
-    private static readonly string[] ConfigExtensions = [".csproj", ".props", ".targets", ".json"];
-
     /// <summary>
     ///     The index-store meta key that flags active compiler analysis after syntax data is available.
     ///     <c>"1"</c> means cross-file semantic graph extraction is running; <c>"0"</c> (or absent) means the
@@ -106,7 +102,6 @@ public sealed class SemanticIndexer
     {
         _discoverer = discoverer;
         _loader = loader;
-        _scanner = scanner;
         _semanticSymbols = semanticSymbols;
         _syntaxSymbols = syntaxSymbols;
         _routeExtractor = routeExtractor;
@@ -118,6 +113,7 @@ public sealed class SemanticIndexer
         // syntax spike. Built internally so the existing constructor and its callers are unaffected; a later
         // change can make the provider set injectable for an external language plugin.
         _syntaxProviders = new LanguageSyntaxProviderRegistry([new CSharpSyntaxProvider(syntaxSymbols), new PythonSyntaxProvider(), new JavaScriptSyntaxProvider()]);
+        _inventory = new WorkspaceInventoryPlanner(scanner, _syntaxProviders);
     }
 
     /// <summary>
@@ -406,10 +402,7 @@ public sealed class SemanticIndexer
     // Scans the extensions the registered language providers claim, plus the .NET config files needed for
     // discovery, so a non-C# spike language is surfaced to the indexer without hardwiring its extension.
     private async Task<FileScanResult> ScanFilesAsync(string root, CancellationToken cancellationToken)
-    {
-        var scanExtensions = _syntaxProviders.Extensions.Concat(ConfigExtensions).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        return await _scanner.ScanWithSkipsAsync(new FileScanRequest(root, scanExtensions), cancellationToken);
-    }
+        => await _inventory.ScanAsync(root, cancellationToken);
 
     /// <summary>
     ///     Checks whether the current source inventory matches the hashes persisted in an index without writing it.
@@ -427,23 +420,7 @@ public sealed class SemanticIndexer
         string rootDirectory,
         IWorkspaceIndexStore store,
         CancellationToken cancellationToken)
-    {
-        var root = Path.GetFullPath(rootDirectory);
-        var stored = await store.GetAllFileHashesAsync(cancellationToken);
-        var scan = await ScanFilesAsync(root, cancellationToken);
-        if (stored.Count != scan.Files.Count)
-            return false;
-
-        foreach (var file in scan.Files)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!stored.TryGetValue(file.NormalizedPath, out var storedHash)
-                || !string.Equals(storedHash, file.ContentHash, StringComparison.Ordinal))
-                return false;
-        }
-
-        return true;
-    }
+        => await _inventory.IsCurrentAsync(Path.GetFullPath(rootDirectory), store, cancellationToken);
 
     /// <summary>
     ///     Re-indexes a single changed file in place: clears that file's stored rows and re-extracts its
