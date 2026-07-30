@@ -18,9 +18,7 @@ public sealed class SemanticIndexer
 {
     private readonly DotNetWorkspaceDiscoverer _discoverer;
     private readonly RoslynWorkspaceLoader _loader;
-    private readonly SemanticSymbolExtractor _semanticSymbols;
-    private readonly FileHashService _hashService;
-    private readonly SemanticAnalysisRunner _analysisRunner;
+    private readonly SemanticGraphExtractor _semanticGraph;
     private readonly LanguageSyntaxProviderRegistry _syntaxProviders;
     private readonly BuildCaptureClient _buildCaptureClient;
     private readonly IndexFinalizer _finalizer = new();
@@ -99,9 +97,7 @@ public sealed class SemanticIndexer
     {
         _discoverer = discoverer;
         _loader = loader;
-        _semanticSymbols = semanticSymbols;
-        _hashService = hashService;
-        _analysisRunner = analysisRunner;
+        _semanticGraph = new SemanticGraphExtractor(semanticSymbols, analysisRunner, hashService);
         _warmSolutions = warmSolutions ?? new WarmSolutionCache();
         _buildCaptureClient = buildCaptureClient ?? new BuildCaptureClient();
         // The syntax tier is provider-driven: C# behind the seam (unchanged behavior), plus a second-language
@@ -476,10 +472,10 @@ public sealed class SemanticIndexer
         // This non-capture path cannot establish target-framework membership. Clear any prior capture-derived
         // facts rather than serving availability from an unrelated build.
         await store.ReplaceTfmAvailabilityAsync([], cancellationToken);
-        var projects = BuildProjectRecords(snapshot, cancellationToken);
+        var projects = _semanticGraph.BuildProjectRecords(snapshot, cancellationToken);
         await store.UpsertProjectsAsync(projects, cancellationToken);
 
-        var fileToProject = BuildFileProjectMap(root, snapshot);
+        var fileToProject = SemanticGraphExtractor.BuildFileProjectMap(root, snapshot);
         var linkedFiles = files
             .Select(f => (fileToProject.TryGetValue(f.NormalizedPath, out var projectPath)
                 ? f with { ProjectPath = projectPath }
@@ -492,7 +488,7 @@ public sealed class SemanticIndexer
         foreach (var project in snapshot.Projects)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            symbols.AddRange(_semanticSymbols.Extract(project, root, cancellationToken));
+            symbols.AddRange(_semanticGraph.ExtractSymbols(project, root, cancellationToken));
         }
 
         await store.UpsertSymbolsAsync(symbols, cancellationToken);
@@ -505,7 +501,7 @@ public sealed class SemanticIndexer
 
         // Run the analyzers over every loaded project and store the resulting graph. Nodes are upserted before
         // edges so the edge foreign keys resolve.
-        var graph = RunAnalyzers(root, snapshot, cancellationToken);
+        var graph = _semanticGraph.AnalyzeWorkspace(root, snapshot, cancellationToken);
         await store.UpsertNodesAsync(graph.Nodes, cancellationToken);
         await store.UpsertEdgesAsync(graph.Edges, cancellationToken);
         await store.UpsertRoutesAsync(graph.Routes, cancellationToken);
@@ -535,10 +531,10 @@ public sealed class SemanticIndexer
         // This non-capture path cannot establish target-framework membership. Clear any prior capture-derived
         // facts rather than serving availability from an unrelated build.
         await store.ReplaceTfmAvailabilityAsync([], cancellationToken);
-        var projects = BuildProjectRecords(snapshot, cancellationToken);
+        var projects = _semanticGraph.BuildProjectRecords(snapshot, cancellationToken);
         await store.UpsertProjectsAsync(projects, cancellationToken);
 
-        var fileToProject = BuildFileProjectMap(root, snapshot);
+        var fileToProject = SemanticGraphExtractor.BuildFileProjectMap(root, snapshot);
         var linkedFiles = files
             .Select(f => (fileToProject.TryGetValue(f.NormalizedPath, out var projectPath)
                 ? f with { ProjectPath = projectPath }
@@ -562,7 +558,7 @@ public sealed class SemanticIndexer
         foreach (var project in snapshot.Projects)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var projectSymbols = _semanticSymbols.Extract(project, root, cancellationToken).ToList();
+            var projectSymbols = _semanticGraph.ExtractSymbols(project, root, cancellationToken).ToList();
             symbols.AddRange(projectSymbols);
             await store.UpsertSymbolsAsync(projectSymbols, cancellationToken);
         }
@@ -581,7 +577,7 @@ public sealed class SemanticIndexer
         foreach (var project in snapshot.Projects)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var graph = _analysisRunner.Run(new SemanticAnalysisContext(project, root), cancellationToken);
+            var graph = _semanticGraph.AnalyzeProject(project, root, cancellationToken);
             edges.AddRange(graph.Edges);
             semanticRoutes.AddRange(graph.Routes);
             registrations.AddRange(graph.DiRegistrations);
@@ -679,7 +675,7 @@ public sealed class SemanticIndexer
         // representation for each project, then union every stable declaration and graph fact from every target
         // rather than allowing the last compiler invocation to overwrite a non-primary-only fact in SQLite.
         var union = CanonicalTfmUnion.Create(capture);
-        var projects = BuildCaptureProjectRecords(union.Projects, cancellationToken);
+        var projects = _semanticGraph.BuildCaptureProjectRecords(union.Projects, cancellationToken);
         await store.UpsertProjectsAsync(projects, cancellationToken);
 
         var fileToProject = union.Symbols
@@ -784,8 +780,8 @@ public sealed class SemanticIndexer
             // the project directory here produced project-relative paths that never resolved, so every symbol
             // was dropped (null file_id) and every node stored an unlinked file_id. Matches the root passed by
             // IndexSemanticChunkedAsync.
-            var symbols = _semanticSymbols.Extract(loaded, root, cancellationToken);
-            var graph = _analysisRunner.Run(new SemanticAnalysisContext(loaded, root), cancellationToken);
+            var symbols = _semanticGraph.ExtractSymbols(loaded, root, cancellationToken);
+            var graph = _semanticGraph.AnalyzeProject(loaded, root, cancellationToken);
             var errorCount = compilation.GetDiagnostics(cancellationToken)
                 .Count(d => d.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error);
             captured.Add(new CapturedProject(
@@ -814,122 +810,6 @@ public sealed class SemanticIndexer
             replaceTfmAvailability: false);
     }
 
-    // Runs the analyzer set over every loaded project and merges the per-project graphs.
-    private SemanticAnalyzerResult RunAnalyzers(string root, RoslynWorkspaceSnapshot snapshot, CancellationToken cancellationToken)
-    {
-        var nodes = new Dictionary<string, NodeRecord>(StringComparer.Ordinal);
-        var edges = new List<SemanticEdgeRecord>();
-        var routes = new List<RouteRecord>();
-        var registrations = new List<DiRegistrationRecord>();
-        var bindings = new List<OptionsBindingRecord>();
-        var diagnostics = new List<DiagnosticRecord>();
-
-        // R45: run the per-project analyzer pass concurrently (each project's graph is independent - it binds its own
-        // compilation with no shared mutable state - so distinct compilations parallelize rather than serialize;
-        // measured ~4.6x faster on eShopOnWeb, edges identical). The per-project results are collected positionally
-        // and merged in project order below, so the flattened nodes (last-writer-wins by id) and edges are
-        // byte-identical to the sequential pass - only the pass runs concurrently, not the merge.
-        var projects = snapshot.Projects;
-        var perProject = new SemanticAnalyzerResult[projects.Count];
-        Parallel.For(
-            0,
-            projects.Count,
-            new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount, CancellationToken = cancellationToken },
-            i => perProject[i] = _analysisRunner.Run(new SemanticAnalysisContext(projects[i], root), cancellationToken));
-
-        // Deterministic positional merge in project order (identical to the sequential accumulation order).
-        foreach (var result in perProject)
-        {
-            foreach (var node in result.Nodes)
-                nodes[node.NodeId] = node;
-            edges.AddRange(result.Edges);
-            routes.AddRange(result.Routes);
-            registrations.AddRange(result.DiRegistrations);
-            bindings.AddRange(result.OptionsBindings);
-            diagnostics.AddRange(result.Diagnostics);
-        }
-
-        // R5 part 2: after the per-project analyzers merge, emit cross-project tests edges, resolving injected
-        // interfaces to their registered implementations through the di_resolves_to edges just collected. Runs
-        // here (not as a per-project analyzer) so it links across projects and only to nodes that already exist.
-        var existingNodeIds = new HashSet<string>(nodes.Keys, StringComparer.Ordinal);
-        var diResolvesTo = edges
-            .Where(e => e.EdgeType == "di_resolves_to")
-            .GroupBy(e => e.FromNodeId, StringComparer.Ordinal)
-            .ToDictionary(g => g.Key, g => (IReadOnlyList<string>)g.Select(e => e.ToNodeId).Distinct(StringComparer.Ordinal).ToList(), StringComparer.Ordinal);
-        var (testNodes, testEdges) = new Analyzers.TestEdgeExtractor()
-            .Extract(snapshot.Projects, existingNodeIds, diResolvesTo, root, cancellationToken);
-        foreach (var node in testNodes)
-            nodes[node.NodeId] = node;
-        edges.AddRange(testEdges);
-
-        return new SemanticAnalyzerResult(nodes.Values.ToList(), edges, routes, registrations, bindings, diagnostics);
-    }
-
-    private List<ProjectRecord> BuildProjectRecords(RoslynWorkspaceSnapshot snapshot, CancellationToken cancellationToken)
-    {
-        var records = new List<ProjectRecord>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var project in snapshot.Projects)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!seen.Add(project.FilePath))
-                continue;
-
-            var hash = File.Exists(project.FilePath)
-                ? _hashService.ComputeHash(File.ReadAllBytes(project.FilePath))
-                : "0";
-            records.Add(new ProjectRecord(
-                Path: project.FilePath,
-                Name: project.Name,
-                ProjectHash: hash,
-                AssemblyName: project.AssemblyName));
-        }
-
-        return records;
-    }
-
-    private List<ProjectRecord> BuildCaptureProjectRecords(
-        IReadOnlyList<CapturedProject> capturedProjects,
-        CancellationToken cancellationToken)
-    {
-        var records = new List<ProjectRecord>(capturedProjects.Count);
-        foreach (var project in capturedProjects)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var hash = File.Exists(project.FilePath)
-                ? _hashService.ComputeHash(File.ReadAllBytes(project.FilePath))
-                : "0";
-            records.Add(new ProjectRecord(
-                Path: project.FilePath,
-                Name: project.Name,
-                ProjectHash: hash,
-                AssemblyName: project.AssemblyName,
-                TargetFramework: project.TargetFramework));
-        }
-
-        return records;
-    }
-
-    // Maps each source file (normalized relative path) to its owning project file path, so files can be linked
-    // to projects. A file shared by multiple projects (multi-targeting) maps to the first project seen.
-    private static Dictionary<string, string> BuildFileProjectMap(string root, RoslynWorkspaceSnapshot snapshot)
-    {
-        var map = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var project in snapshot.Projects)
-        {
-            foreach (var tree in project.Compilation.SyntaxTrees)
-            {
-                if (string.IsNullOrEmpty(tree.FilePath))
-                    continue;
-
-                var normalized = Path.GetRelativePath(root, tree.FilePath).Replace(Path.DirectorySeparatorChar, '/');
-                map.TryAdd(normalized, project.FilePath);
-            }
-        }
-
-        return map;
-    }
 }
 
 /// <summary>
