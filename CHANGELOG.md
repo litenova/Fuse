@@ -2,10 +2,11 @@
 
 All notable changes to Fuse are documented here. The format is based on Keep a Changelog. Fuse 4.0.0 is the first public release; it carries the whole product and there is no prior public version to migrate from.
 
-## [Unreleased]
+## [4.4.0] - 2026-07-30
 
 ### Added
 
+- The `fuse.json` schema the CLI writes is now published at `https://fuse.codes/schema/v4.4/fuse.schema.json`, so an editor can validate a file written by `fuse init`.
 - `fuse index` now exposes a repository-owned job lifecycle. `fuse index status`, `fuse index cancel`, and `fuse index clean --yes` report, cancel, and remove only documented derived index files. Start, status, and cancel support JSON output.
 - `fuse mcp doctor` reports the running binary, PATH lookup, selected MCP client registration and command, managed-instruction version, optional Claude hooks, daemon protocol, repository identity, and active index job. It supports human output and `--json`.
 
@@ -37,6 +38,13 @@ All notable changes to Fuse are documented here. The format is based on Keep a C
 - Refactor operations now use an already-loaded host warm-solution cache before MSBuild registration. A daemon-held compiler snapshot remains available when local SDK discovery cannot run.
 - Read-only index opens no longer rerun database pragmas or create schema tables. A contended find request now returns its availability header within the short read timeout. Resident compiler projection uses the same Git blob and SHA-256 identities as the scanner, so its follow-up reconcile does not rewrite unchanged files. Corrupt non-database files reach the derived-data recovery path instead of being described as a generic schema mismatch.
 - Daemon graph, scope, explain, and diagnostics RPC reads now wait for their repository-owned syntax job instead of applying the MCP deferral deadline. Resident signature lookup returns known compiler metadata while its syntax job starts through the selected local or daemon access path, and a deferred impact read returns its availability header instead of `internal_error:`.
+- `dotnet build Fuse.slnx -c Release` now builds the product in Release. The solution declared its source folders as nested elements, which the SLNX parser does not map to a build type, so every `src` project compiled into `bin/Debug` while the test projects built Release. Folder declarations are flat and the Debug and Release build types are declared explicitly.
+- Cancelling an index job that finishes concurrently no longer risks an `ObjectDisposedException`. The job manager owns each job's cancellation source and releases it at shutdown rather than when the worker exits.
+
+### Changed (internal structure)
+
+- The MCP tool surface is one operation type per tool (`WorkspaceToolOperations`, `FindToolOperations`, `ContextToolOperations`, `ImpactToolOperations`, `CheckToolOperations`, `TestToolOperations`, `RefactorToolOperations`, `ReviewToolOperations`, `ReduceToolOperations`) behind one handler type per tool, replacing the `FuseToolOperations` partial class and its pass-through `FuseTools` facade. Availability-header formatting and index-store access are separate collaborators. Tool names, arguments, descriptions, and output are unchanged.
+- Index job lifecycle types live under `Mcp/Jobs`, host RPC contracts are split by subject under `Host/Rpc/Contracts`, each index lifecycle command has its own file, and warm-service installation, warm-service state, and Fuse peer-process discovery are separated from their launchers. Persisted index-job metadata keys and the derived-file reader are declared once and shared.
 
 ### Removed
 

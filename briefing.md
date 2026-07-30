@@ -102,7 +102,7 @@ and `mcp serve` cold-starts syntax-first with a supervised background upgrade (C
 --merge` assembles a bundle from per-project build-target fragments, equal in graph to a direct
 capture, via a backward-compatible format-2 bundle (G4); a shared `fuse host` daemon holds one
 resident workspace per repository under a single-instance lock, with `mcp serve` delegating to it over
-the pipe, so multiple sessions share one warm compilation (G5); and `fuse eval corpus-health` plus a
+the pipe, so multiple sessions share one warm compilation (G5); and the corpus-health suite plus a
 model-suite refusal gate enforce that a model-driven benchmark runs only on a corpus proven buildable
 with verified test oracles (C4). The corpus-bound benchmark numbers under these shipping defaults are
 being re-derived on the buildable corpus-v2 (C4); the roadmap progress log carries the interim
@@ -333,7 +333,7 @@ Default generators: Exact, Lexical (FTS), Path, Diff, plus Dense when an embedde
   OR, with the raw term kept first so exact-name matches rank highest. The weight vector (N1,
   shipped) ranks name/symbols/signature above path: a term hitting a declared symbol name must
   outrank the same term appearing only in a folder path. The ranking regression suite
-  (`fuse eval ranking`, `results/ranking.json`) guards this table.
+  (the ranking suite, `results/ranking.json`) guards this table.
 - **Subword and stem index-time fields**: `subtokens` splits camelCase/snake_case/acronyms;
   `stems` is Porter 1980; the `comments` field is the only source for the comments column and
   also feeds the stems bridge. This is the deterministic fix for the vocabulary gap: a prose
@@ -566,7 +566,7 @@ open, the v4 item that addresses it.
    sole contract stamp; ambient hooks must match the running host version.
 2. **BM25 weight vector versus intent comment.** RESOLVED in v4 N1. The FTS5 bm25 column weights
    now rank name/symbols/signature above path (`WorkspaceIndexStore.SearchAsync`). The ranking
-   regression suite (`fuse eval ranking`, `results/ranking.json`) guards the table.
+   regression suite (the ranking suite, `results/ranking.json`) guards the table.
 3. **Two disagreeing lexical rankers.** PARTIAL, v4 N2. N2 part 1 archived stale results and
    fixed citations. The in-memory `Bm25RelevanceIndex` still exists for the classic fusion path
    (host RPC scoping) but is non-shipping; deletion is deferred due to test coupling. The
@@ -590,7 +590,9 @@ open, the v4 item that addresses it.
 This section is written so a planner can read it without the source tree: every number below
 comes from a file under `tests/benchmarks/results/`, counted with `o200k_base`, and never
 fabricated or rounded. The harness is the C# library `tests/benchmarks/Fuse.Benchmarks`, invoked
-as `fuse eval <suite>`. Each suite writes a scorecard JSON; the canonical files are listed in
+in the separate `Fuse.Benchmarks.slnx` solution. Fuse 4.4 does not package an evaluation command,
+so a suite is driven from that solution rather than from the installed tool. Each suite writes a
+scorecard JSON; the canonical files are listed in
 9.0. Never quote numbers from `results/archive/` (superseded runs).
 
 ### 9.0 Shared methodology
@@ -630,20 +632,25 @@ changed-file ground truth, title-only input, top 20 candidates.
 queries; precision when confident (confident grade only); graded states (confident / partial /
 insufficient).
 
-**Reproduce commands:**
+**Reproduce arguments** (driven from `Fuse.Benchmarks.slnx`; the packaged CLI has no eval command):
+
+```text
+semantics                    # Suite A (in-repo fixture, no corpus)
+review --restore             # Suite B
+localize --restore           # Suite C (lexical channel, shipping default)
+ranking --restore            # ranking gate
+checkgate                    # Suite F (in-process plus mutation arm)
+checkgate --mutations 500    # Suite F mutation gate (1000 verified cases)
+loop --restore --limit 1     # Suite R4 (model + claude CLI; needs FUSE_LOOP_RUN=1)
+agent --restore              # Suite D (model + claude CLI)
+reduce                       # Suite E
+performance                  # latency (writes performance.json)
+```
+
+The peer comparison stays a script:
 
 ```bash
-fuse eval semantics                    # Suite A (in-repo fixture, no corpus)
-fuse eval review --restore             # Suite B
-fuse eval localize --restore           # Suite C (lexical channel, shipping default)
-fuse eval ranking --restore            # ranking gate
-fuse eval checkgate                    # Suite F (in-process plus mutation arm)
-fuse eval checkgate --mutations 500    # Suite F mutation gate (1000 verified cases)
-FUSE_LOOP_RUN=1 fuse eval loop --restore --limit 1   # Suite R4 (model + claude CLI)
-fuse eval agent --restore              # Suite D (model + claude CLI)
-fuse eval reduce                       # Suite E
-fuse eval performance                  # latency (not in all docs lists; writes performance.json)
-pwsh -File tests/benchmarks/harness/layer6-peers.ps1 # peer comparison
+pwsh -File tests/benchmarks/harness/layer6-peers.ps1
 ```
 
 **Canonical result files** (current headline numbers):
@@ -688,7 +695,7 @@ where only the registered impl resolves).
 | False positives | 0 |
 
 **Finding:** The deterministic moat is proven in kind on a hand-built fixture. Corpus-wide
-wiring precision is not fully adjudicated; `fuse eval semantics --corpus-sample N` samples
+wiring precision is not fully adjudicated; the semantics suite with `--corpus-sample N` samples
 predicted corpus edges into `semantics-corpus-sample.json` for human adjudication
 (`semantics-corpus.json`: 261 predicted edges, index modes partial 2 / syntax 4, 24 sampled).
 
@@ -1041,7 +1048,7 @@ section adds operational detail for reproducing or extending runs.
 **PR filter:** merge-commit reconstruction, 2 to 25 changed C# files, misleading maintenance
 titles dropped. Corpus v2 keeps 69 PRs in `prs.json`; the retired mixed corpus kept 53.
 
-**Harness architecture:** one C# `Fuse.Benchmarks` driver behind `fuse eval` (v4 N5 retired
+**Harness architecture:** one C# `Fuse.Benchmarks` driver in its own solution (v4 N5 retired
 legacy PowerShell layer scripts). Exception: peer comparison orchestration in
 `harness/layer6-peers.ps1` with `harness/common.ps1`. All MCP peer calls bounded with wall-
 clock backstop and process-tree kill.
