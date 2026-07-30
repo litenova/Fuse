@@ -126,12 +126,12 @@ public sealed class DotNetWorkspaceDiscoverer
             {
                 return Task.FromResult(new WorkspaceDiscoveryResult(
                     WorkspaceKind.Projects, null, productProjects, fullRoot,
-                    $"the only solutions found are under {treeKind} directories; loading the repo's product projects instead. Pin one with a fuse.json \"solution\" key."));
+                    $"the only solutions found are under {treeKind} directories; loading the repo's product projects instead. Pin one with the fuse.json \"workspace\" property."));
             }
 
             return Task.FromResult(new WorkspaceDiscoveryResult(
                 WorkspaceKind.Solution, best, projects, fullRoot,
-                $"selected a solution under a {treeKind} directory ({Relative(fullRoot, best)}); no product solution was found. Pin one with a fuse.json \"solution\" key."));
+                $"selected a solution under a {treeKind} directory ({Relative(fullRoot, best)}); no product solution was found. Pin one with the fuse.json \"workspace\" property."));
         }
 
         // Distinct root-level product solutions need an explicit workspace. A full build is expensive, and selecting

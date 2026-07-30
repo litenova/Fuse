@@ -722,7 +722,7 @@ public sealed class SemanticIndexer
         return new SemanticIndexResult(mode, linkedFiles.Count, projects.Count, symbols.Count, chunks.Count, routeCount, diagnostics);
     }
 
-    // R14: semantic upgrade commits per project and per file batch so WAL readers are not blocked by one long write.
+    // R14: explicit semantic indexing commits per project and per file batch so WAL readers are not blocked by one long write.
     private async Task<SemanticIndexResult> IndexSemanticChunkedAsync(
         string root,
         IWorkspaceIndexStore store,

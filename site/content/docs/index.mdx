@@ -3,10 +3,10 @@ title: Fuse documentation
 description: Persistent MSBuild and Roslyn indexing, reduced task-scoped source, .NET wiring resolution, and proposed-file compiler checks.
 ---
 
-Fuse is a local .NET tool with a persistent semantic index, typed-graph wiring
+Fuse is a local .NET tool with a persistent syntax index, typed-graph wiring
 resolution, reduced task-scoped source, and pre-write compiler verification for coding
-agents. It indexes a solution through MSBuild and Roslyn, stores the result in
-`.fuse/fuse.db`, and reuses it across agent turns.
+agents. It indexes source without a compiler by default, stores the result in `.fuse/fuse.db`,
+and loads compiler state only for an explicit semantic request or a compiler-backed tool.
 
 Install and connect from a project directory:
 
@@ -26,7 +26,7 @@ Analysis runs locally and can work offline. The shared daemon begins warming the
 when the repository is served, before the first tool call. Fuse walks typed wiring edges
 when the project loads through Roslyn, returns reduced source for a selected scope, and
 checks proposed single-file content without changing the working tree. A cold read reports
-when syntax indexing or the semantic upgrade is still running.
+when syntax indexing or an explicitly requested compiler job is still running.
 
 <Diagram src="/fuse-product-boundary.svg" alt="Fuse local product boundary: MCP client, local Fuse process, repository, and .NET toolchain" />
 

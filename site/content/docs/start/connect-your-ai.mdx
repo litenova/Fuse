@@ -169,10 +169,11 @@ and removed files are deleted from the `files` table and its derived rows.
 
 Run
 `fuse index` (or ask the agent to call `fuse_workspace` with `action=index`) only when you
-want to wait for a complete semantic index before the first task. Otherwise a cold read
-uses a bounded syntax-first pass and reports when the semantic upgrade is still running.
-Fuse then re-indexes changed files through the live watcher and read-time backstop. It
-reports `partial` or `syntax` analysis when MSBuild cannot load every project.
+want to wait for the syntax index before the first task. Add `--semantic` when a complete
+workspace compiler pass is required. Otherwise a cold read uses a bounded syntax-first pass
+and reports the active job. Fuse then re-indexes changed files through the live watcher and
+read-time backstop. It reports `partial` or `syntax` analysis when compiler analysis cannot
+load every selected project.
 
 ## Local Process and Network Behavior
 
@@ -196,8 +197,7 @@ in the client `env` block or your shell:
 | `FUSE_DAEMON` | `0` | Serve in-process instead of delegating to a shared `fuse host` per repository |
 | `FUSE_AUTO_UPDATE` | `0` | Do not launch a background updater between MCP sessions |
 | `FUSE_EAGER_INDEX` | `0` | Do not start warming the repository when the daemon or MCP server starts |
-| `FUSE_BG_UPGRADE` | `0` | Block the first read on a full synchronous index instead of syntax-first serving |
-| `FUSE_BUILD_CAPTURE` | `0` | Skip tier-1 build capture (oracle-grade checks need a local build instead) |
+| `FUSE_BUILD_CAPTURE` | `0` | Skip build capture for explicit semantic and compiler-backed requests (checks fall back to a local build) |
 | `FUSE_UPDATE_CHECK` | `0` | Disable the NuGet update notice on stderr |
 
 See [Configuration keys](/docs/reference/configuration-keys) for the full list.

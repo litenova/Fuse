@@ -829,9 +829,8 @@ public sealed partial class FuseTools
 
         var mode = await store.GetMetaAsync("index_mode", cancellationToken) ?? "unknown";
         var staleRaw = await store.GetMetaAsync(SemanticIndexer.StaleAsOfMetaKey, cancellationToken);
-        // First-use signal (C3): with the syntax-first serve default, the first reads land on a syntax index while
-        // the semantic/tier-1 graph builds in the background. Name it, so a client knows a richer answer is coming
-        // and that a build is running for tier-1 rather than mistaking the syntax tier for the final word.
+        // Syntax rows stay readable while an explicit semantic job is active. Name that state so a client knows
+        // that compiler facts are still being added instead of mistaking the syntax tier for the final word.
         var pendingRaw = await store.GetMetaAsync(SemanticIndexer.SemanticPendingMetaKey, cancellationToken);
         var upgradePending = pendingRaw == "1";
         var tier1Available = new BuildCaptureClient().IsAvailable;
@@ -851,9 +850,7 @@ public sealed partial class FuseTools
             ? $"{stale} known file(s) changed since index, results may lag the working tree"
             : "up to date";
         var upgradeClause = upgradePending
-            ? (tier1Available
-                ? " semantic upgrade in progress (a build is running for tier-1);"
-                : " semantic upgrade in progress;")
+            ? " compiler analysis in progress;"
             : "";
         // R23 single source of truth: report the reconciled FTS availability (the stamp AND the chunk_fts table),
         // exactly as the status body does via WorkspaceIndexState.FtsAvailable. The store's FullTextSearchAvailable
@@ -915,7 +912,7 @@ public sealed partial class FuseTools
         return builder.ToString().TrimEnd();
     }
 
-    // R16: the doctor summary header reads index_meta only; it does not wait for semantic upgrade.
+    // R16: the doctor summary header reads index_meta only; it does not wait for an active semantic job.
     private static async Task<string> BuildFastDoctorSummaryHeaderAsync(
         string root,
         Fuse.Workspace.IResidentWorkspaceProvider residentWorkspaces,

@@ -11,19 +11,18 @@ fuse mcp install
 ```
 
 No client environment variables are required. `fuse mcp serve` defaults to a shared
-`fuse host` daemon per repository, syntax-first indexing with background semantic upgrade,
-build capture, and auto-update between sessions.
+`fuse host` daemon per repository, syntax-first indexing, and auto-update between sessions.
 
-The shared daemon starts warming the repository when the MCP server starts. Run an explicit
-index when you want the complete semantic index ready before reloading the client:
+The shared daemon can start warming the repository when the MCP server starts. Run an explicit
+syntax index when you want the repository index ready before reloading the client:
 
 ```bash
 fuse index
 ```
 
-This command waits for the semantic index at `.fuse/fuse.db`. It is optional for normal MCP
-use: eager warm-on-start, syntax-first serving, background semantic upgrade, and incremental
-file updates are enabled by default.
+This command waits for the syntax index at `.fuse/fuse.db`. It is optional for normal MCP
+use: eager warm-on-start, syntax-first serving, and incremental file updates are enabled by
+default. Use `fuse index --semantic` only when you need a workspace-wide compiler pass.
 
 Reload your MCP client, then ask:
 
@@ -49,8 +48,9 @@ that Fuse is available does not.
 
 If you ran `fuse index` above, this call reads the completed index. If you skipped it, the
 daemon may still be warming the repository. A cold read waits only for the bounded
-syntax-first deadline and reports `building_syntax` or `upgrade_pending` when more work is
-running. Later calls reuse the local store. If a tool returns `index_rebuilding:` after an
+syntax-first deadline and reports `building_syntax` while that job is running. An explicit
+semantic request can report `upgrade_pending` while syntax facts remain readable. Later calls
+reuse the local store. If a tool returns `index_rebuilding:` after an
 upgrade or corrupt recovery, retry after a few seconds or call `fuse_workspace` with
 `action=index`.
 

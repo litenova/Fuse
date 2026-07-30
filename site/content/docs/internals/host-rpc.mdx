@@ -21,7 +21,10 @@ Connections use Content-Length framed JSON-RPC (the same framing VS Code languag
 |--------|--------|
 | `fuse/handshake` | Returns host and protocol versions for compatibility checks |
 | `fuse/stats` | Returns process id, uptime, and working-set size |
-| `fuse/index` | Warms the analysis index and dependency graph for a root |
+| `fuse/indexStart` | Starts or joins a syntax, semantic, force, or capture index job |
+| `fuse/indexStatus` | Returns the current repository job and storage snapshot |
+| `fuse/indexCancel` | Requests cancellation of the active repository job |
+| `fuse/openIndexed` | Opens syntax rows when ready and includes the active job while compiler analysis continues |
 | `fuse/graph` | Projects the dependency graph (optionally scoped) |
 | `fuse/scope` | Runs a scoped fusion and writes the emitted payload to a temp file |
 | `fuse/explain` | Returns the context plan without writing a payload |
@@ -43,7 +46,7 @@ The table below states the client-visible outcomes the host and MCP contract tes
 | Surface | Trigger | Outcome |
 |---------|---------|---------|
 | `fuse/handshake` | `protocolVersion` does not match `FuseHostService.ProtocolVersion` | Hook and daemon clients treat the host as absent (`IsServingAsync` is false; `TryCheckDeltaAsync`, `TryCheckOverlayAsync`, `TryDoctorAsync`, `TryRefactorAsync`, and `TryCaptureCheckAsync` return null). With `FUSE_HOOK_VERBOSE=1`, stderr logs `protocol_mismatch` on `fuse/handshake`. |
-| Root-bound RPC (`fuse/index`, `fuse/graph`, `fuse/scope`, `fuse/explain`, `fuse/diagnostics`, `fuse/check`, `fuse/checkOverlay`, `fuse/checkCapture`, `fuse/doctor`, `fuse/refactor`) | `root` does not match the daemon's served root | JSON-RPC `InvalidParams`; message contains `served root`. |
+| Root-bound RPC (`fuse/indexStart`, `fuse/indexStatus`, `fuse/indexCancel`, `fuse/openIndexed`, `fuse/graph`, `fuse/scope`, `fuse/explain`, `fuse/diagnostics`, `fuse/check`, `fuse/checkOverlay`, `fuse/checkCapture`, `fuse/doctor`, `fuse/refactor`) | `root` does not match the daemon's served root | JSON-RPC `InvalidParams`; message contains `served root`. |
 | `fuse/checkOverlay` over the pipe, consumed by MCP through `RemoteResidentWorkspaceProvider` | A resident workspace serves the root | `fuse_check` stamps `verification grade: oracle` and returns the daemon-held diagnostics (no `dotnet build`). |
 | Store-backed MCP read after a storm reconcile (for example `fuse_impact`) | More than 300 inventory entries changed at open | The coordinator runs one authoritative replacement before the read answers. The leading availability header reads `index_state: ready`, names `files_indexed`, and reports the workspace as up to date. |
 
@@ -91,7 +94,7 @@ The table below lists realistic local threats given the current design. Severity
 | Derive the endpoint from a known repo path | Connection target | Endpoint is public given the root |
 | Call `fuse/scope` | Reduced source for arbitrary focus, search, or change scopes; path to a temp payload file | Secret redaction in emitted output is heuristic (see [Keep Secrets Out](/docs/scenarios/keep-secrets-out)) |
 | Call `fuse/diagnostics` | Precise file locations and kinds of detected secrets (not the secret values in the DTO, but enough to locate them in the tree) | Session token |
-| Call `fuse/index` or `fuse/graph` | CPU and disk load; reads the working tree | Session token; root must match served root |
+| Call `fuse/indexStart` or `fuse/graph` | CPU and disk load; reads the working tree | Session token; root must match served root |
 | Call `fuse/checkOverlay` | Compiler diagnostics for a proposed file edit against the held resident compilation | Session token; root must match served root; requires a warm resident workspace |
 | Call `fuse/shutdown` | Denial of service for connected clients | Session token |
 | Pass a different `root` on an otherwise valid connection | Read or index another repository path the host process could reach | Rejected when root does not match the served root |

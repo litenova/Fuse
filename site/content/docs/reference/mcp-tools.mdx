@@ -74,10 +74,10 @@ availability: index mode semantic; full-text search available; tier-1 build capt
 | Value | Meaning |
 |-------|---------|
 | `not_indexed` | No completed index is available. `fuse_workspace action=status` reports this without writing. A completed empty repository is `ready` with zero files. |
-| `building_syntax` | Syntax-first cold start: the syntax tier is live and a semantic upgrade is pending. |
-| `upgrade_pending` | The index exists at syntax or partial tier and a background semantic or tier-1 upgrade is running. |
+| `building_syntax` | A syntax job is inventorying or extracting source. The caller can wait, inspect status, or explicitly cancel the shared job. |
+| `upgrade_pending` | A readable syntax or partial index exists while an explicit semantic job adds compiler facts. |
 | `ready` | The index is current for reads at its loaded tier. |
-| `index_busy` | The writer lock or SQLite blocked this read; retry shortly. |
+| `index_busy` | An external writer or SQLite lock blocked the read. Daemon-owned index requests join the shared job instead of returning this state. |
 | `index_rebuilding` | The store failed an integrity check (missing or inconsistent full-text index, or symbols with zero chunks) and is being rebuilt; it is never reported `ready` in this state. |
 | `stale_as_of` | A bulk change outran per-file reconcile and a full replacement is pending. The indexed read coordinator starts that replacement automatically. |
 

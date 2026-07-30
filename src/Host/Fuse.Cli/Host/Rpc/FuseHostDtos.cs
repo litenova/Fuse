@@ -215,7 +215,7 @@ public sealed record CheckOverlayResultDto(
 /// <summary>
 ///     The result of the <c>fuse/openIndexed</c> method (R19, G5 phase 2): whether the daemon prepared a readable
 ///     index for store-backed MCP tools and the coarse state when it did not. A non-owner process delegates index
-///     open, reconcile, syntax-first cold start, and background semantic upgrade to the daemon over this RPC, then
+///     open, reconcile, syntax-first cold start, and an explicitly requested semantic job to the daemon over this RPC, then
 ///     opens the store read-only locally for queries.
 /// </summary>
 /// <param name="Status">
