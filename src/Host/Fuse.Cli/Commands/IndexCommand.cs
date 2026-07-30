@@ -150,7 +150,7 @@ public sealed class IndexCommand
             renderer.Render(snapshot, force: false);
         }
 
-        renderer.Render(snapshot, force: true);
+        renderer.Render(snapshot, force: false);
         switch (snapshot.State)
         {
             case IndexJobState.Completed:
@@ -255,7 +255,9 @@ internal sealed class IndexProgressRenderer
     private static readonly char[] SpinnerFrames = ['|', '/', '-', '\\'];
     private readonly IConsoleUI _consoleUI;
     private readonly bool _json;
+    private readonly TextWriter _output;
     private IndexPhase? _lastPhase;
+    private IndexJobState? _lastState;
     private int? _lastBucket;
     private DateTimeOffset _lastRender;
     private int _spinnerFrame;
@@ -263,10 +265,12 @@ internal sealed class IndexProgressRenderer
     /// <summary>Initializes a progress renderer.</summary>
     /// <param name="consoleUI">The output service used for human-readable progress.</param>
     /// <param name="json">Whether to write JSON Lines snapshots.</param>
-    public IndexProgressRenderer(IConsoleUI consoleUI, bool json)
+    /// <param name="output">The JSON output writer; defaults to the process standard output.</param>
+    public IndexProgressRenderer(IConsoleUI consoleUI, bool json, TextWriter? output = null)
     {
         _consoleUI = consoleUI;
         _json = json;
+        _output = output ?? Console.Out;
     }
 
     /// <summary>Renders a snapshot when its visible progress changed.</summary>
@@ -274,24 +278,28 @@ internal sealed class IndexProgressRenderer
     /// <param name="force">Whether to bypass throttling.</param>
     public void Render(IndexJobSnapshot snapshot, bool force)
     {
-        if (_json)
-        {
-            Console.Out.WriteLine(JsonSerializer.Serialize(snapshot, IndexCliJsonContext.Default.IndexJobSnapshot));
-            return;
-        }
-
         int? bucket = snapshot.PhasePercent is null ? null : (int)(snapshot.PhasePercent.Value / 10);
         var now = DateTimeOffset.UtcNow;
-        var redirected = Console.IsOutputRedirected;
-        if (!force && redirected && _lastPhase == snapshot.Phase && _lastBucket == bucket
+        var periodicOutput = _json || Console.IsOutputRedirected;
+        var unchanged = _lastPhase == snapshot.Phase
+                        && _lastState == snapshot.State
+                        && _lastBucket == bucket;
+        if (!force && periodicOutput && unchanged
             && now - _lastRender < TimeSpan.FromSeconds(5))
             return;
-        if (!force && !redirected && _lastPhase == snapshot.Phase && _lastBucket == bucket)
+        if (!force && !periodicOutput && unchanged)
             return;
 
         _lastPhase = snapshot.Phase;
+        _lastState = snapshot.State;
         _lastBucket = bucket;
         _lastRender = now;
+        if (_json)
+        {
+            _output.WriteLine(JsonSerializer.Serialize(snapshot, IndexCliJsonContext.Default.IndexJobSnapshot));
+            return;
+        }
+
         _consoleUI.WriteStep(Format(snapshot, SpinnerFrames[_spinnerFrame++ % SpinnerFrames.Length]));
     }
 

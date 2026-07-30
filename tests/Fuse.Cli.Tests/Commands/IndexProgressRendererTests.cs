@@ -33,6 +33,25 @@ public sealed class IndexProgressRendererTests
         Assert.Contains("Phase 1/3 [####------] 40% 4/10 files", Assert.Single(console.Steps));
     }
 
+    [Fact]
+    public void Json_output_uses_named_enums_and_throttles_unchanged_snapshots()
+    {
+        var console = new CapturingConsoleUI();
+        using var output = new StringWriter();
+        var renderer = new IndexProgressRenderer(console, json: true, output);
+        var snapshot = CreateSnapshot(totalUnits: 10, phasePercent: 40);
+
+        renderer.Render(snapshot, force: true);
+        renderer.Render(snapshot, force: false);
+        renderer.Render(snapshot with { PhasePercent = 50 }, force: false);
+
+        var lines = output.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(2, lines.Length);
+        Assert.Contains("\"state\":\"Running\"", lines[0], StringComparison.Ordinal);
+        Assert.Contains("\"phase\":\"Inventory\"", lines[0], StringComparison.Ordinal);
+        Assert.Empty(console.Steps);
+    }
+
     private static IndexJobSnapshot CreateSnapshot(long? totalUnits, double? phasePercent) =>
         new(
             JobId: "job-1",

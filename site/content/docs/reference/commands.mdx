@@ -80,6 +80,8 @@ re-handshakes with the new tool surface.
 
 Build or refresh the persistent index for a workspace. A path inside Git resolves to the repository root. The default job extracts syntax only and does not select a solution or solution filter. Use `--semantic` to continue through compiler analysis after syntax is ready; this requires one unambiguous workspace target. Matching requests join one daemon-owned job, so a second `fuse index` reports the same progress instead of contending for SQLite.
 
+When output is redirected, Fuse emits progress on phase changes, each ten-percent boundary, or every five seconds. `--json` uses the same cadence and writes named `state` and `phase` values in each JSON Lines snapshot.
+
 ```text
 fuse index ./src
 fuse index . --semantic

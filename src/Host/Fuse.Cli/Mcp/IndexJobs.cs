@@ -1,10 +1,12 @@
 using Fuse.Semantics;
+using System.Text.Json.Serialization;
 
 namespace Fuse.Cli.Mcp;
 
 /// <summary>
 ///     The amount of compiler analysis an index job performs.
 /// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter<IndexDepth>))]
 public enum IndexDepth
 {
     /// <summary>Extract declarations, routes, and searchable syntax without loading MSBuild.</summary>
@@ -17,6 +19,7 @@ public enum IndexDepth
 /// <summary>
 ///     The lifecycle state of one repository-owned index job.
 /// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter<IndexJobState>))]
 public enum IndexJobState
 {
     /// <summary>The job has been accepted and is waiting for its worker.</summary>
@@ -41,6 +44,7 @@ public enum IndexJobState
 /// <summary>
 ///     The observable stage of an index job.
 /// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter<IndexPhase>))]
 public enum IndexPhase
 {
     /// <summary>Discover the repository inventory.</summary>
