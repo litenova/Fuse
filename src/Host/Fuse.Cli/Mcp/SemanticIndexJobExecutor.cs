@@ -15,18 +15,29 @@ public sealed class SemanticIndexJobExecutor : IWorkspaceIndexJobExecutor
     private const string JobStateMetaKey = "index_job_state";
     private const string JobErrorCodeMetaKey = "index_job_error_code";
     private const string JobErrorMessageMetaKey = "index_job_error_message";
+    private const string InterruptedJobIdMetaKey = "index_interrupted_job_id";
+    private const string InterruptedPhaseMetaKey = "index_interrupted_phase";
+    private const string InterruptedDepthMetaKey = "index_interrupted_depth";
+    private const string InterruptedStartedMetaKey = "index_interrupted_started_at";
+    private const string InterruptedStateMetaKey = "index_interrupted_state";
     private readonly IndexCoordinator _coordinator;
     private readonly SemanticIndexer _indexer;
+    private readonly TimeProvider _timeProvider;
 
     /// <summary>
     ///     Initializes a new instance of the <see cref="SemanticIndexJobExecutor" /> class.
     /// </summary>
     /// <param name="coordinator">The root writer coordinator.</param>
     /// <param name="indexer">The syntax and compiler indexer.</param>
-    public SemanticIndexJobExecutor(IndexCoordinator coordinator, SemanticIndexer indexer)
+    /// <param name="timeProvider">The time source used for persisted job timestamps.</param>
+    public SemanticIndexJobExecutor(
+        IndexCoordinator coordinator,
+        SemanticIndexer indexer,
+        TimeProvider? timeProvider = null)
     {
         _coordinator = coordinator;
         _indexer = indexer;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <inheritdoc />
@@ -52,6 +63,7 @@ public sealed class SemanticIndexJobExecutor : IWorkspaceIndexJobExecutor
     {
         try
         {
+            await MarkInterruptedRunAsync(store, jobId, progress, cancellationToken);
             await MarkAsync(store, jobId, request, IndexPhase.Inventory, "running", cancellationToken);
             if (request.Force)
             {
@@ -212,7 +224,41 @@ public sealed class SemanticIndexJobExecutor : IWorkspaceIndexJobExecutor
             update.TotalUnits,
             update.CurrentItem)));
 
-    private static async Task MarkAsync(
+    private async Task MarkInterruptedRunAsync(
+        IWorkspaceIndexStore store,
+        string jobId,
+        IProgress<IndexJobProgress> progress,
+        CancellationToken cancellationToken)
+    {
+        var state = await store.GetMetaAsync(JobStateMetaKey, cancellationToken);
+        if (!string.Equals(state, "running", StringComparison.Ordinal)
+            && !string.Equals(state, "cancelling", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var previousJobId = await store.GetMetaAsync(JobIdMetaKey, cancellationToken);
+        if (string.IsNullOrWhiteSpace(previousJobId)
+            || string.Equals(previousJobId, jobId, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var previousPhase = await store.GetMetaAsync(JobPhaseMetaKey, cancellationToken) ?? IndexPhase.Inventory.ToString();
+        var previousDepth = await store.GetMetaAsync(JobDepthMetaKey, cancellationToken) ?? IndexDepth.Syntax.ToString();
+        var previousStarted = await store.GetMetaAsync(JobStartedMetaKey, cancellationToken) ?? string.Empty;
+        await store.SetMetaAsync(InterruptedJobIdMetaKey, previousJobId, cancellationToken);
+        await store.SetMetaAsync(InterruptedPhaseMetaKey, previousPhase, cancellationToken);
+        await store.SetMetaAsync(InterruptedDepthMetaKey, previousDepth, cancellationToken);
+        await store.SetMetaAsync(InterruptedStartedMetaKey, previousStarted, cancellationToken);
+        await store.SetMetaAsync(InterruptedStateMetaKey, "interrupted", cancellationToken);
+        progress.Report(new IndexJobProgress(
+            IndexPhase.Inventory,
+            CurrentItem: "resuming committed index batches",
+            Warning: $"previous index job {previousJobId} was interrupted during {previousPhase}; resuming committed batches"));
+    }
+
+    private async Task MarkAsync(
         IWorkspaceIndexStore store,
         string jobId,
         IndexJobRequest request,
@@ -222,10 +268,17 @@ public sealed class SemanticIndexJobExecutor : IWorkspaceIndexJobExecutor
         string? errorCode = null,
         string? errorMessage = null)
     {
+        var existingJobId = await store.GetMetaAsync(JobIdMetaKey, cancellationToken);
+        var startedAt = string.Equals(existingJobId, jobId, StringComparison.Ordinal)
+            ? await store.GetMetaAsync(JobStartedMetaKey, cancellationToken)
+            : null;
         await store.SetMetaAsync(JobIdMetaKey, jobId, cancellationToken);
         await store.SetMetaAsync(JobPhaseMetaKey, phase.ToString(), cancellationToken);
         await store.SetMetaAsync(JobDepthMetaKey, request.Depth.ToString(), cancellationToken);
-        await store.SetMetaAsync(JobStartedMetaKey, DateTimeOffset.UtcNow.ToString("O"), cancellationToken);
+        await store.SetMetaAsync(
+            JobStartedMetaKey,
+            string.IsNullOrWhiteSpace(startedAt) ? _timeProvider.GetUtcNow().ToString("O") : startedAt,
+            cancellationToken);
         await store.SetMetaAsync(JobStateMetaKey, state, cancellationToken);
         await store.SetMetaAsync(JobErrorCodeMetaKey, errorCode ?? string.Empty, cancellationToken);
         await store.SetMetaAsync(JobErrorMessageMetaKey, errorMessage ?? string.Empty, cancellationToken);
