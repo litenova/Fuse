@@ -149,11 +149,6 @@ public sealed class HostCommand
         // bounded-building index. Fire-and-forget and best-effort; opt out with FUSE_EAGER_INDEX=0.
         _ = Mcp.EagerIndex.Start(app.Services.GetRequiredService<SemanticIndexer>(), root);
 
-        // R44: warm the MSBuild toolchain (locator + first solution load into the R42 warm-solution cache) in the
-        // background at startup, so the first fuse_refactor / fuse_workspace doctor of a session does not pay the
-        // multi-second locator-plus-first-load warmup. Fire-and-forget; opt out with FUSE_MSBUILD_WARMUP=0.
-        _ = Mcp.MsBuildToolchainWarmer.Start(root, log: message => logger.LogInformation("{Message}", message), cancellationToken: stopCts.Token);
-
         try
         {
             if (OperatingSystem.IsWindows())

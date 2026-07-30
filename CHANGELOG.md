@@ -19,6 +19,7 @@ All notable changes to Fuse are documented here. The format is based on Keep a C
 - Completed and cancelled index jobs now truncate the SQLite WAL. Full rebuilds set incremental auto-vacuum mode and compact FTS5 once; ordinary refreshes use one bounded merge and at most 1,024 reclaimed pages. An incompatible index removes only its known derived files, including obsolete reduction-cache sidecars and `r60-semantics.json`.
 - Reduction output and per-file analysis now share a repository-scoped, daemon-owned memory cache capped at 64 MiB. The cache uses least-recently-used eviction and ends with the process; Fuse no longer creates `fuse-cache.db`.
 - `fuse mcp install` now writes the v4.4 managed agent guidance by default. `--no-rules` skips that block, while `--with-hooks` remains explicit. Re-running installation replaces only the marker-delimited Fuse block and preserves surrounding user content.
+- Daemon and MCP startup no longer load an MSBuild solution in the background. Compiler state starts only for an explicit semantic index or a compiler-backed request.
 
 ### Fixed
 

@@ -166,10 +166,6 @@ public sealed class McpServeCommand
         {
             _ = Mcp.EagerIndex.Start(app.Services.GetRequiredService<Fuse.Semantics.SemanticIndexer>(), daemonRoot);
 
-            // R44: warm the MSBuild toolchain in the background when serving in-process (the delegating path warms
-            // in fuse host instead), so the first fuse_refactor / doctor does not pay the locator-plus-first-load
-            // warmup. Fire-and-forget; opt out with FUSE_MSBUILD_WARMUP=0.
-            _ = Mcp.MsBuildToolchainWarmer.Start(daemonRoot, log: Console.Error.WriteLine, cancellationToken: context.CancellationToken);
         }
 
         try

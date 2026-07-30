@@ -54,7 +54,7 @@ For `fuse_workspace action=doctor` there is a faster path still: the per-project
 
 ## MSBuild toolchain warmup
 
-The first MSBuild-touching call per process pays a fixed multi-second warmup: registering the MSBuild locator, then the first `MSBuildWorkspace` open (JIT, MSBuild assembly load, SDK resolution). In a long-lived daemon that cost otherwise lands on the first `fuse_refactor` or full `fuse_check` of a session. R44 warms it at startup: in the background, the daemon (and in-process `fuse mcp serve` when not delegating) discovers the served root's solution and primes it into the warm-Solution cache, which registers the locator and loads the solution in one step. So the warm load also populates the cache, and the first real refactor or doctor hits a warm solution rather than a cold load (measured on the Fuse repo: the ~5.9s background warmup moved the load off the first refactor, which then reused the primed cache with no reload). It is fire-and-forget and best-effort - a failure is swallowed so startup is never blocked - deduped with the first real load by the cache, and default-on; opt out with `FUSE_MSBUILD_WARMUP=0`.
+Compiler state loads only for a request that needs it. `fuse_refactor`, compiler-backed checks, and a live doctor load register the MSBuild locator and open the selected target on demand. The held solution cache still reuses that explicitly loaded state for later requests on the same repository, but daemon or MCP startup never opens a full solution in the background.
 
 ## Pooled build-capture check worker
 
