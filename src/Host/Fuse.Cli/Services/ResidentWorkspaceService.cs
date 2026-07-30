@@ -23,6 +23,7 @@ public sealed class ResidentWorkspaceService : IResidentWorkspaceProvider, IDisp
     private readonly ResidentWorkspace _workspace;
     private readonly ResidentWorkspaceUpdater _updater = new();
     private readonly FileHashService _hashes = new();
+    private readonly GitFileEnumerator _gitFiles = new();
     private readonly object _gate = new();
     private int _revision;
 
@@ -155,13 +156,16 @@ public sealed class ResidentWorkspaceService : IResidentWorkspaceProvider, IDisp
         var excludedDirectories = new HashSet<string>(
             WorkspaceExclusions.LoadDirectoryNames(_root),
             StringComparer.OrdinalIgnoreCase);
-        var files = affected
+        var sourcePaths = affected
             .SelectMany(p => p.Compilation.SyntaxTrees)
             .Select(t => t.FilePath)
             .Where(path => IsIndexableSourceFile(path, excludedDirectories))
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Select(ToFileRecord)
             .ToList();
+        var gitInventory = await _gitFiles.TryDescribeAsync(_root, cancellationToken);
+        var files = new List<IndexedFileRecord>(sourcePaths.Count);
+        foreach (var sourcePath in sourcePaths)
+            files.Add(await ToFileRecordAsync(sourcePath, gitInventory, cancellationToken));
 
         await indexer.ProjectFromCompilationsAsync(_root, store, compilations, files, cancellationToken);
         return affected.Count;
@@ -187,18 +191,22 @@ public sealed class ResidentWorkspaceService : IResidentWorkspaceProvider, IDisp
             .Any(excludedDirectories.Contains);
     }
 
-    // Builds a minimal file record for a resident source file: the store needs the normalized (root-relative,
-    // forward-slash) path to link rows and to read the file's content for chunk extraction.
-    private IndexedFileRecord ToFileRecord(string absolutePath)
+    // Builds a minimal file record for a resident source file. Its identity must follow WorkspaceFileScanner:
+    // clean tracked files use Git blob ids, while dirty and untracked files use streaming SHA-256. Otherwise a
+    // resident projection makes every clean file look dirty to the next N6 reconcile.
+    private async Task<IndexedFileRecord> ToFileRecordAsync(
+        string absolutePath,
+        GitWorkspaceInventory? gitInventory,
+        CancellationToken cancellationToken)
     {
         var normalized = System.IO.Path.GetRelativePath(_root, absolutePath).Replace('\\', '/');
         var info = new FileInfo(absolutePath);
-        // The watcher projection shares the store with N6 reconciliation. Persist the same byte hash the scanner
-        // uses so reconciliation does not mistake every projected source file for a later external edit and clear
-        // the semantic graph through its syntax-only fallback.
-        var contentHash = info.Exists
-            ? _hashes.ComputeHash(File.ReadAllBytes(absolutePath))
-            : string.Empty;
+        var cleanBlobId = gitInventory?.GetCleanBlobId(normalized);
+        var contentHash = !info.Exists
+            ? string.Empty
+            : cleanBlobId is null
+                ? await _hashes.ComputeSha256FileAsync(absolutePath, cancellationToken)
+                : $"git:{cleanBlobId}";
         return new IndexedFileRecord(
             Path: absolutePath,
             NormalizedPath: normalized,

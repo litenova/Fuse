@@ -124,7 +124,7 @@ internal sealed class IndexSchemaMigrator
             var result = await command.ExecuteScalarAsync(cancellationToken);
             return result is long version ? (int)version : 0;
         }
-        catch (SqliteException)
+        catch (SqliteException ex) when (IsMissingTable(ex))
         {
             return 0;
         }
@@ -231,6 +231,12 @@ internal sealed class IndexSchemaMigrator
         command.CommandText = "CREATE TABLE IF NOT EXISTS schema_version(version INTEGER NOT NULL);";
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
+
+    // A missing schema table denotes an empty or pre-schema database. Other SQLite errors, especially
+    // SQLITE_NOTADB, must reach WorkspaceIndexStore so corrupt derived data is deleted and recreated.
+    private static bool IsMissingTable(SqliteException exception) =>
+        exception.SqliteErrorCode == 1
+        && exception.Message.Contains("no such table", StringComparison.OrdinalIgnoreCase);
 
     private static async Task EnsureVersionTableForReadAsync(SqliteConnection connection, CancellationToken cancellationToken)
     {

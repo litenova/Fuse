@@ -3,12 +3,12 @@ using Xunit;
 
 namespace Fuse.Cli.Tests.Host;
 
-// G5: the daemon launch arguments. The spawned daemon must run `host --directory <root>` with the resident
-// workspace on and an idle window set, whether the current process is the published apphost or `dotnet fuse.dll`.
+// The daemon launch arguments. The spawned daemon runs `host --directory <root>` syntax-first with an idle
+// window, whether the current process is the published apphost or `dotnet fuse.dll`.
 public sealed class DaemonProcessLauncherTests
 {
     [Fact]
-    public void Apphost_launch_runs_host_for_the_root_with_resident_and_idle_set()
+    public void Apphost_launch_runs_syntax_first_host_for_the_root_with_idle_set()
     {
         var psi = DaemonProcessLauncher.BuildStartInfo(
             processPath: "/tools/fuse", fuseDllPath: "/tools/fuse.dll", root: "/repo", idleMinutes: 30);
@@ -16,7 +16,9 @@ public sealed class DaemonProcessLauncherTests
         Assert.Equal("/tools/fuse", psi.FileName);
         Assert.Equal(["host", "--directory", "/repo"], psi.ArgumentList); // no dll arg for the apphost
         Assert.Equal("/repo", psi.WorkingDirectory);
-        Assert.Equal("1", psi.Environment["FUSE_RESIDENT"]);
+        Assert.Equal("0", psi.Environment["FUSE_RESIDENT"]);
+        Assert.Equal("0", psi.Environment["FUSE_EAGER_INDEX"]);
+        Assert.Equal("0", psi.Environment["FUSE_BG_UPGRADE"]);
         Assert.Equal("30", psi.Environment["FUSE_DAEMON_IDLE_MINUTES"]);
     }
 

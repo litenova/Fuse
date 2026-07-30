@@ -18,6 +18,10 @@ All notable changes to Fuse are documented here. The format is based on Keep a C
 - Completed and cancelled index jobs now truncate the SQLite WAL. Full rebuilds set incremental auto-vacuum mode and compact FTS5 once; ordinary refreshes use one bounded merge and at most 1,024 reclaimed pages. An incompatible index removes only its known derived files, including obsolete reduction-cache sidecars and `r60-semantics.json`.
 - Reduction output and per-file analysis now share a repository-scoped, daemon-owned memory cache capped at 64 MiB. The cache uses least-recently-used eviction and ends with the process; Fuse no longer creates `fuse-cache.db`.
 
+### Fixed
+
+- Read-only index opens no longer rerun database pragmas or create schema tables. A contended find request now returns its availability header within the short read timeout. Resident compiler projection uses the same Git blob and SHA-256 identities as the scanner, so its follow-up reconcile does not rewrite unchanged files. Corrupt non-database files reach the derived-data recovery path instead of being described as a generic schema mismatch.
+
 ### Removed
 
 - `fuse localize` and `fuse resolve` are removed. Use `fuse find <query> --kind task` for task localization and `fuse find <query> --kind service|request|route|config|symbol` for exact lookup and wiring resolution.

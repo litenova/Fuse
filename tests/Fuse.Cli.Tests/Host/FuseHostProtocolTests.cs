@@ -7,8 +7,8 @@ namespace Fuse.Cli.Tests.Host;
 public sealed class FuseHostProtocolTests
 {
     [Fact]
-    public void Protocol_version_is_bumped_for_compiler_owner_rpcs()
+    public void Protocol_version_is_bumped_for_index_job_rpcs()
     {
-        Assert.Equal(10, FuseHostService.ProtocolVersion);
+        Assert.Equal(11, FuseHostService.ProtocolVersion);
     }
 }

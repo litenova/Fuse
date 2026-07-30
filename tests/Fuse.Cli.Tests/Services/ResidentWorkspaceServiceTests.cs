@@ -66,7 +66,7 @@ public sealed class ResidentWorkspaceServiceTests
         }
         finally
         {
-            try { Directory.Delete(work, recursive: true); } catch (IOException) { }
+            DeleteTempDirectory(work);
         }
     }
 
@@ -88,6 +88,8 @@ public sealed class ResidentWorkspaceServiceTests
                 """);
             await File.WriteAllTextAsync(Path.Combine(work, "Widget.cs"),
                 "namespace Sample; public sealed class Widget { public int Spin() => 42; }");
+            await RunGitAsync(work, "init", "-q");
+            await RunGitAsync(work, "add", "Widget.csproj", "Widget.cs");
 
             if (!await TryBuildWithBinlogAsync(work, binlog))
                 return;
@@ -104,6 +106,7 @@ public sealed class ResidentWorkspaceServiceTests
             var indexer = provider.GetRequiredService<SemanticIndexer>();
             await using var store = new WorkspaceIndexStore(databasePath);
             await store.InitializeAsync(CancellationToken.None);
+            await indexer.IndexSyntaxFirstAsync(root, store, CancellationToken.None);
 
             var projected = await service.ProjectChangedAsync(indexer, store, [helper], CancellationToken.None);
             Assert.True(projected >= 1);
@@ -112,11 +115,14 @@ public sealed class ResidentWorkspaceServiceTests
             Assert.Contains("Helper", names);
             Assert.Contains("Widget", names);
 
+            var freshness = await indexer.ReconcileDirtyFilesAsync(root, store, CancellationToken.None);
+            Assert.Equal(0, freshness.Reconciled);
+
             Microsoft.Data.Sqlite.SqliteConnection.ClearPool(new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={databasePath}"));
         }
         finally
         {
-            try { Directory.Delete(work, recursive: true); } catch (IOException) { }
+            DeleteTempDirectory(work);
         }
     }
 
@@ -146,5 +152,36 @@ public sealed class ResidentWorkspaceServiceTests
         {
             return false;
         }
+    }
+
+    private static async Task RunGitAsync(string workingDirectory, params string[] arguments)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "git",
+            WorkingDirectory = workingDirectory,
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        foreach (var argument in arguments)
+            startInfo.ArgumentList.Add(argument);
+
+        using var process = Process.Start(startInfo);
+        Assert.NotNull(process);
+        await process!.WaitForExitAsync();
+        Assert.True(process.ExitCode == 0, await process.StandardError.ReadToEndAsync());
+    }
+
+    private static void DeleteTempDirectory(string path)
+    {
+        if (!Directory.Exists(path))
+            return;
+
+        // Git object files are read-only on Windows. Clear that attribute before deleting this exact fixture root.
+        foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+            File.SetAttributes(file, FileAttributes.Normal);
+        Directory.Delete(path, recursive: true);
     }
 }

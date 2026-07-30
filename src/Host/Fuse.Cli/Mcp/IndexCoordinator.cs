@@ -28,10 +28,10 @@ public sealed class IndexCoordinator
 
     /// <summary>
     ///     The busy timeout for a read tool's store access and its per-read reconcile (R18/R20): short so a
-    ///     contended store surfaces the <c>index_busy</c> availability header within a couple of seconds rather than
+    ///     contended store surfaces the <c>index_busy</c> availability header within one second rather than
     ///     hanging on the full write-path timeout. A build started by a foreground read uses the same bound.
     /// </summary>
-    internal const int ReadBusyTimeoutMilliseconds = 1000;
+    internal const int ReadBusyTimeoutMilliseconds = 250;
 
     /// <summary>
     ///     Opens the store for a read tool: warm read-only open when possible, otherwise a single write

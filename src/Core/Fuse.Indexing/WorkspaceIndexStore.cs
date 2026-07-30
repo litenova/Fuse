@@ -307,8 +307,10 @@ public sealed class WorkspaceIndexStore : IWorkspaceIndexStore
         try
         {
             await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
-            await _schema.PrepareDatabaseAsync(connection, cancellationToken);
-
+            // A warm read must not run write-capable database pragmas or CREATE TABLE IF NOT EXISTS. Under an
+            // external writer those operations wait for an exclusive lock and turn a status or find request into
+            // a multi-second stall. Missing tables below return a mismatch, which routes initialization through
+            // the single writer path.
             var version = await IndexSchemaMigrator.ReadVersionAsync(connection, cancellationToken);
             if (version != WorkspaceIndexSchema.TargetVersion)
                 return WorkspaceIndexReadOpenStatus.SchemaMismatch;

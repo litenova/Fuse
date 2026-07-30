@@ -4,10 +4,9 @@ namespace Fuse.Cli.Rpc;
 
 /// <summary>
 ///     Launches a detached <c>fuse host</c> daemon for a repository root (G5), so <c>mcp serve</c> can spawn the
-///     shared daemon on demand and delegate its resident workspace to it. The daemon is started with the resident
-///     workspace enabled and an idle-shutdown window, so it holds the warm compilation for every client and stops
-///     itself when no client has used it for a while. The single-instance lock in the daemon makes a redundant
-///     spawn harmless (the second daemon exits).
+///     shared daemon on demand. The daemon starts syntax-first with no resident compiler state or background
+///     semantic work, then stops itself after its idle-shutdown window. The single-instance lock in the daemon
+///     makes a redundant spawn harmless (the second daemon exits).
 /// </summary>
 public static class DaemonProcessLauncher
 {
