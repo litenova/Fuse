@@ -11,7 +11,7 @@ All notable changes to Fuse are documented here. The format is based on Keep a C
 
 ### Changed
 
-- Indexing starts at the syntax tier. `fuse index --semantic` explicitly continues into compiler analysis after syntax rows are available. Matching callers join one daemon-owned job instead of colliding with the SQLite writer.
+- Indexing starts at the syntax tier. `fuse index --semantic` explicitly continues into selected-workspace compiler analysis after syntax rows are available, without starting a build-capture worker. Matching callers join one daemon-owned job instead of colliding with the SQLite writer.
 - Host protocol 11 replaces `fuse/index` with `fuse/indexStart`, `fuse/indexStatus`, and `fuse/indexCancel`. `fuse/openIndexed` includes the current job snapshot while syntax data is being built.
 - `fuse_workspace action=index` now starts or joins the daemon job, `action=status` reports job details without creating an index, and `action=cancel` requests shared-job cancellation. A source edit starts a refresh job before a read returns indexed facts.
 - Syntax refreshes now build their inventory from `git ls-files -s -z` and porcelain-v2 status. Clean tracked files reuse the Git blob id, while dirty and untracked files stream a SHA-256 hash. Unchanged files no longer have their derived rows or FTS documents rewritten.

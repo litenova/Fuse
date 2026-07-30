@@ -389,9 +389,10 @@ public sealed class SemanticIndexer
     internal const int UpgradeCommitFileBatchSize = 32;
 
     /// <summary>
-    ///     Upgrades a syntax-first index to the full semantic graph by running the complete indexing pass, then
+    ///     Upgrades a syntax-first index to the full semantic graph through the selected MSBuild workspace, then
     ///     clearing <see cref="SemanticPendingMetaKey" />. This is requested by an explicit semantic index job.
-    ///     Commits per project and per
+    ///     It does not start the build-capture worker: the worker is reserved for build-captured verification and
+    ///     portable capture commands. Commits per project and per
     ///     <see cref="UpgradeCommitFileBatchSize" /> files so warm reads can interleave under WAL.
     /// </summary>
     /// <param name="rootDirectory">The workspace root.</param>
@@ -409,22 +410,14 @@ public sealed class SemanticIndexer
         var discovery = await _discoverer.DiscoverAsync(root, cancellationToken);
         var scan = await ScanFilesAsync(root, cancellationToken);
         var files = scan.Files;
-        var capture = await TryBuildCaptureAsync(discovery, root, cancellationToken);
-        SemanticIndexResult result;
-        LoadDiagnosis diagnosis;
-        if (capture is not null)
-        {
-            result = await IndexFromCaptureAsync(root, store, files, capture, cancellationToken);
-            diagnosis = BuildDiagnosisFromCapture(discovery, capture);
-        }
-        else
-        {
-            var snapshot = await _loader.LoadAsync(discovery, cancellationToken);
-            result = snapshot.SemanticLoadSucceeded
-                ? await IndexSemanticChunkedAsync(root, store, files, snapshot, cancellationToken, progress)
-                : await IndexSyntaxChunkedAsync(root, store, files, snapshot, cancellationToken, progress: null);
-            diagnosis = BuildDiagnosisFromSnapshot(discovery, snapshot);
-        }
+        // An explicit semantic job loads the selected workspace once and then extracts projects in sequence.
+        // Starting a build-capture worker here would rebuild a whole solution as a side effect of indexing, which
+        // defeats syntax-first indexing and prevents project-level cancellation and progress reporting.
+        var snapshot = await _loader.LoadAsync(discovery, cancellationToken);
+        var result = snapshot.SemanticLoadSucceeded
+            ? await IndexSemanticChunkedAsync(root, store, files, snapshot, cancellationToken, progress)
+            : await IndexSyntaxChunkedAsync(root, store, files, snapshot, cancellationToken, progress: null);
+        var diagnosis = BuildDiagnosisFromSnapshot(discovery, snapshot);
 
         await store.SetMetaAsync("index_mode", result.Mode, cancellationToken);
         await store.SetMetaAsync(SemanticPendingMetaKey, "0", cancellationToken);

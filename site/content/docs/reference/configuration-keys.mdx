@@ -68,7 +68,7 @@ Environment variables configure runtime behavior, not `fuse.json` parsing:
 | `FUSE_EAGER_INDEX` | `1` | Set to `0` to skip the optional eager syntax job at daemon or MCP startup. The first eligible read still starts or joins the syntax job. |
 | `FUSE_COLD_READ_DEADLINE_MS` | `2500` | The maximum cold-read wait for syntax rows before Fuse returns a bounded job header. |
 | `FUSE_MAX_FILE_BYTES` | `5242880` | Files larger than this retain inventory metadata with `index_detail=inventory_only`. A non-positive value disables the cap. |
-| `FUSE_BUILD_CAPTURE` | `1` | Enables build capture only for an explicit semantic request or a compiler-backed tool. The default syntax job never invokes the compiler. |
+| `FUSE_BUILD_CAPTURE` | `1` | Enables build capture for compiler-backed verification and portable capture commands. Syntax and explicit semantic index jobs never start a build-capture worker. |
 | `FUSE_RESIDENT` | `0` | Set to `1` to hold resident compiler state for low-latency overlay checks. |
 | `FUSE_WARM_SOLUTION_CAP` | `3` | Maximum held MSBuild solution states per host root. |
 | `FUSE_WARM_SOLUTION_IDLE_MINUTES` | `30` | Idle eviction window for held MSBuild solutions. |

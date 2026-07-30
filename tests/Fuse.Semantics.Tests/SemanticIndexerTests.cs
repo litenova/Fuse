@@ -4,6 +4,7 @@ using Fuse.Collection.Filters;
 using Fuse.Indexing;
 using Fuse.Semantics;
 using Microsoft.Data.Sqlite;
+using System.Diagnostics;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -102,6 +103,20 @@ public sealed class SemanticIndexerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task UpgradeToSemanticAsync_DoesNotStartBuildCaptureWorker()
+    {
+        var workerPath = Path.Combine(Path.GetDirectoryName(_databasePath)!, "fake-build-capture.dll");
+        await File.WriteAllTextAsync(workerPath, "placeholder");
+        var runner = new RecordingProcessRunner();
+        var indexer = CreateIndexer(new BuildCaptureClient(workerPath, runner));
+
+        await indexer.IndexSyntaxFirstAsync(_projectRoot, _store, CancellationToken.None);
+        await indexer.UpgradeToSemanticAsync(_projectRoot, _store, CancellationToken.None);
+
+        Assert.Equal(0, runner.InvocationCount);
+    }
+
+    [Fact]
     public async Task IndexSyntaxFirstAsync_IsDeterministic_AcrossParallelRuns()
     {
         // Parallel per-file extraction must produce a positionally identical symbol stream across runs.
@@ -134,7 +149,7 @@ public sealed class SemanticIndexerTests : IAsyncLifetime
         return ids;
     }
 
-    private SemanticIndexer CreateIndexer()
+    private SemanticIndexer CreateIndexer(BuildCaptureClient? buildCaptureClient = null)
     {
         var fileSystem = new PhysicalFileSystem();
         var pipeline = new FileCollectionPipeline(
@@ -149,7 +164,8 @@ public sealed class SemanticIndexerTests : IAsyncLifetime
             new SyntaxSymbolExtractor(),
             new SyntaxRouteExtractor(),
             new FileHashService(),
-            Fuse.Semantics.Analyzers.SemanticAnalysisRunner.CreateDefault());
+            Fuse.Semantics.Analyzers.SemanticAnalysisRunner.CreateDefault(),
+            buildCaptureClient: buildCaptureClient);
     }
 
     private async Task<long> CountAsync(string sql)
@@ -189,6 +205,26 @@ public sealed class SemanticIndexerTests : IAsyncLifetime
         {
             lock (_updates)
                 _updates.Add(value);
+        }
+    }
+
+    private sealed class RecordingProcessRunner : IProcessRunner
+    {
+        public int InvocationCount { get; private set; }
+
+        public Task<ProcessExecutionResult> RunAsync(
+            ProcessStartInfo startInfo,
+            TimeSpan timeout,
+            CancellationToken cancellationToken)
+        {
+            InvocationCount++;
+            return Task.FromResult(new ProcessExecutionResult(
+                Started: false,
+                ExitCode: null,
+                TimedOut: false,
+                StandardOutput: string.Empty,
+                StandardError: string.Empty,
+                StartError: "the build-capture worker must not run during semantic indexing"));
         }
     }
 
