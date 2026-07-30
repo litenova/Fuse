@@ -1,6 +1,5 @@
 using Fuse.Indexing;
 using Fuse.Semantics.Analyzers;
-using System.Text;
 
 namespace Fuse.Semantics;
 
@@ -17,19 +16,16 @@ namespace Fuse.Semantics;
 /// </remarks>
 public sealed class SemanticIndexer
 {
-    private const int SyntaxExtractionParallelism = 4;
-    private const string PendingSyntaxBatchMetaKey = "pending_syntax_batch";
     private readonly DotNetWorkspaceDiscoverer _discoverer;
     private readonly RoslynWorkspaceLoader _loader;
     private readonly SemanticSymbolExtractor _semanticSymbols;
-    private readonly SyntaxSymbolExtractor _syntaxSymbols;
-    private readonly SyntaxRouteExtractor _routeExtractor;
     private readonly FileHashService _hashService;
     private readonly SemanticAnalysisRunner _analysisRunner;
     private readonly LanguageSyntaxProviderRegistry _syntaxProviders;
     private readonly BuildCaptureClient _buildCaptureClient;
     private readonly IndexFinalizer _finalizer = new();
     private readonly WorkspaceInventoryPlanner _inventory;
+    private readonly SyntaxIndexStage _syntaxStage;
     // R42: the host-owned warm-solution cache lets a second doctor in a session skip the full MSBuild load.
     private readonly WarmSolutionCache _warmSolutions;
 
@@ -103,8 +99,6 @@ public sealed class SemanticIndexer
         _discoverer = discoverer;
         _loader = loader;
         _semanticSymbols = semanticSymbols;
-        _syntaxSymbols = syntaxSymbols;
-        _routeExtractor = routeExtractor;
         _hashService = hashService;
         _analysisRunner = analysisRunner;
         _warmSolutions = warmSolutions ?? new WarmSolutionCache();
@@ -114,6 +108,7 @@ public sealed class SemanticIndexer
         // change can make the provider set injectable for an external language plugin.
         _syntaxProviders = new LanguageSyntaxProviderRegistry([new CSharpSyntaxProvider(syntaxSymbols), new PythonSyntaxProvider(), new JavaScriptSyntaxProvider()]);
         _inventory = new WorkspaceInventoryPlanner(scanner, _syntaxProviders);
+        _syntaxStage = new SyntaxIndexStage(_syntaxProviders, syntaxSymbols, routeExtractor);
     }
 
     /// <summary>
@@ -151,7 +146,7 @@ public sealed class SemanticIndexer
             var snapshot = await _loader.LoadAsync(discovery, cancellationToken);
             result = snapshot.SemanticLoadSucceeded
                 ? await IndexSemanticAsync(root, store, files, snapshot, cancellationToken)
-                : await IndexSyntaxAsync(root, store, files, snapshot, cancellationToken);
+                : await _syntaxStage.IndexAllAsync(root, store, files, snapshot, cancellationToken);
             diagnosis = BuildDiagnosisFromSnapshot(discovery, snapshot);
         }
 
@@ -310,7 +305,7 @@ public sealed class SemanticIndexer
             ProjectReports: []);
 
         await store.ReplaceTfmAvailabilityAsync([], cancellationToken);
-        var result = await IndexSyntaxIncrementallyAsync(root, store, files, snapshot, cancellationToken, progress);
+        var result = await _syntaxStage.IndexIncrementallyAsync(root, store, files, snapshot, cancellationToken, progress);
         await store.SetMetaAsync("index_mode", result.Mode, cancellationToken);
         // Syntax is now the completed default index depth. Compiler work starts only after an explicit semantic
         // request, so this store is not waiting for an automatic background upgrade.
@@ -377,7 +372,7 @@ public sealed class SemanticIndexer
         var snapshot = await _loader.LoadAsync(discovery, cancellationToken);
         var result = snapshot.SemanticLoadSucceeded
             ? await IndexSemanticChunkedAsync(root, store, files, snapshot, cancellationToken, progress)
-            : await IndexSyntaxChunkedAsync(root, store, files, snapshot, cancellationToken, progress: null);
+            : await _syntaxStage.IndexChunkedAsync(root, store, files, snapshot, cancellationToken, progress: null);
         var diagnosis = BuildDiagnosisFromSnapshot(discovery, snapshot);
 
         await store.SetMetaAsync("index_mode", result.Mode, cancellationToken);
@@ -454,31 +449,7 @@ public sealed class SemanticIndexer
             return 0;
         }
 
-        return await ReindexFileRecordAsync(root, file, store, cancellationToken);
-    }
-
-    private async Task<int> ReindexFileRecordAsync(
-        string root,
-        IndexedFileRecord file,
-        IWorkspaceIndexStore store,
-        CancellationToken cancellationToken)
-    {
-        await store.DeleteFileDataAsync(file.NormalizedPath, cancellationToken);
-        var provider = _syntaxProviders.ForExtension(file.Extension);
-        await store.UpsertFilesAsync(
-            [file with { Language = provider?.Language }],
-            cancellationToken);
-
-        if (provider is null || file.DetailLevel == IndexDetailLevel.InventoryOnly)
-            return 0;
-
-        var content = await File.ReadAllTextAsync(Path.Combine(root, file.Path), cancellationToken);
-        var extracted = provider.Extract(file.NormalizedPath, content);
-        await store.UpsertSymbolsAsync(extracted.Symbols, cancellationToken);
-        await store.UpsertChunksAsync(RetainChunksForDetail(file, extracted.Chunks).ToList(), cancellationToken);
-        if (string.Equals(file.Extension, ".cs", StringComparison.OrdinalIgnoreCase))
-            await store.UpsertRoutesAsync(_routeExtractor.Extract(file.NormalizedPath, content), cancellationToken);
-        return extracted.Symbols.Count;
+        return await _syntaxStage.ReindexFileAsync(root, file, store, cancellationToken);
     }
 
     /// <summary>The metadata key recording the dirty-file count when a freshness reconcile degraded to a stamp.</summary>
@@ -547,7 +518,7 @@ public sealed class SemanticIndexer
         var reconciled = 0;
         foreach (var file in changed)
         {
-            await ReindexFileRecordAsync(root, file, store, cancellationToken);
+            await _syntaxStage.ReindexFileAsync(root, file, store, cancellationToken);
             reconciled++;
         }
 
@@ -595,7 +566,7 @@ public sealed class SemanticIndexer
 
         await store.UpsertSymbolsAsync(symbols, cancellationToken);
 
-        var (chunks, syntaxRoutes) = await ExtractChunksAndRoutesAsync(root, files, dropChunkSymbolIds: true, cancellationToken);
+        var (chunks, syntaxRoutes) = await _syntaxStage.ExtractChunksAndRoutesAsync(root, files, dropChunkSymbolIds: true, cancellationToken);
         await store.UpsertChunksAsync(chunks, cancellationToken);
         // Syntax routes first (covers minimal APIs), then the semantic MVC routes overwrite by route id with
         // their resolved handler symbol ids.
@@ -665,7 +636,7 @@ public sealed class SemanticIndexer
             await store.UpsertSymbolsAsync(projectSymbols, cancellationToken);
         }
 
-        var (chunks, syntaxRoutes) = await ExtractChunksAndRoutesChunkedAsync(
+        var (chunks, syntaxRoutes) = await _syntaxStage.ExtractChunksAndRoutesChunkedAsync(
             store, root, files, dropChunkSymbolIds: true, cancellationToken);
         await store.UpsertRoutesAsync(syntaxRoutes, cancellationToken);
 
@@ -711,119 +682,6 @@ public sealed class SemanticIndexer
             : "semantic";
         var routeCount = syntaxRoutes.Count + semanticRoutes.Count;
         return new SemanticIndexResult(mode, linkedFiles.Count, projects.Count, symbols.Count, chunks.Count, routeCount, diagnostics);
-    }
-
-    private async Task<SemanticIndexResult> IndexSyntaxChunkedAsync(
-        string root,
-        IWorkspaceIndexStore store,
-        IReadOnlyList<IndexedFileRecord> files,
-        RoslynWorkspaceSnapshot snapshot,
-        CancellationToken cancellationToken,
-        IProgress<SemanticIndexProgress>? progress)
-    {
-        // Syntax extraction has no compiler-target view, so prior capture-derived availability would be stale.
-        await store.ReplaceTfmAvailabilityAsync([], cancellationToken);
-        var taggedFiles = files
-            .Select(f => f with { Language = _syntaxProviders.ForExtension(f.Extension)?.Language })
-            .ToList();
-
-        for (var i = 0; i < taggedFiles.Count; i += UpgradeCommitFileBatchSize)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var batch = taggedFiles.Skip(i).Take(UpgradeCommitFileBatchSize).ToList();
-            await store.UpsertFilesAsync(batch, cancellationToken);
-        }
-
-        var perFile = new (List<SymbolRecord> Symbols, List<ChunkRecord> Chunks, List<RouteRecord> Routes)?[files.Count];
-        var parallelOptions = new ParallelOptions
-        {
-            CancellationToken = cancellationToken,
-            MaxDegreeOfParallelism = SyntaxExtractionParallelism
-        };
-        var completedFiles = 0;
-        progress?.Report(new SemanticIndexProgress(
-            SemanticIndexStage.SyntaxExtraction,
-            0,
-            files.Count,
-            "extracting source declarations"));
-        await Parallel.ForEachAsync(Enumerable.Range(0, files.Count), parallelOptions, async (i, ct) =>
-        {
-            var file = files[i];
-            if (file.DetailLevel == IndexDetailLevel.InventoryOnly)
-                return;
-            var provider = _syntaxProviders.ForExtension(file.Extension);
-            if (provider is null)
-                return;
-
-            var content = await File.ReadAllTextAsync(Path.Combine(root, file.Path), ct);
-            var extracted = provider.Extract(file.NormalizedPath, content);
-            var fileRoutes = file.Extension == ".cs"
-                ? _routeExtractor.Extract(file.NormalizedPath, content).ToList()
-                : [];
-            perFile[i] = (
-                extracted.Symbols.ToList(),
-                RetainChunksForDetail(file, extracted.Chunks).ToList(),
-                fileRoutes);
-            var completed = Interlocked.Increment(ref completedFiles);
-            progress?.Report(new SemanticIndexProgress(
-                SemanticIndexStage.SyntaxExtraction,
-                completed,
-                files.Count,
-                file.NormalizedPath));
-        });
-
-        var symbols = new List<SymbolRecord>();
-        var chunks = new List<ChunkRecord>();
-        var routes = new List<RouteRecord>();
-        foreach (var entry in perFile)
-        {
-            if (entry is not { } e)
-                continue;
-            symbols.AddRange(e.Symbols);
-            chunks.AddRange(e.Chunks);
-            routes.AddRange(e.Routes);
-        }
-
-        await store.UpsertSymbolsAsync(symbols, cancellationToken);
-        for (var i = 0; i < chunks.Count; i += UpgradeCommitFileBatchSize)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var batch = chunks.Skip(i).Take(UpgradeCommitFileBatchSize).ToList();
-            if (batch.Count > 0)
-                await store.UpsertChunksAsync(batch, cancellationToken);
-        }
-
-        await store.UpsertRoutesAsync(routes, cancellationToken);
-        progress?.Report(new SemanticIndexProgress(
-            SemanticIndexStage.SyntaxPersistence,
-            files.Count,
-            files.Count,
-            "syntax facts persisted"));
-
-        return new SemanticIndexResult("syntax", files.Count, 0, symbols.Count, chunks.Count, routes.Count, snapshot.Diagnostics);
-    }
-
-    private async Task<(List<ChunkRecord> Chunks, List<RouteRecord> Routes)> ExtractChunksAndRoutesChunkedAsync(
-        IWorkspaceIndexStore store,
-        string root,
-        IReadOnlyList<IndexedFileRecord> files,
-        bool dropChunkSymbolIds,
-        CancellationToken cancellationToken)
-    {
-        var allChunks = new List<ChunkRecord>();
-        var allRoutes = new List<RouteRecord>();
-        for (var i = 0; i < files.Count; i += UpgradeCommitFileBatchSize)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var batch = files.Skip(i).Take(UpgradeCommitFileBatchSize).ToList();
-            var (chunks, routes) = await ExtractChunksAndRoutesAsync(root, batch, dropChunkSymbolIds, cancellationToken);
-            allChunks.AddRange(chunks);
-            allRoutes.AddRange(routes);
-            if (chunks.Count > 0)
-                await store.UpsertChunksAsync(chunks, cancellationToken);
-        }
-
-        return (allChunks, allRoutes);
     }
 
     // Tier 1 write path: the graph came from the out-of-process build-capture worker (exact compilations), so
@@ -909,7 +767,7 @@ public sealed class SemanticIndexer
         var symbols = union.Symbols;
         await store.UpsertSymbolsAsync(symbols, cancellationToken);
 
-        var (chunks, syntaxRoutes) = await ExtractChunksAndRoutesAsync(root, files, dropChunkSymbolIds: true, cancellationToken);
+        var (chunks, syntaxRoutes) = await _syntaxStage.ExtractChunksAndRoutesAsync(root, files, dropChunkSymbolIds: true, cancellationToken);
         await store.UpsertChunksAsync(chunks, cancellationToken);
         await store.UpsertRoutesAsync(syntaxRoutes, cancellationToken);
 
@@ -1023,288 +881,6 @@ public sealed class SemanticIndexer
             CaptureResult.Ok(captured),
             cancellationToken,
             replaceTfmAvailability: false);
-    }
-
-    private async Task<SemanticIndexResult> IndexSyntaxIncrementallyAsync(
-        string root,
-        IWorkspaceIndexStore store,
-        IReadOnlyList<IndexedFileRecord> files,
-        RoslynWorkspaceSnapshot snapshot,
-        CancellationToken cancellationToken,
-        IProgress<SemanticIndexProgress>? progress)
-    {
-        var stored = await store.GetAllFileHashesAsync(cancellationToken);
-        var pendingPaths = await ReadPendingSyntaxPathsAsync(store, cancellationToken);
-        var currentPaths = files.Select(file => file.NormalizedPath).ToHashSet(StringComparer.Ordinal);
-        var changed = files
-            .Where(file => !stored.TryGetValue(file.NormalizedPath, out var storedHash)
-                || !string.Equals(storedHash, file.ContentHash, StringComparison.Ordinal)
-                || pendingPaths is null
-                || pendingPaths.Contains(file.NormalizedPath))
-            .OrderBy(file => file.NormalizedPath, StringComparer.Ordinal)
-            .ToArray();
-        var removed = stored.Keys
-            .Where(path => !currentPaths.Contains(path))
-            .OrderBy(path => path, StringComparer.Ordinal)
-            .ToArray();
-
-        var totalWork = changed.Length + removed.Length;
-        var completedWork = 0;
-        progress?.Report(new SemanticIndexProgress(
-            SemanticIndexStage.SyntaxExtraction,
-            0,
-            totalWork,
-            totalWork == 0 ? "source hashes are current" : "extracting changed source declarations"));
-        var ftsReplacements = 0;
-        foreach (var batch in BatchSyntaxFiles(changed))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            await store.SetMetaAsync(
-                PendingSyntaxBatchMetaKey,
-                EncodePendingSyntaxPaths(batch.Select(file => file.NormalizedPath)),
-                cancellationToken);
-            await store.ClearFileDataAsync(batch.Select(file => file.NormalizedPath).ToArray(), cancellationToken);
-            var batchResult = await IndexSyntaxAsync(
-                root,
-                store,
-                batch,
-                snapshot,
-                cancellationToken,
-                resetTfmAvailability: false);
-            ftsReplacements += batchResult.ChunkCount;
-            completedWork += batch.Count;
-            progress?.Report(new SemanticIndexProgress(
-                SemanticIndexStage.SyntaxExtraction,
-                completedWork,
-                totalWork,
-                batch[^1].NormalizedPath));
-        }
-
-        foreach (var path in removed)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            await store.DeleteFileAsync(path, cancellationToken);
-            completedWork++;
-            progress?.Report(new SemanticIndexProgress(
-                SemanticIndexStage.SyntaxExtraction,
-                completedWork,
-                totalWork,
-                path));
-        }
-
-        await store.SetMetaAsync(PendingSyntaxBatchMetaKey, string.Empty, cancellationToken);
-        await store.SetMetaAsync("last_index_file_upserts", changed.Length.ToString(System.Globalization.CultureInfo.InvariantCulture), cancellationToken);
-        await store.SetMetaAsync("last_index_fts_replacements", ftsReplacements.ToString(System.Globalization.CultureInfo.InvariantCulture), cancellationToken);
-        progress?.Report(new SemanticIndexProgress(
-            SemanticIndexStage.SyntaxPersistence,
-            totalWork == 0 ? 1 : totalWork,
-            totalWork == 0 ? 1 : totalWork,
-            totalWork == 0 ? "no source rows changed" : "syntax facts persisted"));
-
-        var state = await store.GetStateAsync(cancellationToken);
-        var routeCount = await store.GetRouteCountAsync(cancellationToken);
-        return new SemanticIndexResult(
-            "syntax",
-            state.FileCount,
-            0,
-            state.SymbolCount,
-            state.ChunkCount,
-            routeCount,
-            snapshot.Diagnostics);
-    }
-
-    private static async Task<IReadOnlySet<string>?> ReadPendingSyntaxPathsAsync(
-        IWorkspaceIndexStore store,
-        CancellationToken cancellationToken)
-    {
-        var encoded = await store.GetMetaAsync(PendingSyntaxBatchMetaKey, cancellationToken);
-        if (string.IsNullOrEmpty(encoded))
-            return new HashSet<string>(StringComparer.Ordinal);
-
-        try
-        {
-            var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(encoded));
-            return decoded.Split('\0', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.Ordinal);
-        }
-        catch (FormatException)
-        {
-            // An interrupted or manually damaged marker must bias toward a safe complete extraction, not a stale
-            // file row whose derived data was cleared just before cancellation.
-            return null;
-        }
-    }
-
-    private static string EncodePendingSyntaxPaths(IEnumerable<string> paths) =>
-        Convert.ToBase64String(Encoding.UTF8.GetBytes(string.Join('\0', paths)));
-
-    private static IEnumerable<IReadOnlyList<IndexedFileRecord>> BatchSyntaxFiles(
-        IReadOnlyList<IndexedFileRecord> files)
-    {
-        var batch = new List<IndexedFileRecord>(SyntaxCommitFileBatchSize);
-        long sourceBytes = 0;
-        foreach (var file in files)
-        {
-            var wouldExceedFileLimit = batch.Count >= SyntaxCommitFileBatchSize;
-            var wouldExceedByteLimit = batch.Count > 0
-                && sourceBytes + file.SizeBytes > SyntaxCommitSourceBatchBytes;
-            if (wouldExceedFileLimit || wouldExceedByteLimit)
-            {
-                yield return batch;
-                batch = new List<IndexedFileRecord>(SyntaxCommitFileBatchSize);
-                sourceBytes = 0;
-            }
-
-            batch.Add(file);
-            sourceBytes += file.SizeBytes;
-        }
-
-        if (batch.Count > 0)
-            yield return batch;
-    }
-
-    private async Task<SemanticIndexResult> IndexSyntaxAsync(
-        string root,
-        IWorkspaceIndexStore store,
-        IReadOnlyList<IndexedFileRecord> files,
-        RoslynWorkspaceSnapshot snapshot,
-        CancellationToken cancellationToken,
-        bool resetTfmAvailability = true)
-    {
-        // Syntax extraction has no compiler-target view, so prior capture-derived availability would be stale.
-        if (resetTfmAvailability)
-            await store.ReplaceTfmAvailabilityAsync([], cancellationToken);
-        // Tag each file with its language from the provider that claims its extension, so retrieval can
-        // filter or blend by language; a file no provider claims (a config file) stays untagged.
-        var taggedFiles = files
-            .Select(f => f with { Language = _syntaxProviders.ForExtension(f.Extension)?.Language })
-            .ToList();
-        await store.UpsertFilesAsync(taggedFiles, cancellationToken);
-
-        // Extract per file in parallel (file read plus stateless syntax parse, the bulk of the syntax-tier cost)
-        // and collect results positionally, so the flattened output is byte-identical to a sequential pass.
-        var perFile = new (List<SymbolRecord> Symbols, List<ChunkRecord> Chunks, List<RouteRecord> Routes)?[files.Count];
-        var parallelOptions = new ParallelOptions
-        {
-            CancellationToken = cancellationToken,
-            MaxDegreeOfParallelism = SyntaxExtractionParallelism
-        };
-        await Parallel.ForEachAsync(Enumerable.Range(0, files.Count), parallelOptions, async (i, ct) =>
-        {
-            var file = files[i];
-            if (file.DetailLevel == IndexDetailLevel.InventoryOnly)
-                return;
-            // Select the language provider by extension; a file no provider claims (a config file) is skipped.
-            var provider = _syntaxProviders.ForExtension(file.Extension);
-            if (provider is null)
-                return;
-
-            var content = await File.ReadAllTextAsync(Path.Combine(root, file.Path), ct);
-            var extracted = provider.Extract(file.NormalizedPath, content);
-            // Route extraction is a C# web concern; a future provider would register its own route detector.
-            var fileRoutes = file.Extension == ".cs"
-                ? _routeExtractor.Extract(file.NormalizedPath, content).ToList()
-                : [];
-            perFile[i] = (
-                extracted.Symbols.ToList(),
-                RetainChunksForDetail(file, extracted.Chunks).ToList(),
-                fileRoutes);
-        });
-
-        var symbols = new List<SymbolRecord>();
-        var (chunks, routes) = (new List<ChunkRecord>(), new List<RouteRecord>());
-        foreach (var entry in perFile)
-        {
-            if (entry is not { } e)
-                continue;
-            symbols.AddRange(e.Symbols);
-            chunks.AddRange(e.Chunks);
-            routes.AddRange(e.Routes);
-        }
-
-        await store.UpsertSymbolsAsync(symbols, cancellationToken);
-        await store.UpsertChunksAsync(chunks, cancellationToken);
-        await store.UpsertRoutesAsync(routes, cancellationToken);
-
-        return new SemanticIndexResult("syntax", files.Count, 0, symbols.Count, chunks.Count, routes.Count, snapshot.Diagnostics);
-    }
-
-    // Chunks and routes always come from syntax so full-text search works in both modes. In semantic mode the
-    // chunk symbol ids are dropped: they would be the syntax fallback ids, which do not match the semantic
-    // symbol table, so a dangling reference is avoided.
-    private async Task<(List<ChunkRecord> Chunks, List<RouteRecord> Routes)> ExtractChunksAndRoutesAsync(
-        string root,
-        IReadOnlyList<IndexedFileRecord> files,
-        bool dropChunkSymbolIds,
-        CancellationToken cancellationToken)
-    {
-        var chunks = new List<ChunkRecord>();
-        var routes = new List<RouteRecord>();
-        foreach (var file in files)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (file.Extension != ".cs" || file.DetailLevel == IndexDetailLevel.InventoryOnly)
-                continue;
-
-            var content = await File.ReadAllTextAsync(Path.Combine(root, file.Path), cancellationToken);
-            if (string.IsNullOrEmpty(content))
-                continue;
-
-            // R47: parse each file once and share the tree between the chunk (symbol) and route extractors, instead
-            // of each extractor re-parsing the content string. On the semantic path Roslyn already parsed every file
-            // for the compilation; the chunk/route pass added two more parses per file, so this removes one parse per
-            // file. Byte-identical output: both extractors previously parsed the same content with the same default
-            // parse options, which is exactly the shared tree here. A parse failure yields no chunks/routes for the
-            // file, matching the pre-R47 behavior where both extractors caught the parse error and returned empty.
-            Microsoft.CodeAnalysis.SyntaxNode syntaxRoot;
-            try
-            {
-                syntaxRoot = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(content).GetRoot();
-            }
-            catch
-            {
-                continue;
-            }
-
-            var extracted = _syntaxSymbols.Extract(file.NormalizedPath, syntaxRoot);
-            foreach (var chunk in RetainChunksForDetail(file, extracted.Chunks))
-                chunks.Add(dropChunkSymbolIds ? chunk with { SymbolId = null } : chunk);
-            routes.AddRange(_routeExtractor.Extract(file.NormalizedPath, syntaxRoot));
-        }
-
-        return (chunks, routes);
-    }
-
-    private static IEnumerable<ChunkRecord> RetainChunksForDetail(
-        IndexedFileRecord file,
-        IEnumerable<ChunkRecord> chunks)
-    {
-        foreach (var chunk in chunks)
-        {
-            yield return file.DetailLevel == IndexDetailLevel.Declarations
-                ? chunk with
-                {
-                    Body = null,
-                    Comments = null,
-                    Signature = DeclarationOnlySignature(chunk.Signature),
-                }
-                : chunk;
-        }
-    }
-
-    private static string? DeclarationOnlySignature(string? signature)
-    {
-        if (string.IsNullOrWhiteSpace(signature))
-            return signature;
-
-        var blockStart = signature.IndexOf('{');
-        var expressionBodyStart = signature.IndexOf("=>", StringComparison.Ordinal);
-        var end = blockStart switch
-        {
-            >= 0 when expressionBodyStart >= 0 => Math.Min(blockStart, expressionBodyStart),
-            >= 0 => blockStart,
-            _ => expressionBodyStart,
-        };
-        return end < 0 ? signature : signature[..end].TrimEnd();
     }
 
     // Runs the analyzer set over every loaded project and merges the per-project graphs.
