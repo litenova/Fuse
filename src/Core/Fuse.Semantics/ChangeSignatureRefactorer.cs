@@ -25,6 +25,7 @@ namespace Fuse.Semantics;
 public sealed class ChangeSignatureRefactorer
 {
     private readonly WarmSolutionCache _cache;
+    private readonly ChangeSignatureVerifier _verifier = new();
 
     /// <summary>
     ///     Initializes a new instance of the <see cref="ChangeSignatureRefactorer" /> class.
@@ -124,7 +125,7 @@ public sealed class ChangeSignatureRefactorer
         var family = await CollectMethodFamilyAsync(solution, method, cancellationToken);
 
         // Baseline compile-error signatures, so the verify gate can tell an INTRODUCED error from a pre-existing one.
-        var baseline = await CollectErrorSignaturesAsync(solution, cancellationToken);
+        var baseline = await _verifier.CollectErrorSignaturesAsync(solution, cancellationToken);
 
         // Best-effort rewrite: the parameter into every declaration, the constant argument into every call site.
         return await RewriteVerifyAndStageAsync(
@@ -172,7 +173,7 @@ public sealed class ChangeSignatureRefactorer
             return ChangeSignatureResult.Abstain($"'{method.Name}' has a params parameter; threading abstains (params interaction)");
 
         var family = await CollectMethodFamilyAsync(solution, method, cancellationToken);
-        var baseline = await CollectErrorSignaturesAsync(solution, cancellationToken);
+        var baseline = await _verifier.CollectErrorSignaturesAsync(solution, cancellationToken);
         return await RewriteVerifyAndStageAsync(
             solution, method, family, "CancellationToken", parameterName, baseline,
             ResolveTokenArgument, cancellationToken);
@@ -233,16 +234,16 @@ public sealed class ChangeSignatureRefactorer
         if (usedIn is not null)
             return ChangeSignatureResult.Abstain($"'{parameterName}' is used in the body of {usedIn}; remove-parameter abstains (it is not a dead parameter)");
 
-        var baseline = await CollectErrorSignaturesAsync(solution, cancellationToken);
+        var baseline = await _verifier.CollectErrorSignaturesAsync(solution, cancellationToken);
         var rewrite = await ApplyRemovalAsync(solution, family, parameterName, index, cancellationToken);
         if (rewrite.Solution is null)
             return ChangeSignatureResult.Abstain(rewrite.Reason!);
 
-        var introduced = await CollectIntroducedErrorsAsync(rewrite.Solution, baseline, cancellationToken);
+        var introduced = await _verifier.CollectIntroducedErrorsAsync(rewrite.Solution, baseline, cancellationToken);
         if (introduced.Count > 0)
             return ChangeSignatureResult.Abstain($"the change introduced {introduced.Count} new compile error(s), so it is refused: {string.Join("; ", introduced.Take(5))}");
 
-        var diffs = await BuildDiffsAsync(solution, rewrite.Solution, cancellationToken);
+        var diffs = await _verifier.BuildDiffsAsync(solution, rewrite.Solution, cancellationToken);
         if (diffs.Count == 0)
             return ChangeSignatureResult.Abstain("the rewrite produced no change (the method or its call sites were not found in source)");
 
@@ -420,16 +421,16 @@ public sealed class ChangeSignatureRefactorer
         if (positionalSite is not null)
             return ChangeSignatureResult.Abstain($"call site at {positionalSite} uses positional arguments; reorder abstains (only named-argument call sites are safe to reorder)");
 
-        var baseline = await CollectErrorSignaturesAsync(solution, cancellationToken);
+        var baseline = await _verifier.CollectErrorSignaturesAsync(solution, cancellationToken);
         var rewrite = await ApplyReorderAsync(solution, family, permutation, cancellationToken);
         if (rewrite.Solution is null)
             return ChangeSignatureResult.Abstain(rewrite.Reason!);
 
-        var introduced = await CollectIntroducedErrorsAsync(rewrite.Solution, baseline, cancellationToken);
+        var introduced = await _verifier.CollectIntroducedErrorsAsync(rewrite.Solution, baseline, cancellationToken);
         if (introduced.Count > 0)
             return ChangeSignatureResult.Abstain($"the change introduced {introduced.Count} new compile error(s), so it is refused: {string.Join("; ", introduced.Take(5))}");
 
-        var diffs = await BuildDiffsAsync(solution, rewrite.Solution, cancellationToken);
+        var diffs = await _verifier.BuildDiffsAsync(solution, rewrite.Solution, cancellationToken);
         if (diffs.Count == 0)
             return ChangeSignatureResult.Abstain("the rewrite produced no change");
 
@@ -526,7 +527,7 @@ public sealed class ChangeSignatureRefactorer
 
         // Verify: recompile and abstain on any newly introduced compile error, naming it. This is the gate that
         // turns an imperfect rewriter into a safe one.
-        var introduced = await CollectIntroducedErrorsAsync(changed, baseline, cancellationToken);
+        var introduced = await _verifier.CollectIntroducedErrorsAsync(changed, baseline, cancellationToken);
         if (introduced.Count > 0)
         {
             var sites = string.Join("; ", introduced.Take(5));
@@ -534,7 +535,7 @@ public sealed class ChangeSignatureRefactorer
                 $"the change introduced {introduced.Count} new compile error(s), so it is refused: {sites}");
         }
 
-        var diffs = await BuildDiffsAsync(solution, changed, cancellationToken);
+        var diffs = await _verifier.BuildDiffsAsync(solution, changed, cancellationToken);
         if (diffs.Count == 0)
             return ChangeSignatureResult.Abstain("the rewrite produced no change (the method or its call sites were not found in source)");
 
@@ -753,103 +754,6 @@ public sealed class ChangeSignatureRefactorer
             return false;
         list.Add((span, arg));
         return true;
-    }
-
-    // The Error-severity diagnostic signatures across the whole solution, so introduced errors can be diffed from
-    // pre-existing ones. The signature excludes the line (edits shift lines) but keeps id, file, and message.
-    private static async Task<HashSet<string>> CollectErrorSignaturesAsync(Solution solution, CancellationToken cancellationToken)
-    {
-        var set = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var project in solution.Projects)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var compilation = await project.GetCompilationAsync(cancellationToken);
-            if (compilation is null)
-                continue;
-            foreach (var diagnostic in compilation.GetDiagnostics(cancellationToken))
-                if (diagnostic.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error)
-                    set.Add(Signature(diagnostic));
-        }
-
-        return set;
-    }
-
-    private static async Task<IReadOnlyList<string>> CollectIntroducedErrorsAsync(
-        Solution solution, HashSet<string> baseline, CancellationToken cancellationToken)
-    {
-        var introduced = new List<string>();
-        foreach (var project in solution.Projects)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var compilation = await project.GetCompilationAsync(cancellationToken);
-            if (compilation is null)
-                continue;
-            foreach (var diagnostic in compilation.GetDiagnostics(cancellationToken))
-            {
-                if (diagnostic.Severity != Microsoft.CodeAnalysis.DiagnosticSeverity.Error)
-                    continue;
-                var signature = Signature(diagnostic);
-                if (!baseline.Contains(signature))
-                    introduced.Add(HumanSite(diagnostic));
-            }
-        }
-
-        return introduced;
-    }
-
-    private static string Signature(Diagnostic diagnostic)
-    {
-        var file = diagnostic.Location.SourceTree?.FilePath ?? "<none>";
-        return $"{diagnostic.Id}|{file}|{diagnostic.GetMessage(System.Globalization.CultureInfo.InvariantCulture)}";
-    }
-
-    private static string HumanSite(Diagnostic diagnostic)
-    {
-        var span = diagnostic.Location.GetLineSpan();
-        var file = System.IO.Path.GetFileName(span.Path);
-        return $"{diagnostic.Id} at {file}:{span.StartLinePosition.Line + 1} ({diagnostic.GetMessage(System.Globalization.CultureInfo.InvariantCulture)})";
-    }
-
-    private static async Task<IReadOnlyList<ChangeSignatureFileDiff>> BuildDiffsAsync(
-        Solution before, Solution after, CancellationToken cancellationToken)
-    {
-        var diffs = new List<ChangeSignatureFileDiff>();
-        foreach (var changedId in after.GetChanges(before).GetProjectChanges().SelectMany(p => p.GetChangedDocuments()))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var beforeText = await before.GetDocument(changedId)!.GetTextAsync(cancellationToken);
-            var afterText = await after.GetDocument(changedId)!.GetTextAsync(cancellationToken);
-            if (beforeText.ContentEquals(afterText))
-                continue;
-            var path = after.GetDocument(changedId)!.FilePath ?? after.GetDocument(changedId)!.Name;
-            diffs.Add(new ChangeSignatureFileDiff(path, BuildLineDiff(beforeText.ToString(), afterText.ToString())));
-        }
-
-        return diffs;
-    }
-
-    // A compact line-level diff. Add-parameter and add-argument modify existing lines in place (no line inserted
-    // or deleted in the common single-line-signature and single-line-call case), so a positional comparison is
-    // accurate here; a wrapped parameter list that spans several lines is a known limitation, recorded in docs.
-    private static string BuildLineDiff(string before, string after)
-    {
-        var beforeLines = before.Replace("\r\n", "\n").Split('\n');
-        var afterLines = after.Replace("\r\n", "\n").Split('\n');
-        var builder = new System.Text.StringBuilder();
-        var max = Math.Max(beforeLines.Length, afterLines.Length);
-        for (var i = 0; i < max; i++)
-        {
-            var b = i < beforeLines.Length ? beforeLines[i] : null;
-            var a = i < afterLines.Length ? afterLines[i] : null;
-            if (b == a)
-                continue;
-            if (b is not null)
-                builder.AppendLine($"-{i + 1}: {b}");
-            if (a is not null)
-                builder.AppendLine($"+{i + 1}: {a}");
-        }
-
-        return builder.ToString().TrimEnd();
     }
 
     private static IEnumerable<INamedTypeSymbol> EnumerateSourceTypes(INamespaceSymbol ns)
