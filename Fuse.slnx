@@ -38,23 +38,6 @@
       <Project Path="src/Plugins/Fuse.Plugins.Formats.Web/Fuse.Plugins.Formats.Web.csproj" />
     </Folder>
   </Folder>
-  <Folder Name="/src/Core/">
-    <Project Path="src/Core/Fuse.Collection/Fuse.Collection.csproj" />
-    <Project Path="src/Core/Fuse.Emission/Fuse.Emission.csproj" />
-    <Project Path="src/Core/Fuse.Fusion/Fuse.Fusion.csproj" />
-    <Project Path="src/Core/Fuse.Reduction/Fuse.Reduction.csproj" />
-    <Project Path="src/Core/Fuse.Indexing/Fuse.Indexing.csproj" />
-    <Project Path="src/Core/Fuse.Semantics/Fuse.Semantics.csproj" />
-    <Project Path="src/Core/Fuse.Workspace/Fuse.Workspace.csproj" />
-    <Project Path="src/Core/Fuse.Retrieval/Fuse.Retrieval.csproj" />
-    <Project Path="src/Core/Fuse.Scoping/Fuse.Scoping.csproj" />
-    <Project Path="src/Core/Fuse.Context/Fuse.Context.csproj" />
-  </Folder>
-  <Folder Name="/src/Plugins/">
-    <Project Path="src/Plugins/Fuse.Plugins.Abstractions/Fuse.Plugins.Abstractions.csproj" />
-    <Project Path="src/Plugins/Fuse.Plugins.Formats.Web/Fuse.Plugins.Formats.Web.csproj" />
-    <Project Path="src/Plugins/Fuse.Plugins.Languages.CSharp/Fuse.Plugins.Languages.CSharp.csproj" />
-  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Fuse.Cli.Tests/Fuse.Cli.Tests.csproj" />
     <Project Path="tests/Fuse.Collection.Tests/Fuse.Collection.Tests.csproj" />
@@ -71,9 +54,5 @@
     <Project Path="tests/Fuse.Context.Tests/Fuse.Context.Tests.csproj" />
     <Project Path="tests/Fuse.BuildCaptureWorker.Tests/Fuse.BuildCaptureWorker.Tests.csproj" />
     <Project Path="tests/Fuse.Workspace.Tests/Fuse.Workspace.Tests.csproj" />
-  </Folder>
-  <Folder Name="/tests/benchmarks/">
-    <Project Path="tests/benchmarks/Fuse.Benchmarks/Fuse.Benchmarks.csproj" />
-    <Project Path="tests/benchmarks/Fuse.Benchmarks.Tests/Fuse.Benchmarks.Tests.csproj" />
   </Folder>
 </Solution>

@@ -3,7 +3,7 @@
   "name": "io.github.Litenova-Solutions/fuse",
   "title": "Fuse",
   "description": "Local .NET compiler verification, change impact, and typed wiring for AI agents.",
-  "version": "4.3.0",
+  "version": "4.4.0",
   "repository": {
     "url": "https://github.com/Litenova-Solutions/Fuse",
     "source": "github",
@@ -32,7 +32,7 @@
       "registryType": "nuget",
       "registryBaseUrl": "https://api.nuget.org/v3/index.json",
       "identifier": "Fuse",
-      "version": "4.3.0",
+      "version": "4.4.0",
       "runtimeHint": "dnx",
       "transport": {
         "type": "stdio"

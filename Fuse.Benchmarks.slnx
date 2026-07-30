@@ -1,0 +1,11 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Folder Name="/tests/benchmarks/">
+    <Project Path="tests/benchmarks/Fuse.Benchmarks/Fuse.Benchmarks.csproj" />
+    <Project Path="tests/benchmarks/Fuse.Benchmarks.Tests/Fuse.Benchmarks.Tests.csproj" />
+  </Folder>
+</Solution>

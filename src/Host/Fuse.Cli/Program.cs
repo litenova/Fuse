@@ -21,7 +21,6 @@ Cli.Ext.ConfigureServices(services =>
     services.AddTransient<DiagnosticsCommand>();
     services.AddTransient<DoctorCommand>();
     services.AddTransient<FindCommand>();
-    services.AddTransient<EvalCommand>();
     services.AddTransient<InitCommand>();
     services.AddTransient<McpCommand>();
     services.AddTransient<InstallCommand>();
