@@ -71,10 +71,9 @@ public sealed class SemanticIndexer
     private static readonly string[] ConfigExtensions = [".csproj", ".props", ".targets", ".json"];
 
     /// <summary>
-    ///     The index-store meta key that flags a syntax-first index whose semantic upgrade has not yet landed.
-    ///     <c>"1"</c> means the cross-file semantic graph is still being computed in the background; <c>"0"</c>
-    ///     (or absent) means the recorded mode is final. A caller can read this to know whether to wait for or
-    ///     re-query the semantic tier.
+    ///     The index-store meta key that flags active compiler analysis after syntax data is available.
+    ///     <c>"1"</c> means cross-file semantic graph extraction is running; <c>"0"</c> (or absent) means the
+    ///     recorded mode is complete for the requested depth.
     /// </summary>
     public const string SemanticPendingMetaKey = "semantic_pending";
 
@@ -320,8 +319,7 @@ public sealed class SemanticIndexer
     /// <summary>
     ///     Indexes the workspace at the syntax tier only, skipping the MSBuild/Roslyn load, so a first call
     ///     serves context in a few seconds instead of waiting for the full semantic load. Sets the index mode to
-    ///     <c>syntax</c> and flags <see cref="SemanticPendingMetaKey" /> so a caller knows the semantic graph is
-    ///     not yet present; pair it with <see cref="UpgradeToSemanticAsync" /> in the background.
+    ///     <c>syntax</c>. Compiler analysis starts only from an explicit semantic request.
     /// </summary>
     /// <param name="rootDirectory">The workspace root.</param>
     /// <param name="store">The index store to write to.</param>
@@ -329,9 +327,8 @@ public sealed class SemanticIndexer
     /// <returns>A syntax-tier index summary.</returns>
     /// <remarks>
     ///     The cold index time is dominated by the MSBuild evaluation, not the syntax extraction, so the
-    ///     syntax-first pass is the cold-start fix: it produces a usable full-text and symbol index immediately,
-    ///     and the cross-file semantic graph (DI, route, MediatR, EF wiring) lands when the background upgrade
-    ///     completes and clears the pending flag.
+    ///     syntax-first pass produces a usable full-text and symbol index without loading MSBuild. Cross-file
+    ///     semantic facts are added only by a requested compiler pass.
     /// </remarks>
     public async Task<SemanticIndexResult> IndexSyntaxFirstAsync(
         string rootDirectory,
@@ -351,9 +348,10 @@ public sealed class SemanticIndexer
 
         var result = await IndexSyntaxAsync(root, store, files, snapshot, cancellationToken);
         await store.SetMetaAsync("index_mode", result.Mode, cancellationToken);
-        await store.SetMetaAsync(SemanticPendingMetaKey, "1", cancellationToken);
-        // R43: stamp a syntax-tier diagnosis (discovery is cheap file-globbing, no MSBuild) so doctor reports the
-        // current tier from the warm index while the semantic upgrade is still pending; the upgrade restamps it.
+        // Syntax is now the completed default index depth. Compiler work starts only after an explicit semantic
+        // request, so this store is not waiting for an automatic background upgrade.
+        await store.SetMetaAsync(SemanticPendingMetaKey, "0", cancellationToken);
+        // Stamp a syntax-tier diagnosis. Discovery is file based and does not load MSBuild.
         var discovery = await _discoverer.DiscoverAsync(root, cancellationToken);
         await StampLoadDiagnosisAsync(store, BuildDiagnosisFromSnapshot(discovery, snapshot), cancellationToken);
         // Stamp the Fuse build even on the syntax-first pass so a partial index also carries provenance.
@@ -378,8 +376,8 @@ public sealed class SemanticIndexer
 
     /// <summary>
     ///     Upgrades a syntax-first index to the full semantic graph by running the complete indexing pass, then
-    ///     clearing <see cref="SemanticPendingMetaKey" />. Intended to run in the background after
-    ///     <see cref="IndexSyntaxFirstAsync" /> served the first call. Commits per project and per
+    ///     clearing <see cref="SemanticPendingMetaKey" />. This is requested by an explicit semantic index job.
+    ///     Commits per project and per
     ///     <see cref="UpgradeCommitFileBatchSize" /> files so warm reads can interleave under WAL.
     /// </summary>
     /// <param name="rootDirectory">The workspace root.</param>

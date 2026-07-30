@@ -71,18 +71,18 @@ public sealed class RemoteIndexAccessProviderTests
     }
 
     [Fact]
-    public async Task Maps_index_busy_from_daemon()
+    public async Task Maps_rebuilding_state_from_daemon()
     {
         var indexer = _provider.GetRequiredService<SemanticIndexer>();
         var root = Path.Combine(Path.GetTempPath(), "fuse-remote-index-busy", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path.Combine(root, ".git"));
         var provider = new RemoteIndexAccessProvider(
             (_, _, _) => Task.FromResult<OpenIndexedResultDto?>(
-                new OpenIndexedResultDto("index_busy", "locked", 0, null)));
+                new OpenIndexedResultDto("index_rebuilding", "building", 0, null)));
 
         try
         {
-            await Assert.ThrowsAsync<IndexBusyException>(() =>
+            await Assert.ThrowsAsync<IndexRebuildingException>(() =>
                 provider.OpenIndexedAsync(indexer, root, CancellationToken.None));
         }
         finally

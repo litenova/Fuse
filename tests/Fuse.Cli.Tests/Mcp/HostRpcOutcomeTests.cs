@@ -99,6 +99,8 @@ public sealed class HostRpcOutcomeTests : IDisposable
             _provider.GetRequiredService<ContentReductionPipeline>(),
             _provider.GetRequiredService<ISecretRedactor>(),
             _provider.GetRequiredService<IGeneratedCodeDetector>(),
+            _provider.GetRequiredService<IndexCoordinator>(),
+            _provider.GetRequiredService<IWorkspaceIndexJobManager>(),
             NullLogger<FuseHostService>.Instance,
             work,
             daemonResident);

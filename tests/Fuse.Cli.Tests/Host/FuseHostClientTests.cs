@@ -2,6 +2,7 @@ using System.IO.Pipelines;
 using System.IO.Pipes;
 using System.Net.Sockets;
 using Fuse.Cli.Rpc;
+using Fuse.Cli.Mcp;
 using Fuse.Plugins.Abstractions.Reducers;
 using Fuse.Reduction;
 using Fuse.Reduction.Security;
@@ -26,6 +27,8 @@ public sealed class FuseHostClientTests : IDisposable
         _provider.GetRequiredService<ContentReductionPipeline>(),
         _provider.GetRequiredService<ISecretRedactor>(),
         _provider.GetRequiredService<IGeneratedCodeDetector>(),
+        _provider.GetRequiredService<IndexCoordinator>(),
+        _provider.GetRequiredService<IWorkspaceIndexJobManager>(),
         NullLogger<FuseHostService>.Instance);
 
     [Fact]

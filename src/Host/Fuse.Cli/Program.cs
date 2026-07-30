@@ -12,6 +12,9 @@ Cli.Ext.ConfigureServices(services =>
 
     services.AddTransient<FuseCliCommand>();
     services.AddTransient<IndexCommand>();
+    services.AddTransient<IndexStatusCommand>();
+    services.AddTransient<IndexCancelCommand>();
+    services.AddTransient<IndexCleanCommand>();
     services.AddTransient<MapCommand>();
     services.AddTransient<ResolveCommand>();
     services.AddTransient<LocalizeCommand>();

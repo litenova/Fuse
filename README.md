@@ -13,11 +13,11 @@
 
 # Fuse
 
-Fuse is a local .NET tool with a persistent semantic index, typed-graph wiring
-resolution, reduced task-scoped source, and pre-write compiler verification for
-coding agents. It indexes a solution through MSBuild and Roslyn, stores the result
-in `.fuse/fuse.db`, and reuses it across agent turns instead of rediscovering the
-same structure through repeated file reads and text searches.
+Fuse is a local .NET tool with a persistent syntax index, typed-graph wiring
+resolution on demand, reduced task-scoped source, and pre-write compiler verification
+for coding agents. It stores repository facts in `.fuse/fuse.db` and reuses them across
+agent turns instead of rediscovering the same structure through repeated file reads and
+text searches.
 
 From a .NET project inside a Git repository:
 
@@ -41,11 +41,11 @@ Resolve IOrderService to its implementation, then check the proposed OrderServic
 with fuse_check before writing it.
 ```
 
-When the MCP server starts, its shared local daemon begins warming `.fuse/fuse.db` in
-the background. A cold read waits for a bounded syntax-first pass and reports when the
-semantic graph is still upgrading. Run `fuse index` when you want a synchronous full
-index before connecting the agent. `fuse mcp install --rules` also adds `.fuse/` to
-`.gitignore` at project scope.
+When the MCP server starts, its shared local daemon owns one index job for the repository.
+A cold read starts a syntax index and reports its job state. Run `fuse index` to render
+progress in a terminal, `fuse index --semantic` for explicit compiler analysis, and
+`fuse index status` or `fuse index cancel` to control the job. The installer adds `.fuse/`
+to `.gitignore` at project scope.
 
 Every MCP operation except `fuse_reduce` requires a Git repository identity. Fuse walks upward to the nearest
 `.git` directory or file, so a call from a nested source or output folder uses the same

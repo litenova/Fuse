@@ -54,4 +54,15 @@ public sealed class IndexCommandParseTests
     [Fact]
     public void Index_with_from_capture_parses_without_errors()
         => Assert.Empty(ParseErrors("index", "some/workspace", "--from-capture", "some/bundle"));
+
+    [Fact]
+    public void Index_with_semantic_and_json_parses_without_errors()
+        => Assert.Empty(ParseErrors("index", "some/workspace", "--semantic", "--json"));
+
+    [Theory]
+    [InlineData("status")]
+    [InlineData("cancel")]
+    [InlineData("clean", "--yes")]
+    public void Index_lifecycle_subcommand_parses_without_errors(params string[] arguments)
+        => Assert.Empty(ParseErrors(["index", .. arguments]));
 }

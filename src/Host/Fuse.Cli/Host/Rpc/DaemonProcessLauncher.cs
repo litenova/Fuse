@@ -29,8 +29,10 @@ public static class DaemonProcessLauncher
             CreateNoWindow = true,
             WorkingDirectory = root,
         };
-        // The daemon owns the resident workspace for every client, and stops itself when idle.
-        psi.Environment["FUSE_RESIDENT"] = "1";
+        // Index jobs are syntax-first. A daemon starts no compiler state or eager index work until a caller asks.
+        psi.Environment["FUSE_RESIDENT"] = "0";
+        psi.Environment["FUSE_EAGER_INDEX"] = "0";
+        psi.Environment["FUSE_BG_UPGRADE"] = "0";
         psi.Environment["FUSE_DAEMON_IDLE_MINUTES"] = idleMinutes.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
         var runningUnderDotnet = Path.GetFileNameWithoutExtension(processPath)

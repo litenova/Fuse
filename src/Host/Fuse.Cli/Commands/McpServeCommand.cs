@@ -43,8 +43,7 @@ public sealed class McpServeCommand
     /// </remarks>
     public async Task RunAsync(CliContext context)
     {
-        // Syntax-first cold start with a supervised background semantic upgrade is default-on. Set
-        // FUSE_BG_UPGRADE=0 to make the first read index synchronously; `fuse index` is always synchronous.
+        // Syntax is the completed default index depth. Compiler work starts only from an explicit semantic request.
         FuseTools.BackgroundSemanticUpgradeEnabled = BackgroundUpgradeOptIn();
         // The resident host owns the background semantic-upgrade jobs' lifetime (N3): failures go to stderr (never
         // the JSON-RPC stdout), and shutdown drains them so none is orphaned. Replaces the old fire-and-forget path.
@@ -184,19 +183,11 @@ public sealed class McpServeCommand
         }
     }
 
-    // C3: syntax-first cold start with a supervised background semantic upgrade is default-ON in `mcp serve`, so a
-    // first read returns in seconds (syntax tier) while the semantic/tier-1 graph builds behind it, supervised so
-    // shutdown cancels and drains it (N3). Opt out with FUSE_BG_UPGRADE=0 (or false/no/off) to index synchronously
-    // on the first read. The CLI `fuse index` is always synchronous regardless of this flag.
+    // Semantic upgrades are no longer scheduled automatically. Explicit index and compiler-backed tools request
+    // their own semantic work through the daemon-owned job manager.
     private static bool BackgroundUpgradeOptIn()
     {
-        var value = Environment.GetEnvironmentVariable("FUSE_BG_UPGRADE");
-        if (value is null)
-            return true;
-        return !(value.Equals("0", StringComparison.Ordinal)
-                 || value.Equals("false", StringComparison.OrdinalIgnoreCase)
-                 || value.Equals("no", StringComparison.OrdinalIgnoreCase)
-                 || value.Equals("off", StringComparison.OrdinalIgnoreCase));
+        return false;
     }
 
     // The shared-daemon delegation (G5, R13 default-on; R19 index writes): serve ensures one shared `fuse host`

@@ -1,3 +1,5 @@
+using Fuse.Cli.Mcp;
+
 namespace Fuse.Cli.Rpc;
 
 /// <summary>
@@ -65,8 +67,8 @@ public sealed record GraphDto(
 public sealed record LanguageCountDto(string Language, int Count);
 
 /// <summary>
-///     The result of the <c>fuse/index</c> method: the semantic index summary the panel shows after building or
-///     refreshing the workspace index.
+///     A retained index summary for diagnostics. Index lifecycle callers use <c>fuse/indexStart</c>,
+///     <c>fuse/indexStatus</c>, and <c>fuse/indexCancel</c>.
 /// </summary>
 /// <param name="IndexState">A coarse state label (<c>Warm</c>, <c>Indexing</c>, or <c>NotIndexed</c>).</param>
 /// <param name="FileCount">The number of indexed files.</param>
@@ -217,12 +219,18 @@ public sealed record CheckOverlayResultDto(
 ///     opens the store read-only locally for queries.
 /// </summary>
 /// <param name="Status">
-///     A coarse outcome: <c>ready</c>, <c>index_busy</c>, <c>index_rebuilding</c>, or <c>not_indexed</c>.
+///     A coarse outcome: <c>ready</c>, <c>index_rebuilding</c>, or <c>not_indexed</c>.
 /// </param>
 /// <param name="Detail">An actionable detail when <paramref name="Status" /> is not <c>ready</c>.</param>
 /// <param name="FileCount">The indexed file count when <paramref name="Status" /> is <c>ready</c>; otherwise zero.</param>
 /// <param name="Mode">The index tier when ready (<c>semantic</c>, <c>partial</c>, or <c>syntax</c>).</param>
-public sealed record OpenIndexedResultDto(string Status, string? Detail, int FileCount, string? Mode);
+/// <param name="Job">The active job when a build is in progress, including semantic work after syntax is readable.</param>
+public sealed record OpenIndexedResultDto(
+    string Status,
+    string? Detail,
+    int FileCount,
+    string? Mode,
+    IndexJobSnapshot? Job = null);
 
 /// <summary>The rendered live semantic-load diagnosis produced by the root's compiler-state owner.</summary>
 /// <param name="Report">The unchanged doctor report text.</param>

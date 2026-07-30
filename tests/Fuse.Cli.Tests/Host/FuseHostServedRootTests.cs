@@ -1,4 +1,5 @@
 using Fuse.Cli.Rpc;
+using Fuse.Cli.Mcp;
 using Fuse.Plugins.Abstractions.Reducers;
 using Fuse.Reduction;
 using Fuse.Reduction.Security;
@@ -24,6 +25,8 @@ public sealed class FuseHostServedRootTests : IDisposable
         _provider.GetRequiredService<ContentReductionPipeline>(),
         _provider.GetRequiredService<ISecretRedactor>(),
         _provider.GetRequiredService<IGeneratedCodeDetector>(),
+        _provider.GetRequiredService<IndexCoordinator>(),
+        _provider.GetRequiredService<IWorkspaceIndexJobManager>(),
         NullLogger<FuseHostService>.Instance,
         servedRoot);
 
@@ -49,7 +52,9 @@ public sealed class FuseHostServedRootTests : IDisposable
 
     public static TheoryData<string> RootBoundMethods => new()
     {
-        "index",
+        "indexStart",
+        "indexStatus",
+        "indexCancel",
         "graph",
         "scope",
         "explain",
@@ -105,8 +110,14 @@ public sealed class FuseHostServedRootTests : IDisposable
     {
         switch (method)
         {
-            case "index":
-                await service.IndexAsync(token, root);
+            case "indexStart":
+                await service.IndexStartAsync(token, root);
+                break;
+            case "indexStatus":
+                _ = service.IndexStatus(token, root);
+                break;
+            case "indexCancel":
+                await service.IndexCancelAsync(token, root);
                 break;
             case "graph":
                 await service.GraphAsync(token, root, "Files");

@@ -33,7 +33,7 @@ namespace Fuse.Cli.Rpc;
 ///     does not match it. The service never throws across the wire for an expected condition; it returns a typed
 ///     DTO so the client can render a clear state rather than parse an error.
 /// </remarks>
-public sealed class FuseHostService : IDisposable
+public sealed class FuseHostService : IAsyncDisposable, IDisposable
 {
     /// <summary>
     ///     The wire protocol version. Bumped on any breaking change to a DTO or method shape so a stale in-repo
@@ -41,12 +41,14 @@ public sealed class FuseHostService : IDisposable
     ///     serialization error. There is no external client to mirror: the VS Code extension was removed in v4
     ///     (Decision D15), so the host is the minimal pipe endpoint the hooks need.
     /// </summary>
-    public const int ProtocolVersion = 10;
+    public const int ProtocolVersion = 11;
 
     private const int ListLimit = 100_000;
 
     private readonly ILogger<FuseHostService> _logger;
     private readonly SemanticIndexer _indexer;
+    private readonly IndexCoordinator _indexCoordinator;
+    private readonly IWorkspaceIndexJobManager _indexJobs;
     private readonly IChangeSource _changeSource;
     private readonly ContentReductionPipeline _reductionPipeline;
     private readonly ISecretRedactor _redactor;
@@ -61,6 +63,7 @@ public sealed class FuseHostService : IDisposable
     private readonly bool _backgroundSemanticUpgradeEnabled;
     private readonly Fuse.Workspace.IResidentWorkspaceProvider? _residentWorkspacesOverride;
     private CompilerStateBudget? _compilerStateBudget;
+    private int _disposed;
 
     // The resident workspace this daemon checks against. In production the daemon process owns the process-wide
     // provider, so reading the static is correct; the override lets an in-process test give the daemon its own
@@ -76,6 +79,8 @@ public sealed class FuseHostService : IDisposable
     /// <param name="reductionPipeline">The reduction pipeline used to render context payloads.</param>
     /// <param name="redactor">The secret redactor, used read-only to locate secret spans for diagnostics.</param>
     /// <param name="generatedCodeDetector">Detects machine-generated C# (for example EF Core migrations) for diagnostics.</param>
+    /// <param name="indexCoordinator">The daemon-owned index store coordinator.</param>
+    /// <param name="indexJobs">The daemon-owned index job manager.</param>
     /// <param name="logger">The logger for host-side diagnostics, routed away from the transport stream.</param>
     /// <param name="servedRoot">
     ///     The repository root this daemon serves. When omitted and the process is <c>fuse host</c>, the root is
@@ -93,12 +98,16 @@ public sealed class FuseHostService : IDisposable
         ContentReductionPipeline reductionPipeline,
         ISecretRedactor redactor,
         IGeneratedCodeDetector generatedCodeDetector,
+        IndexCoordinator indexCoordinator,
+        IWorkspaceIndexJobManager indexJobs,
         ILogger<FuseHostService> logger,
         string? servedRoot = null,
         Fuse.Workspace.IResidentWorkspaceProvider? residentWorkspaces = null)
     {
         _residentWorkspacesOverride = residentWorkspaces;
         _indexer = indexer;
+        _indexCoordinator = indexCoordinator;
+        _indexJobs = indexJobs;
         _changeSource = changeSource;
         _reductionPipeline = reductionPipeline;
         _redactor = redactor;
@@ -152,17 +161,23 @@ public sealed class FuseHostService : IDisposable
     }
 
     /// <summary>
-    ///     Builds or refreshes the semantic index for a repository root and returns its summary: the tier
-    ///     (semantic, partial, or syntax), file/symbol/route counts, per-language breakdown, full-text-search
-    ///     availability, schema version, and the Fuse build that wrote it. This explicit action always refreshes
-    ///     the complete repository inventory.
+    ///     Starts or joins an index job for a repository root. The default job extracts syntax only; callers must
+    ///     request <see cref="IndexDepth.Semantic" /> to load the compiler workspace.
     /// </summary>
     /// <param name="sessionToken">The session token from <c>fuse/handshake</c>.</param>
     /// <param name="root">The absolute repository root to index.</param>
-    /// <returns>The index summary the extension's index panel renders.</returns>
+    /// <param name="depth">The requested syntax or semantic depth.</param>
+    /// <param name="force">Whether to discard existing derived data before indexing.</param>
+    /// <param name="captureBundlePath">An optional portable capture bundle directory.</param>
+    /// <returns>The shared job snapshot and whether this caller joined it.</returns>
     /// <exception cref="LocalRpcException">The session token is missing or invalid, or the root does not match the served root.</exception>
-    [JsonRpcMethod("fuse/index")]
-    public async Task<IndexResultDto> IndexAsync(string sessionToken, string root)
+    [JsonRpcMethod("fuse/indexStart")]
+    public Task<IndexJobStartResult> IndexStartAsync(
+        string sessionToken,
+        string root,
+        IndexDepth depth = IndexDepth.Syntax,
+        bool force = false,
+        string? captureBundlePath = null)
     {
         FuseHostSessionToken.Validate(_sessionToken, sessionToken);
         ValidateServedRoot(root);
@@ -170,27 +185,39 @@ public sealed class FuseHostService : IDisposable
         if (!Directory.Exists(resolved))
         {
             _logger.LogWarning("Index requested for missing directory {Root}.", resolved);
-            return new IndexResultDto("NotIndexed", 0, 0, "none", 0, 0, 0, false, FuseBuildInfo.Current, []);
+            return Task.FromResult(new IndexJobStartResult(
+                MissingWorkspaceSnapshot(resolved), Joined: false, Conflict: false));
         }
 
-        try
-        {
-            var stopwatch = Stopwatch.StartNew();
-            var pass = await IndexCoordinator.Default.OpenForWriteAsync(
-                resolved,
-                (writeStore, ct) => _indexer.IndexAsync(resolved, writeStore, ct),
-                CancellationToken.None);
-            stopwatch.Stop();
-            return await BuildIndexResultDtoAsync(resolved, pass, stopwatch.ElapsedMilliseconds);
-        }
-        catch (IndexBusyException)
-        {
-            return new IndexResultDto("IndexBusy", 0, 0, "none", 0, 0, 0, false, FuseBuildInfo.Current, []);
-        }
-        catch (IndexRebuildingException)
-        {
-            return new IndexResultDto("Rebuilding", 0, 0, "none", 0, 0, 0, false, FuseBuildInfo.Current, []);
-        }
+        return _indexJobs.StartOrJoinAsync(
+            new IndexJobRequest(resolved, depth, force, captureBundlePath),
+            CancellationToken.None);
+    }
+
+    /// <summary>Returns the active or last completed job for a repository root.</summary>
+    /// <param name="sessionToken">The session token from <c>fuse/handshake</c>.</param>
+    /// <param name="root">The absolute repository root.</param>
+    /// <returns>The job snapshot, or null when the daemon has not indexed this root.</returns>
+    /// <exception cref="LocalRpcException">The session token is missing or invalid, or the root does not match the served root.</exception>
+    [JsonRpcMethod("fuse/indexStatus")]
+    public IndexJobSnapshot? IndexStatus(string sessionToken, string root)
+    {
+        FuseHostSessionToken.Validate(_sessionToken, sessionToken);
+        ValidateServedRoot(root);
+        return _indexJobs.GetStatus(Path.GetFullPath(root));
+    }
+
+    /// <summary>Requests cancellation of the active repository job.</summary>
+    /// <param name="sessionToken">The session token from <c>fuse/handshake</c>.</param>
+    /// <param name="root">The absolute repository root.</param>
+    /// <returns>The job snapshot after cancellation was requested, or null when no job is active.</returns>
+    /// <exception cref="LocalRpcException">The session token is missing or invalid, or the root does not match the served root.</exception>
+    [JsonRpcMethod("fuse/indexCancel")]
+    public Task<IndexJobSnapshot?> IndexCancelAsync(string sessionToken, string root)
+    {
+        FuseHostSessionToken.Validate(_sessionToken, sessionToken);
+        ValidateServedRoot(root);
+        return _indexJobs.CancelAsync(Path.GetFullPath(root), CancellationToken.None);
     }
 
     /// <summary>
@@ -211,20 +238,30 @@ public sealed class FuseHostService : IDisposable
         if (!Directory.Exists(resolved))
             return new OpenIndexedResultDto("not_indexed", "workspace directory not found", 0, null);
 
+        var job = _indexJobs.GetStatus(resolved);
         try
         {
-            await using var store = await OpenIndexedForHostAsync(resolved, CancellationToken.None);
-            var state = await store.GetStateAsync(CancellationToken.None);
-            return new OpenIndexedResultDto("ready", null, state.FileCount, state.Mode);
+            await using var store = new WorkspaceIndexStore(FuseStorePaths.ResolveDatabasePath(resolved));
+            if (await store.OpenForReadAsync(CancellationToken.None) is WorkspaceIndexReadOpenStatus.Ready)
+            {
+                var state = await store.GetStateAsync(CancellationToken.None);
+                return new OpenIndexedResultDto("ready", null, state.FileCount, state.Mode, job);
+            }
         }
-        catch (IndexBusyException)
+        catch (Exception ex) when (ex is IOException or Microsoft.Data.Sqlite.SqliteException)
         {
-            return new OpenIndexedResultDto("index_busy", "the index database is in use; retry shortly", 0, null);
+            _logger.LogDebug(ex, "The index was not readable for {Root}.", resolved);
         }
-        catch (IndexRebuildingException ex)
-        {
-            return new OpenIndexedResultDto("index_rebuilding", ex.Message, 0, null);
-        }
+
+        var started = await _indexJobs.StartOrJoinAsync(
+            new IndexJobRequest(resolved, IndexDepth.Syntax, Force: false, CaptureBundlePath: null),
+            CancellationToken.None);
+        return new OpenIndexedResultDto(
+            "index_rebuilding",
+            "syntax index is building; call fuse/indexStatus for progress",
+            0,
+            null,
+            started.Snapshot);
     }
 
     /// <summary>
@@ -700,12 +737,21 @@ public sealed class FuseHostService : IDisposable
     /// </summary>
     public void Dispose()
     {
+        DisposeAsync().AsTask().GetAwaiter().GetResult();
+    }
+
+    /// <inheritdoc />
+    public async ValueTask DisposeAsync()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
         DeleteTrackedPayloads();
-        _ = _upgradeSupervisor.DisposeAsync();
+        await _indexJobs.DisposeAsync();
+        await _upgradeSupervisor.DisposeAsync();
     }
 
     private Task<WorkspaceIndexStore> OpenIndexedForHostAsync(string root, CancellationToken cancellationToken) =>
-        IndexCoordinator.Default.OpenIndexedAsync(
+        _indexCoordinator.OpenIndexedAsync(
             _indexer,
             root,
             _backgroundSemanticUpgradeEnabled,
@@ -716,17 +762,35 @@ public sealed class FuseHostService : IDisposable
 
     private void ScheduleSemanticUpgrade(SemanticIndexer indexer, string root) =>
         _upgradeSupervisor.Schedule(root, cancellationToken =>
-            IndexCoordinator.Default.RunBackgroundUpgradeAsync(indexer, root, cancellationToken));
+            _indexCoordinator.RunBackgroundUpgradeAsync(indexer, root, cancellationToken));
 
     private static bool BackgroundSemanticUpgradeEnabled()
     {
-        var value = Environment.GetEnvironmentVariable("FUSE_BG_UPGRADE");
-        if (value is null)
-            return true;
-        return !(value.Equals("0", StringComparison.Ordinal)
-                 || value.Equals("false", StringComparison.OrdinalIgnoreCase)
-                 || value.Equals("no", StringComparison.OrdinalIgnoreCase)
-                 || value.Equals("off", StringComparison.OrdinalIgnoreCase));
+        return false;
+    }
+
+    private static IndexJobSnapshot MissingWorkspaceSnapshot(string root)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return new IndexJobSnapshot(
+            JobId: string.Empty,
+            Root: root,
+            State: IndexJobState.Failed,
+            Phase: IndexPhase.Inventory,
+            PhaseNumber: 1,
+            PhaseCount: 4,
+            CompletedUnits: 0,
+            TotalUnits: null,
+            PhasePercent: null,
+            EstimatedRemaining: null,
+            CurrentItem: null,
+            StartedAt: now,
+            Elapsed: TimeSpan.Zero,
+            Counts: IndexCountSnapshot.Empty,
+            Storage: IndexStorageSnapshot.Empty,
+            Warnings: [],
+            ErrorCode: "workspace_not_found",
+            ErrorMessage: $"Workspace directory does not exist: {root}");
     }
 
     private async Task<IndexResultDto> BuildIndexResultDtoAsync(

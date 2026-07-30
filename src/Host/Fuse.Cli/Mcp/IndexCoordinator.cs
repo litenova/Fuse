@@ -65,7 +65,7 @@ public sealed class IndexCoordinator
                 root,
                 async (writeStore, ct) =>
                 {
-                    await InitializeOrThrowAsync(writeStore, ct);
+                    await writeStore.InitializeAsync(ct);
                     return 0;
                 },
                 cancellationToken,
@@ -168,7 +168,7 @@ public sealed class IndexCoordinator
             {
                 var status = await store.OpenForReadAsync(ct);
                 if (status is not WorkspaceIndexReadOpenStatus.Ready)
-                    await InitializeOrThrowAsync(store, ct);
+                    await store.InitializeAsync(ct);
                 return await work(store, ct);
             },
             cancellationToken);
@@ -223,7 +223,7 @@ public sealed class IndexCoordinator
 
             ProcessWriteLockAcquireCount++;
             var databasePath = FuseStorePaths.ResolveDatabasePath(canonicalRoot);
-            var store = new WorkspaceIndexStore(databasePath, busyTimeoutMilliseconds: busyTimeoutMilliseconds);
+            await using var store = new WorkspaceIndexStore(databasePath, busyTimeoutMilliseconds: busyTimeoutMilliseconds);
             return await work(store, cancellationToken);
         }
         finally
@@ -246,29 +246,9 @@ public sealed class IndexCoordinator
         Action<SemanticIndexer, string> scheduleSemanticUpgrade,
         CancellationToken cancellationToken)
     {
-        if (backgroundSemanticUpgradeEnabled)
-        {
-            var built = await ColdStartCoordinator.Default.BuildWithDeadlineAsync(
-                root,
-                async _ =>
-                {
-                    await ExecuteWriteAsync(
-                        root,
-                        (writeStore, wct) => indexer.IndexSyntaxFirstAsync(root, writeStore, wct),
-                        CancellationToken.None,
-                        ReadBusyTimeoutMilliseconds);
-                    scheduleSemanticUpgrade(indexer, root);
-                },
-                ColdStartCoordinator.DeadlineMilliseconds(),
-                cancellationToken);
-            if (!built)
-                throw new ColdStartInProgressException(root);
-            return;
-        }
-
         await ExecuteWriteAsync(
             root,
-            (writeStore, ct) => indexer.IndexAsync(root, writeStore, ct),
+            (writeStore, ct) => indexer.IndexSyntaxFirstAsync(root, writeStore, ct),
             cancellationToken,
             ReadBusyTimeoutMilliseconds);
     }

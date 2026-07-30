@@ -54,26 +54,26 @@ public sealed class SemanticIndexerTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task IndexSyntaxFirstAsync_ServesSyntaxTierAndFlagsPending()
+    public async Task IndexSyntaxFirstAsync_ServesCompletedSyntaxTier()
     {
-        // A4 cold-start: the syntax-first pass produces a usable symbol/full-text index without the MSBuild load,
-        // and flags the semantic upgrade as pending so a caller knows the graph is not yet present.
+        // The default syntax pass produces a usable symbol and full-text index without an MSBuild load.
+        // Compiler analysis is opt-in, so a completed syntax index has no pending semantic work.
         var indexer = CreateIndexer();
 
         var result = await indexer.IndexSyntaxFirstAsync(_projectRoot, _store, CancellationToken.None);
 
         Assert.Equal("syntax", result.Mode);
         Assert.True(result.SymbolCount > 0);
-        Assert.Equal("1", await _store.GetMetaAsync(SemanticIndexer.SemanticPendingMetaKey, CancellationToken.None));
+        Assert.Equal("0", await _store.GetMetaAsync(SemanticIndexer.SemanticPendingMetaKey, CancellationToken.None));
         Assert.Equal("syntax", (await _store.GetStateAsync(CancellationToken.None)).Mode);
     }
 
     [Fact]
-    public async Task UpgradeToSemanticAsync_ClearsPendingFlagAndLandsTheGraph()
+    public async Task UpgradeToSemanticAsync_LandsTheGraph()
     {
         var indexer = CreateIndexer();
         await indexer.IndexSyntaxFirstAsync(_projectRoot, _store, CancellationToken.None);
-        Assert.Equal("1", await _store.GetMetaAsync(SemanticIndexer.SemanticPendingMetaKey, CancellationToken.None));
+        Assert.Equal("0", await _store.GetMetaAsync(SemanticIndexer.SemanticPendingMetaKey, CancellationToken.None));
 
         var upgraded = await indexer.UpgradeToSemanticAsync(_projectRoot, _store, CancellationToken.None);
 

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Fuse.Cli.Configuration.McpInstall;
+using Fuse.Cli.Commands;
 using Fuse.Cli.Mcp;
 using Fuse.Cli.Rpc;
 using Fuse.Cli.Services;

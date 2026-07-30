@@ -2,6 +2,7 @@ using System.IO.Pipelines;
 using System.IO.Pipes;
 using System.Net.Sockets;
 using System.Text.Json;
+using Fuse.Cli.Mcp;
 using StreamJsonRpc;
 
 namespace Fuse.Cli.Rpc;
@@ -52,6 +53,79 @@ internal static class FuseHookVerbose
 /// </remarks>
 public static class FuseHostClient
 {
+    /// <summary>
+    ///     Reads a daemon handshake without requiring the running protocol to match this binary. Lifecycle callers
+    ///     use this only to retire a stale daemon before starting the matching host.
+    /// </summary>
+    /// <param name="root">The absolute repository root.</param>
+    /// <param name="connectTimeout">How long to wait for a connection.</param>
+    /// <param name="cancellationToken">A token to cancel the probe.</param>
+    /// <returns>The running handshake, or null when no daemon answered.</returns>
+    public static async Task<FuseHostHandshake?> TryHandshakeAsync(
+        string root,
+        TimeSpan connectTimeout,
+        CancellationToken cancellationToken)
+    {
+        Stream? stream = null;
+        try
+        {
+            stream = await ConnectAsync(root, connectTimeout, cancellationToken);
+            if (stream is null)
+                return null;
+
+            using var rpc = CreateRpc(stream, CreateFormatter());
+            rpc.StartListening();
+            return await rpc.InvokeWithCancellationAsync<FuseHostHandshake>("fuse/handshake", [], cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return null;
+        }
+        finally
+        {
+            if (stream is not null)
+                await stream.DisposeAsync();
+        }
+    }
+
+    /// <summary>Reads daemon process statistics without applying the current protocol gate.</summary>
+    /// <param name="root">The absolute repository root.</param>
+    /// <param name="connectTimeout">How long to wait for a connection.</param>
+    /// <param name="cancellationToken">A token to cancel the probe.</param>
+    /// <returns>The remote process statistics, or null when the call did not complete.</returns>
+    public static Task<FuseHostStats?> TryStatsIgnoringProtocolAsync(
+        string root,
+        TimeSpan connectTimeout,
+        CancellationToken cancellationToken) =>
+        TryInvokeIgnoringProtocolAsync(
+            root,
+            connectTimeout,
+            (rpc, handshake, ct) => rpc.InvokeWithCancellationAsync<FuseHostStats>(
+                "fuse/stats", [handshake.SessionToken], ct),
+            cancellationToken);
+
+    /// <summary>Asks a daemon to stop without applying the current protocol gate.</summary>
+    /// <param name="root">The absolute repository root.</param>
+    /// <param name="connectTimeout">How long to wait for a connection.</param>
+    /// <param name="cancellationToken">A token to cancel the request.</param>
+    /// <returns>True when the daemon accepted the shutdown notification.</returns>
+    public static async Task<bool> TryShutdownIgnoringProtocolAsync(
+        string root,
+        TimeSpan connectTimeout,
+        CancellationToken cancellationToken)
+    {
+        var accepted = await TryInvokeIgnoringProtocolAsync(
+            root,
+            connectTimeout,
+            async (rpc, handshake, ct) =>
+            {
+                await rpc.NotifyAsync("fuse/shutdown", [handshake.SessionToken]).WaitAsync(ct);
+                return true;
+            },
+            cancellationToken);
+        return accepted == true;
+    }
+
     /// <summary>
     ///     Asks the running host for the check delta of a session, or returns <c>null</c> when no compatible host
     ///     serves the root.
@@ -131,21 +205,58 @@ public static class FuseHostClient
             cancellationToken);
 
     /// <summary>
-    ///     Asks the daemon to build or refresh the semantic index (R19), or returns null when no compatible daemon
-    ///     serves the root. Never throws for the absence of a daemon.
+    ///     Starts or joins an index job on the daemon, or returns null when no compatible daemon serves the root.
     /// </summary>
+    /// <param name="root">The absolute repository root.</param>
+    /// <param name="depth">The requested syntax or semantic index depth.</param>
+    /// <param name="force">Whether to discard existing derived index data first.</param>
+    /// <param name="captureBundlePath">An optional capture bundle directory.</param>
+    /// <param name="connectTimeout">How long to wait for a connection before concluding no daemon serves the root.</param>
+    /// <param name="cancellationToken">A token to cancel the call.</param>
+    /// <returns>The job acceptance result, or null when no compatible daemon serves the root.</returns>
+    public static Task<IndexJobStartResult?> TryIndexStartAsync(
+        string root,
+        IndexDepth depth,
+        bool force,
+        string? captureBundlePath,
+        TimeSpan connectTimeout,
+        CancellationToken cancellationToken) =>
+        TryInvokeAsync(
+            root,
+            "fuse/indexStart",
+            connectTimeout,
+            (rpc, handshake, ct) => rpc.InvokeWithCancellationAsync<IndexJobStartResult>(
+                "fuse/indexStart", [handshake.SessionToken, root, depth, force, captureBundlePath], ct),
+            cancellationToken);
+
+    /// <summary>Gets the daemon-owned job snapshot for a repository root.</summary>
     /// <param name="root">The absolute repository root.</param>
     /// <param name="connectTimeout">How long to wait for a connection before concluding no daemon serves the root.</param>
     /// <param name="cancellationToken">A token to cancel the call.</param>
-    /// <returns>The index summary, or null when no compatible daemon serves the root.</returns>
-    public static Task<IndexResultDto?> TryIndexAsync(
+    /// <returns>The active or retained job snapshot, or null when no daemon or job exists.</returns>
+    public static Task<IndexJobSnapshot?> TryIndexStatusAsync(
         string root, TimeSpan connectTimeout, CancellationToken cancellationToken) =>
         TryInvokeAsync(
             root,
-            "fuse/index",
+            "fuse/indexStatus",
             connectTimeout,
-            (rpc, handshake, ct) => rpc.InvokeWithCancellationAsync<IndexResultDto>(
-                "fuse/index", [handshake.SessionToken, root], ct),
+            (rpc, handshake, ct) => rpc.InvokeWithCancellationAsync<IndexJobSnapshot?>(
+                "fuse/indexStatus", [handshake.SessionToken, root], ct),
+            cancellationToken);
+
+    /// <summary>Requests cancellation of the daemon-owned job for a repository root.</summary>
+    /// <param name="root">The absolute repository root.</param>
+    /// <param name="connectTimeout">How long to wait for a connection before concluding no daemon serves the root.</param>
+    /// <param name="cancellationToken">A token to cancel the call.</param>
+    /// <returns>The updated job snapshot, or null when no daemon or active job exists.</returns>
+    public static Task<IndexJobSnapshot?> TryIndexCancelAsync(
+        string root, TimeSpan connectTimeout, CancellationToken cancellationToken) =>
+        TryInvokeAsync(
+            root,
+            "fuse/indexCancel",
+            connectTimeout,
+            (rpc, handshake, ct) => rpc.InvokeWithCancellationAsync<IndexJobSnapshot?>(
+                "fuse/indexCancel", [handshake.SessionToken, root], ct),
             cancellationToken);
 
     /// <summary>Runs a live doctor request on the root's daemon, or returns null when no compatible daemon serves it.</summary>
@@ -252,6 +363,36 @@ public static class FuseHostClient
         {
             // No host, a stale endpoint, or a transient RPC error: stay silent unless verbose mode is on.
             FuseHookVerbose.LogRpcFailure(activeMethod, "rpc_error");
+            return default;
+        }
+        finally
+        {
+            if (stream is not null)
+                await stream.DisposeAsync();
+        }
+    }
+
+    private static async Task<T?> TryInvokeIgnoringProtocolAsync<T>(
+        string root,
+        TimeSpan connectTimeout,
+        Func<JsonRpc, FuseHostHandshake, CancellationToken, Task<T>> invoke,
+        CancellationToken cancellationToken)
+    {
+        Stream? stream = null;
+        try
+        {
+            stream = await ConnectAsync(root, connectTimeout, cancellationToken);
+            if (stream is null)
+                return default;
+
+            using var rpc = CreateRpc(stream, CreateFormatter());
+            rpc.StartListening();
+            var handshake = await rpc.InvokeWithCancellationAsync<FuseHostHandshake>(
+                "fuse/handshake", [], cancellationToken);
+            return await invoke(rpc, handshake, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
             return default;
         }
         finally

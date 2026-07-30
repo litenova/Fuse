@@ -3,6 +3,7 @@ using System.IO.Pipes;
 using System.Net.Sockets;
 using System.Text.Json;
 using Fuse.Cli.Rpc;
+using Fuse.Cli.Mcp;
 using Fuse.Plugins.Abstractions.Reducers;
 using Fuse.Reduction;
 using Fuse.Reduction.Security;
@@ -30,6 +31,8 @@ public sealed class FuseHostRpcOutcomeTests : IDisposable
         _provider.GetRequiredService<ContentReductionPipeline>(),
         _provider.GetRequiredService<ISecretRedactor>(),
         _provider.GetRequiredService<IGeneratedCodeDetector>(),
+        _provider.GetRequiredService<IndexCoordinator>(),
+        _provider.GetRequiredService<IWorkspaceIndexJobManager>(),
         NullLogger<FuseHostService>.Instance,
         servedRoot);
 
@@ -86,7 +89,7 @@ public sealed class FuseHostRpcOutcomeTests : IDisposable
 
         var handshake = await clientRpc.InvokeAsync<FuseHostHandshake>("fuse/handshake");
         var ex = await Assert.ThrowsAnyAsync<RemoteRpcException>(() =>
-            clientRpc.InvokeAsync<IndexResultDto>("fuse/index", handshake.SessionToken, other));
+            clientRpc.InvokeAsync<IndexJobStartResult>("fuse/indexStart", handshake.SessionToken, other));
 
         Assert.Contains("served root", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(JsonRpcErrorCode.InvalidParams, ex.ErrorCode);

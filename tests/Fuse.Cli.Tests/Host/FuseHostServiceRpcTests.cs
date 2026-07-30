@@ -1,6 +1,7 @@
 using System.IO.Pipelines;
 using System.Text.Json;
 using Fuse.Cli.Rpc;
+using Fuse.Cli.Mcp;
 using Fuse.Plugins.Abstractions.Reducers;
 using Fuse.Reduction;
 using Fuse.Retrieval;
@@ -29,6 +30,8 @@ public sealed class FuseHostServiceRpcTests : IDisposable
         _provider.GetRequiredService<ContentReductionPipeline>(),
         _provider.GetRequiredService<ISecretRedactor>(),
         _provider.GetRequiredService<IGeneratedCodeDetector>(),
+        _provider.GetRequiredService<IndexCoordinator>(),
+        _provider.GetRequiredService<IWorkspaceIndexJobManager>(),
         NullLogger<FuseHostService>.Instance);
 
     private static string SessionToken(FuseHostService service) => service.Handshake().SessionToken;
@@ -99,7 +102,7 @@ public sealed class FuseHostServiceRpcTests : IDisposable
         clientRpc.StartListening();
 
         var handshake = await clientRpc.InvokeAsync<FuseHostHandshake>("fuse/handshake");
-        Assert.Equal(10, handshake.ProtocolVersion);
+        Assert.Equal(11, handshake.ProtocolVersion);
         Assert.Equal(FuseHostService.ProtocolVersion, handshake.ProtocolVersion);
         Assert.False(string.IsNullOrWhiteSpace(handshake.HostVersion));
         Assert.False(string.IsNullOrWhiteSpace(handshake.SessionToken));
@@ -136,7 +139,7 @@ public sealed class FuseHostServiceRpcTests : IDisposable
 
         var handshake = await clientRpc.InvokeAsync<FuseHostHandshake>("fuse/handshake");
 
-        Assert.Equal(10, handshake.ProtocolVersion);
+        Assert.Equal(11, handshake.ProtocolVersion);
         Assert.Equal(FuseHostService.ProtocolVersion, handshake.ProtocolVersion);
         Assert.False(string.IsNullOrWhiteSpace(handshake.HostVersion));
         Assert.False(string.IsNullOrWhiteSpace(handshake.SessionToken));
@@ -189,7 +192,7 @@ public sealed class FuseHostServiceRpcTests : IDisposable
     }
 
     [Fact]
-    public async Task Index_WarmsTheEngineAndCountsFiles()
+    public async Task IndexStart_builds_syntax_index_and_counts_files()
     {
         var source = NewFixture(
             ("Widget.cs", "public class Widget { public void Run() { } }"),
@@ -198,10 +201,14 @@ public sealed class FuseHostServiceRpcTests : IDisposable
         try
         {
             var service = NewService();
-            var result = await service.IndexAsync(SessionToken(service), source);
+            var result = await service.IndexStartAsync(SessionToken(service), source);
+            var completed = await _provider.GetRequiredService<IWorkspaceIndexJobManager>()
+                .WaitForCompletionAsync(source, CancellationToken.None);
 
-            Assert.Equal("Warm", result.IndexState);
-            Assert.True(result.FileCount >= 2, $"expected at least 2 files, got {result.FileCount}");
+            Assert.False(result.Conflict);
+            Assert.NotNull(completed);
+            Assert.Equal(IndexJobState.Completed, completed!.State);
+            Assert.True(completed.Counts.Files >= 2, $"expected at least 2 files, got {completed.Counts.Files}");
         }
         finally
         {
@@ -210,17 +217,20 @@ public sealed class FuseHostServiceRpcTests : IDisposable
     }
 
     [Fact]
-    public async Task Index_EmptyRepositoryReportsWarmCompletedManifest()
+    public async Task IndexStart_empty_repository_reports_completed_job()
     {
         var source = NewFixture();
 
         try
         {
             var service = NewService();
-            var result = await service.IndexAsync(SessionToken(service), source);
+            await service.IndexStartAsync(SessionToken(service), source);
+            var result = await _provider.GetRequiredService<IWorkspaceIndexJobManager>()
+                .WaitForCompletionAsync(source, CancellationToken.None);
 
-            Assert.Equal("Warm", result.IndexState);
-            Assert.Equal(0, result.FileCount);
+            Assert.NotNull(result);
+            Assert.Equal(IndexJobState.Completed, result!.State);
+            Assert.Equal(0, result.Counts.Files);
         }
         finally
         {
@@ -229,15 +239,15 @@ public sealed class FuseHostServiceRpcTests : IDisposable
     }
 
     [Fact]
-    public async Task Index_MissingDirectory_ReportsNotIndexed()
+    public async Task IndexStart_missing_directory_reports_failed_job()
     {
         var missing = Path.Combine(Path.GetTempPath(), "fuse-host-missing", Guid.NewGuid().ToString("N"));
 
         var service = NewService();
-        var result = await service.IndexAsync(SessionToken(service), missing);
+        var result = await service.IndexStartAsync(SessionToken(service), missing);
 
-        Assert.Equal("NotIndexed", result.IndexState);
-        Assert.Equal(0, result.FileCount);
+        Assert.Equal(IndexJobState.Failed, result.Snapshot.State);
+        Assert.Equal("workspace_not_found", result.Snapshot.ErrorCode);
     }
 
     [Fact]

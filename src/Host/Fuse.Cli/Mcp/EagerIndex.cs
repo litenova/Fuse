@@ -103,7 +103,6 @@ public static class EagerIndex
                 if (!manifest.Ready)
                 {
                     await indexer.IndexSyntaxFirstAsync(normalizedRoot, store, wct);
-                    FuseTools.ScheduleSemanticUpgrade(indexer, normalizedRoot);
                 }
 
                 return 0;

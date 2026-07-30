@@ -9,7 +9,7 @@ This page is for engineers choosing a command and for maintainers who need the e
 
 ## Purpose and scope
 
-The index lives in `.fuse/fuse.db` inside a repository, or under `FUSE_USER_DATA` for supported one-shot non-Git CLI paths. Run `fuse index [path]` before one-shot CLI read commands. Every MCP tool except `fuse_reduce` resolves a Git repository identity; indexed reads open a validated warm index and build it on first use. Outside Git, workspace-scoped MCP tools return `workspace_identity_unresolved:` without starting a daemon or writing an index. Running `fuse` with no command prints connection and workflow guidance.
+The index lives in `.fuse/fuse.db` inside a Git repository. Run `fuse index [path]` before one-shot CLI read commands. Every MCP tool except `fuse_reduce` resolves a Git repository identity; indexed reads open a validated warm index and start a syntax job on first use. Outside Git, workspace-scoped MCP tools return `workspace_identity_unresolved:` without starting a daemon or writing an index. Running `fuse` with no command prints connection and workflow guidance.
 
 ## Operational error prefixes
 
@@ -28,7 +28,10 @@ CLI commands that open the store (`fuse find`, `fuse index`, `fuse diagnostics`)
 
 | Command | Does | Reads index | Writes index |
 |---------|------|-------------|--------------|
-| `fuse index [path]` | Build or refresh the semantic index | n/a | yes |
+| `fuse index [path]` | Start or join the repository syntax index job | n/a | yes |
+| `fuse index status [path]` | Show index job state, counts, and storage | no | no |
+| `fuse index cancel [path]` | Request cancellation of the repository index job | no | no |
+| `fuse index clean [path] --yes` | Remove only documented Fuse-derived index files | no | yes |
 | `fuse warm [path]` | Warm the index now (syntax-first build) so the next read is fast; a warm store is a no-op | n/a | yes |
 | `fuse warm --service install\|uninstall\|status` | Manage the opt-in always-on warm service (never installed by `fuse mcp install`) | n/a | n/a |
 | `fuse map [path]` | Print a workspace map (symbols, routes, counts) | yes | no |
@@ -76,13 +79,21 @@ re-handshakes with the new tool surface.
 
 ## fuse index
 
-Build or refresh the persistent semantic index for a workspace. A path inside Git resolves to the repository root. The command loads the workspace through MSBuild/Roslyn when possible and falls back to syntax-level indexing otherwise. A normal refresh reconciles the complete inventory and prunes stale files; `--force` first discards all derived tables.
+Build or refresh the persistent index for a workspace. A path inside Git resolves to the repository root. The default job extracts syntax only. Use `--semantic` to continue through compiler analysis after syntax is ready; this requires one unambiguous workspace target. Matching requests join one daemon-owned job, so a second `fuse index` reports the same progress instead of contending for SQLite.
 
 ```text
 fuse index ./src
+fuse index . --semantic
 fuse index . --force
 fuse index . --from-capture ./fuse-capture
+fuse index status . --json
+fuse index cancel .
+fuse index clean . --yes
 ```
+
+Use `--json` with start, status, or cancel for machine-readable job snapshots. Start writes JSON Lines snapshots while the job runs. A normal terminal view prints the current phase, completed file count, percent when known, and an ETA after five units in one phase. The first Ctrl+C requests cancellation and waits up to five seconds before returning exit code 130. A second Ctrl+C exits the CLI without stopping the daemon.
+
+`fuse index clean` cancels an active job, waits for its owned store to close, and removes only `.fuse/fuse.db`, its SQLite sidecars, `fuse-cache.db` sidecars, and `r60-semantics.json`. It never removes `fuse.json`, `.fuseignore`, or capture bundles. Interactive terminals display the exact targets and ask for confirmation; redirected input requires `--yes`.
 
 ## fuse map
 

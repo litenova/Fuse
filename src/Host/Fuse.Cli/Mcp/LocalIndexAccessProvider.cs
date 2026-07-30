@@ -31,7 +31,7 @@ public sealed class LocalIndexAccessProvider : IIndexAccessProvider
         var root = WorkspacePathResolver.ResolveRepositoryRoot(path);
         return IndexCoordinator.Default.OpenForWriteAsync(
             root,
-            (writeStore, ct) => indexer.IndexAsync(root, writeStore, ct),
+            (writeStore, ct) => indexer.IndexSyntaxFirstAsync(root, writeStore, ct),
             cancellationToken);
     }
 }

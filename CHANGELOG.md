@@ -4,6 +4,15 @@ All notable changes to Fuse are documented here. The format is based on Keep a C
 
 ## [Unreleased]
 
+### Added
+
+- `fuse index` now exposes a repository-owned job lifecycle. `fuse index status`, `fuse index cancel`, and `fuse index clean --yes` report, cancel, and remove only documented derived index files. Start, status, and cancel support JSON output.
+
+### Changed
+
+- Indexing starts at the syntax tier. `fuse index --semantic` explicitly continues into compiler analysis after syntax rows are available. Matching callers join one daemon-owned job instead of colliding with the SQLite writer.
+- Host protocol 11 replaces `fuse/index` with `fuse/indexStart`, `fuse/indexStatus`, and `fuse/indexCancel`. `fuse/openIndexed` includes the current job snapshot while syntax data is being built.
+
 ## [4.3.0] - 2026-07-16
 
 ### Added

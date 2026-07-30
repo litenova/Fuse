@@ -4,6 +4,7 @@ using Fuse.Plugins.Formats.Web.Extensions;
 using Fuse.Plugins.Languages.CSharp.Extensions;
 using Fuse.Plugins.Languages.CSharp.Roslyn.Extensions;
 using Fuse.Cli.Services;
+using Fuse.Cli.Mcp;
 using Fuse.Context;
 using Fuse.Retrieval;
 using Fuse.Semantics;
@@ -51,6 +52,10 @@ public static class FuseServiceCollectionExtensions
         services.AddSingleton(_ => SemanticAnalysisRunner.CreateDefault());
         services.AddTransient<WorkspaceFileScanner>();
         services.AddTransient<SemanticIndexer>();
+        services.AddSingleton<IndexCoordinator>();
+        services.AddSingleton<IWorkspaceIndexJobExecutor, SemanticIndexJobExecutor>();
+        services.AddSingleton<IWorkspaceIndexJobManager, WorkspaceIndexJobManager>();
+        services.AddSingleton<IndexJobClient>();
         services.AddSingleton<IChangeSource, GitChangeSource>();
         services.AddSingleton<ContextSessionStore>();
         return services;
