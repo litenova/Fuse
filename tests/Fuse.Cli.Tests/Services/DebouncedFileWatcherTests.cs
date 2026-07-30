@@ -51,6 +51,28 @@ public sealed class DebouncedFileWatcherTests : IDisposable
         Assert.NotSame(tcs.Task, completed);
     }
 
+    [Fact]
+    public async Task GitMetadataChanges_DoNotTriggerWatcher()
+    {
+        Directory.CreateDirectory(_root);
+        var gitDirectory = Path.Combine(_root, ".git");
+        Directory.CreateDirectory(gitDirectory);
+
+        using var watcher = new DebouncedFileWatcher(_root, recursive: true, debounceMilliseconds: 100);
+        var tcs = new TaskCompletionSource();
+
+        watcher.Changed += _ =>
+        {
+            tcs.TrySetResult();
+            return Task.CompletedTask;
+        };
+
+        await File.WriteAllTextAsync(Path.Combine(gitDirectory, "index.lock"), "lock");
+
+        var completed = await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromSeconds(1)));
+        Assert.NotSame(tcs.Task, completed);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_root))

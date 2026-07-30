@@ -64,7 +64,7 @@ Check honesty is preserved exactly: the pooled worker runs the identical fork-an
 
 ## Live incremental index
 
-The daemon keeps the index fresh as the tree changes (R39). A debounced file-system watcher over the served root (which also fires on `.git/HEAD` and `.git/index`, so branch switches and pulls are caught) reconciles the changed files into the store through the single-writer coordinator, so a read finds the index already fresh and pays no per-read reconcile cost. The reconcile is overlap-guarded (one at a time) and best-effort (a failure never tears down the daemon); a periodic safety reconcile catches events a watcher dropped (network drives), and on-read reconcile stays the backstop, so freshness never depends on the watcher being perfect. Default-on with the daemon; opt out with `FUSE_WATCH=0`.
+The daemon keeps the index fresh as the tree changes (R39). A debounced file-system watcher over the served root reconciles changed workspace files into the store through the single-writer coordinator, so a read finds the index already fresh and pays no per-read reconcile cost. It ignores `.git` and `.fuse`: inventory invokes Git commands that can update metadata, and Fuse's own derived files must not schedule another refresh. The reconcile is overlap-guarded (one at a time) and best-effort (a failure never tears down the daemon); a periodic safety reconcile catches events a watcher dropped (network drives), and on-read reconcile stays the backstop, so freshness never depends on the watcher being perfect. Default-on with the daemon; opt out with `FUSE_WATCH=0`.
 
 ## Bounded cold start
 

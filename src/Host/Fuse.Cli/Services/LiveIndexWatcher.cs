@@ -2,10 +2,11 @@ namespace Fuse.Cli.Services;
 
 /// <summary>
 ///     Keeps the index live (R39): on a debounced file-system change (from <see cref="DebouncedFileWatcher" />,
-///     which also fires on <c>.git/HEAD</c> and <c>.git/index</c> so branch switches and pulls are caught), it
-///     requests a syntax refresh through the repository job manager. The manager deduplicates source changes with
-///     explicit index requests, so the watcher never opens the SQLite writer directly. Default-on when the daemon
-///     is active; opt out with <c>FUSE_WATCH=0</c>. A periodic safety request catches events a watcher dropped.
+///     which observes workspace source changes), it requests a syntax refresh through the repository job manager.
+///     The watcher excludes Git metadata because the inventory stage invokes Git commands that can update it. The
+///     manager deduplicates source changes with explicit index requests, so the watcher never opens the SQLite
+///     writer directly. Default-on when the daemon is active; opt out with <c>FUSE_WATCH=0</c>. A periodic safety
+///     request catches events a watcher dropped.
 /// </summary>
 public sealed class LiveIndexWatcher : IDisposable
 {
