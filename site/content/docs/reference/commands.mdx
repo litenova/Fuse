@@ -35,13 +35,11 @@ CLI commands that open the store (`fuse find`, `fuse index`, `fuse diagnostics`)
 | `fuse warm [path]` | Warm the index now (syntax-first build) so the next read is fast; a warm store is a no-op | n/a | yes |
 | `fuse warm --service install\|uninstall\|status` | Manage the opt-in always-on warm service (never installed by `fuse mcp install`) | n/a | n/a |
 | `fuse map [path]` | Print a workspace map (symbols, routes, counts) | yes | no |
-| `fuse localize [path]` | Rank candidate files and symbols for a task (no bodies) | yes | no |
-| `fuse resolve [path]` | Resolve a service, request, route, config, or symbol | yes | no |
 | `fuse context [path]` | Plan and emit context for seeds (source bodies) | yes | no |
 | `fuse review [path]` | Review a change, or emit a handoff packet | yes | no |
 | `fuse impact <symbol>` | Compute symbol impact or a package upgrade break set | yes | no |
 | `fuse test <symbol>` | Run the covering tests for a symbol | yes | no |
-| `fuse find <query>` | Find an exact symbol, path, or text match | yes | no |
+| `fuse find <query> --kind <kind>` | Find an exact match, resolve wiring, inspect graph facts, or rank task candidates | yes | no |
 | `fuse diagnostics [path]` | Report index state (fast read-only status) | yes | no |
 | `fuse doctor [path]` | Diagnose the semantic load tier and per-project downgrade reasons | no | no |
 | `fuse up [path]` | Report the environment-remediation plan (remedies per failure, workable subset); `--apply` applies the install-free NU1507 overlay and re-attempts the load | no | no |
@@ -103,27 +101,21 @@ Print a map of the indexed workspace: symbols, routes, and counts.
 fuse map ./src --detail symbols
 ```
 
-## fuse localize
+## fuse find
 
-Localize a task to ranked candidate files and symbols, with reasons and token costs and no source bodies. The cheap first step; follow with `fuse context`.
-
-```text
-fuse localize ./src --task "billing endpoint"
-```
-
-Accepts `--task`, `--route`, `--symbol`, `--service`, `--request`, `--config`, `--changed-since`, `--max-candidates`, `--strict`, and `--expand`. Best-effort localization is the default; `--strict` refuses an insufficient query and returns only its navigation map.
-
-## fuse resolve
-
-Deterministically resolve .NET wiring to its target. Supply one of the options.
+Query the index without returning source bodies. The `kind` selects one mental act:
 
 ```text
-fuse resolve ./src --service IOrderService
-fuse resolve ./src --request CreateOrderCommand
-fuse resolve ./src --route "POST /api/orders/{id}"
-fuse resolve ./src --config Orders
-fuse resolve ./src --symbol OrderService
+fuse find IOrderService --kind service --path ./src
+fuse find CreateOrderCommand --kind request --path ./src
+fuse find "POST /api/orders/{id}" --kind route --path ./src
+fuse find Orders --kind config --path ./src
+fuse find OrderService --kind signatures --path ./src
+fuse find OrderService --kind neighbors --path ./src
+fuse find "billing endpoint" --kind task --path ./src --strict
 ```
+
+Use `symbol`, `path`, `text`, or `all` for exact index lookup. Use `service`, `request`, `route`, or `config` to follow typed wiring. `signatures` returns declarations and `neighbors` returns callers and implementers. `task` ranks candidate files for an open-ended task; `--changed-since`, `--max-candidates`, `--strict`, and `--expand` apply to task localization.
 
 ## fuse context
 

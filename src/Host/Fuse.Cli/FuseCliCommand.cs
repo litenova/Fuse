@@ -55,8 +55,8 @@ public class FuseCliCommand
               fuse review --changed-since <ref>  Review a change since a git ref.
 
             Context infrastructure:
-              fuse index [path]                  Build the persistent semantic index.
-              fuse find <query>                  Find symbols, wiring, paths, or text.
+              fuse index [path]                  Build the persistent syntax index.
+              fuse find <query> --kind <kind>    Find symbols, wiring, paths, or tasks.
               fuse context --seed <symbol>       Emit scoped, reduced source context.
               fuse map [path]                    Print symbols, routes, and counts.
 

@@ -109,18 +109,17 @@ fuse index ./src
 fuse review ./src --changed-since origin/main --max-tokens 25000
 ```
 
-Fuse loads the workspace through MSBuild and Roslyn when it can, and falls back to
-syntax-level indexing otherwise. The index lives in a single SQLite file at
-`.fuse/fuse.db`. MCP serving starts an eager background warm by default. `fuse index` is the
-synchronous CLI path when a script or developer needs to wait for completion. Fuse keeps
-the index fresh automatically as files change.
+Fuse starts with syntax indexing. `fuse index --semantic` adds compiler analysis when a
+selected workspace needs it. The index lives in a single SQLite file at `.fuse/fuse.db`.
+`fuse index` waits for the repository job and renders progress while it runs. Fuse keeps
+the index fresh as files change.
 
 You can also resolve .NET wiring directly:
 
 ```bash
-fuse resolve ./src --service IOrderService
-fuse resolve ./src --request CreateOrderCommand
-fuse resolve ./src --route "POST /api/orders/{id}"
+fuse find IOrderService --kind service --path ./src
+fuse find CreateOrderCommand --kind request --path ./src
+fuse find "POST /api/orders/{id}" --kind route --path ./src
 ```
 
 ## Set Project Defaults

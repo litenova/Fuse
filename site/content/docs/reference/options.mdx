@@ -16,8 +16,10 @@ Run `fuse index` before one-shot CLI read commands. MCP read tools build the ind
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `path` | string | `.` | Workspace directory to index. |
+| `--semantic` | bool | `false` | Continue through compiler analysis after syntax indexing. Requires one workspace target. |
 | `--force` | bool | `false` | Force a full re-index instead of an incremental update. |
 | `--from-capture` | string | None | Rehydrate from a compatible `fuse capture` bundle instead of building. |
+| `--json` | bool | `false` | Emit JSON Lines progress snapshots. |
 
 ## fuse map
 
@@ -27,36 +29,19 @@ Run `fuse index` before one-shot CLI read commands. MCP read tools build the ind
 | `--detail` | string | `symbols` | What to include: `symbols`, `routes`, or `all`. |
 | `--max-rows` | int | `200` | Maximum rows per section. |
 
-## fuse localize
+## fuse find
 
-Supply `--task` for an open-ended query, or one of the named flags to seed candidates from a specific node.
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `path` | string | `.` | Workspace directory. |
-| `--task` | string | None | Free-text task or query to localize. |
-| `--route` | string | None | A route to resolve, for example `POST /api/orders/{id}`. |
-| `--symbol` | string | None | A symbol to focus on. |
-| `--service` | string | None | A service to resolve to its implementation. |
-| `--request` | string | None | A request or command to resolve to its handler. |
-| `--config` | string | None | A config section to resolve to its options type. |
-| `--changed-since` | string | None | A git base ref whose changed files seed the candidates. |
-| `--max-candidates` | int | `50` | Maximum candidates to return. |
-| `--strict` | bool | `false` | Return only a navigation map when signal is insufficient. |
-| `--expand` | bool | `false` | Add typed-graph neighbors to selected candidates. |
-
-## fuse resolve
-
-Supply exactly one of the five.
+Use `kind` to select exact lookup, wiring resolution, graph facts, or task localization.
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
+| `query` | string | required | Name, path fragment, text, wiring identifier, or task description. |
 | `path` | string | `.` | Workspace directory. |
-| `--service` | string | None | Resolve a service to its implementation. |
-| `--request` | string | None | Resolve a request or command to its handler. |
-| `--route` | string | None | Resolve a route to its handler. |
-| `--config` | string | None | Resolve a config section to its options type. |
-| `--symbol` | string | None | Resolve a symbol name to its declaration. |
+| `--kind` | string | `all` | `symbol`, `path`, `text`, `all`, `service`, `request`, `route`, `config`, `signatures`, `neighbors`, or `task`. |
+| `--changed-since` | string | None | Git base ref whose changed files seed task candidates. |
+| `--max-candidates` | int | `50` | Maximum task candidates or graph neighbors. |
+| `--strict` | bool | `false` | Return only a navigation map when a task has insufficient signal. |
+| `--expand` | bool | `false` | Add graph neighbors to task candidates. |
 
 ## fuse context
 
@@ -157,4 +142,4 @@ The codebase retains a legacy directory-fusion pipeline used by internal benchma
 
 ## Next
 
-Continue to the [Configuration keys reference](/docs/reference/configuration-keys) to set defaults in a file, or to [Scoping](/docs/concepts/scoping) for how localize, resolve, and review seed the graph.
+Continue to the [Configuration keys reference](/docs/reference/configuration-keys) to set defaults in a file, or to [Scoping](/docs/concepts/scoping) for how find and review seed the graph.
