@@ -26,14 +26,11 @@ flowchart TD
     D -- No --> F[Abstain<br/>name the missing prerequisite]
 ```
 
-- **oracle** - a speculative typecheck against the build-captured compilation. The
-  proposed content is applied to the rehydrated compilation in memory, with no disk write and
-  no build during the check. It is available when the repository builds and is captured with
-  build capture. Build capture is on by default: the out-of-process build-capture worker ships
-  inside the tool and is discovered with no configuration (opt out with
-  `FUSE_BUILD_CAPTURE=0`), and a capture bundle produced elsewhere also serves it. The
-  sub-second measurements apply to the live resident workspace, which is opt-in with
-  `FUSE_RESIDENT=1`.
+- **oracle** - a speculative typecheck against a captured compilation. The proposed content
+  is applied to the rehydrated compilation in memory, with no disk write and no second build
+  during the check. A resident workspace, an indexed capture, or a capture bundle can supply
+  this grade. The sub-second measurements apply to the opt-in live resident workspace
+  (`FUSE_RESIDENT=1`).
 - **build** - when no oracle substrate is available, Fuse runs the real `dotnet build`
   toolchain scoped to the owning project and parses its diagnostics into the exact same shape
   the oracle path returns. The compiler itself produced this verdict. It costs build
@@ -59,11 +56,12 @@ real project build.
 ## The tree is never written
 
 Build-grade verification checks *proposed* content, but Fuse does not write your file to run
-the build. The owning project is mirrored to a temporary directory, the proposed content
-replaces the one file in that copy, its `<ProjectReference>` includes are rewritten to
-absolute paths pointing at the untouched original projects, and the build runs in the copy.
-Your working tree is not touched, in keeping with the rule that the server only ever writes
-the tree through one explicit apply path.
+the build. Fuse resolves the owning project from SDK default compile rules and explicit
+`Compile` items. It mirrors the repository source layout to a temporary directory, replaces
+the proposed file there, then builds the owning project from that copy. Preserving the layout
+keeps project references and linked source files pointed at the proposed content. A linked
+file is checked in every project that owns it. Your working tree is not touched, in keeping
+with the rule that the server only ever writes the tree through one explicit apply path.
 
 ## How the grades are kept honest
 

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using Fuse.Collection;
 using Fuse.Indexing;
 
 namespace Fuse.Semantics;
@@ -14,11 +15,10 @@ namespace Fuse.Semantics;
 /// </summary>
 /// <remarks>
 ///     <para>
-///         Tree safety (Decision D2): the working tree is never written. The owning project of the changed file is
-///         copied to a temporary directory (build outputs excluded), the proposed content replaces the one file in
-///         that copy, and the copy's <c>&lt;ProjectReference&gt;</c> includes are rewritten to absolute paths
-///         pointing at the untouched original sibling projects, so the temp build compiles the edited project
-///         against the real dependency closure without ever writing the real file.
+///         Tree safety (Decision D2): the working tree is never written. The repository source tree is copied to a
+///         temporary directory (build outputs excluded), then the proposed content replaces one file in that copy.
+///         Keeping the original relative layout preserves SDK default items, project references, and linked
+///         <c>Compile</c> items while the selected project builds without writing the real file.
 ///     </para>
 ///     <para>
 ///         Scope is the owning project only, a correct lower bound: a break the edit introduces in the edited file
@@ -35,10 +35,6 @@ public sealed class BuildGradeChecker
     private static readonly Regex DiagnosticLine = new(
         @"^(?<path>.+?)\((?<line>\d+),(?<col>\d+)\):\s+(?<sev>error|warning)\s+(?<id>[A-Za-z]+\d+):\s+(?<msg>.*?)(\s+\[[^\]]+\])?$",
         RegexOptions.Multiline | RegexOptions.Compiled);
-
-    private static readonly Regex ProjectReferenceInclude = new(
-        "(?<attr>Include\\s*=\\s*\")(?<rel>[^\"]+?\\.csproj)(\")",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private readonly TimeSpan _timeout;
     private readonly IProcessRunner _processRunner;
@@ -83,16 +79,79 @@ public sealed class BuildGradeChecker
             return CheckResult.Abstain(
                 $"cannot build-verify: '{relativeFilePath}' is not under any discovered project directory");
 
-        var owningDir = Path.GetDirectoryName(owningProject)!;
-        var fileRelativeToProject = Path.GetRelativePath(owningDir, fileAbsolute);
+        return await CheckProjectsAsync(
+            rootDirectory,
+            [owningProject],
+            relativeFilePath,
+            newContent,
+            cancellationToken);
+    }
 
+    /// <summary>
+    ///     Runs a build-grade check against every project that explicitly owns the edited source file.
+    /// </summary>
+    /// <param name="rootDirectory">The repository root the source path is relative to.</param>
+    /// <param name="ownership">The project ownership resolved from SDK defaults and explicit compile items.</param>
+    /// <param name="relativeFilePath">The repository-relative path of the file being changed.</param>
+    /// <param name="newContent">The proposed full replacement content.</param>
+    /// <param name="cancellationToken">A token to cancel the scoped builds.</param>
+    /// <returns>A merged build-grade result, or an abstention when no owner can build the edit.</returns>
+    public Task<CheckResult> CheckAsync(
+        string rootDirectory,
+        ProjectOwnership ownership,
+        string relativeFilePath,
+        string newContent,
+        CancellationToken cancellationToken) =>
+        ownership.IsResolved
+            ? CheckProjectsAsync(rootDirectory, ownership.ProjectPaths, relativeFilePath, newContent, cancellationToken)
+            : Task.FromResult(CheckResult.Abstain(
+                $"cannot build-verify: '{relativeFilePath}' is not included by any discovered project"));
+
+    private async Task<CheckResult> CheckProjectsAsync(
+        string rootDirectory,
+        IReadOnlyList<string> owningProjects,
+        string relativeFilePath,
+        string newContent,
+        CancellationToken cancellationToken)
+    {
+        var diagnostics = new List<CheckDiagnostic>();
+        foreach (var owningProject in owningProjects.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var result = await CheckProjectAsync(
+                rootDirectory,
+                owningProject,
+                relativeFilePath,
+                newContent,
+                cancellationToken);
+            if (!result.Verified)
+                return result;
+            diagnostics.AddRange(result.Diagnostics);
+        }
+
+        var distinctDiagnostics = diagnostics
+            .GroupBy(diagnostic =>
+                $"{diagnostic.Id}\u001f{diagnostic.Severity}\u001f{diagnostic.FilePath}\u001f{diagnostic.Line}\u001f{diagnostic.Message}",
+                StringComparer.Ordinal)
+            .Select(group => group.First())
+            .ToList();
+        return CheckResult.BuildGraded(distinctDiagnostics);
+    }
+
+    private async Task<CheckResult> CheckProjectAsync(
+        string rootDirectory,
+        string owningProject,
+        string relativeFilePath,
+        string newContent,
+        CancellationToken cancellationToken)
+    {
         var tempRoot = Path.Combine(Path.GetTempPath(), "fuse-build-grade", Guid.NewGuid().ToString("N"));
         try
         {
-            var tempProjectFile = MirrorProject(owningProject, owningDir, tempRoot);
+            var tempProjectFile = MirrorWorkspace(rootDirectory, owningProject, tempRoot, cancellationToken);
 
             // Apply the proposed content in the copy (creating the file if the edit adds it).
-            var tempChangedFile = Path.GetFullPath(Path.Combine(tempRoot, fileRelativeToProject));
+            var tempChangedFile = Path.GetFullPath(Path.Combine(tempRoot, relativeFilePath));
             Directory.CreateDirectory(Path.GetDirectoryName(tempChangedFile)!);
             await File.WriteAllTextAsync(tempChangedFile, newContent, cancellationToken);
 
@@ -126,46 +185,58 @@ public sealed class BuildGradeChecker
         }
     }
 
-    // Copies the owning project directory to the temp root, skipping build/tooling output directories, and
-    // rewrites the copied .csproj's <ProjectReference> includes to absolute paths pointing at the untouched
-    // originals, so the temp build sees the real dependency closure without touching the tree. Returns the path
-    // to the copied project file.
-    private static string MirrorProject(string owningProject, string owningDir, string tempRoot)
+    // Copies the repository source layout to a temporary root, skipping build/tooling output directories. A linked
+    // Compile item can point outside its owning project directory, so copying only that project would silently
+    // build the original linked file rather than the proposed edit. The preserved relative layout keeps project
+    // references and linked source paths inside the disposable mirror.
+    private static string MirrorWorkspace(
+        string rootDirectory,
+        string owningProject,
+        string tempRoot,
+        CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(tempRoot);
-        foreach (var source in Directory.EnumerateFiles(owningDir, "*", SearchOption.AllDirectories))
+        var excludedDirectories = new HashSet<string>(
+            WorkspaceExclusions.LoadDirectoryNames(rootDirectory),
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var source in EnumerateMirrorFiles(rootDirectory, excludedDirectories, cancellationToken))
         {
-            var relative = Path.GetRelativePath(owningDir, source);
-            if (IsExcludedPath(relative))
-                continue;
+            var relative = Path.GetRelativePath(rootDirectory, source);
             var destination = Path.Combine(tempRoot, relative);
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
             File.Copy(source, destination, overwrite: true);
         }
 
-        var tempProjectFile = Path.Combine(tempRoot, Path.GetFileName(owningProject));
-        var projectText = File.ReadAllText(tempProjectFile);
-        var rewritten = ProjectReferenceInclude.Replace(projectText, match =>
-        {
-            var rel = match.Groups["rel"].Value;
-            var absolute = Path.GetFullPath(Path.Combine(owningDir, rel));
-            return $"{match.Groups["attr"].Value}{absolute}\"";
-        });
-        if (!string.Equals(rewritten, projectText, StringComparison.Ordinal))
-            File.WriteAllText(tempProjectFile, rewritten);
-
-        return tempProjectFile;
+        return Path.Combine(tempRoot, Path.GetRelativePath(rootDirectory, owningProject));
     }
 
-    private static bool IsExcludedPath(string relativePath)
+    private static IEnumerable<string> EnumerateMirrorFiles(
+        string rootDirectory,
+        IReadOnlySet<string> excludedDirectories,
+        CancellationToken cancellationToken)
     {
-        foreach (var segment in relativePath.Split('/', '\\'))
+        var pending = new Stack<string>();
+        pending.Push(rootDirectory);
+        while (pending.Count > 0)
         {
-            if (segment is "bin" or "obj" or ".vs" or ".git")
-                return true;
-        }
+            cancellationToken.ThrowIfCancellationRequested();
+            var directory = pending.Pop();
+            foreach (var file in Directory.EnumerateFiles(directory))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                yield return file;
+            }
 
-        return false;
+            foreach (var child in Directory.EnumerateDirectories(directory))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var name = Path.GetFileName(child);
+                if (excludedDirectories.Contains(name)
+                    || (!PathsEqual(child, rootDirectory) && WorkspaceExclusions.IsVcsRoot(child)))
+                    continue;
+                pending.Push(child);
+            }
+        }
     }
 
     // The owning project is the project whose directory is the longest ancestor of the file, so a file in a nested

@@ -830,13 +830,14 @@ public sealed partial class FuseTools
             return fileError!;
         file = WorkspacePathResolver.ToRepoRelative(root, absoluteFile!);
 
-        var discovery = await new Fuse.Semantics.DotNetWorkspaceDiscoverer().DiscoverAsync(root, cancellationToken);
+        var ownership = await new Fuse.Semantics.ProjectOwnershipResolver().ResolveAsync(
+            root, file, cancellationToken);
 
         // R18: verification is compiler-tier and runs before any mandatory index open, so index contention cannot
         // block a build-grade answer when dotnet build could verify. Repair-packet enrichment is indexed-tier and
         // best-effort afterward.
         var (result, buildElapsedMs) = await RunFuseCheckVerificationAsync(
-            runtime, root, discovery, file, content, analyzers, cancellationToken);
+            runtime, root, ownership, file, content, analyzers, cancellationToken);
 
         if (!result.Verified)
             return $"cannot verify ({result.Grade}): {result.Reason}";
@@ -1431,7 +1432,7 @@ public sealed partial class FuseTools
     private static async Task<(Fuse.Indexing.CheckResult Result, long BuildElapsedMs)> RunFuseCheckVerificationAsync(
         FuseMcpRuntime runtime,
         string root,
-        WorkspaceDiscoveryResult discovery,
+        ProjectOwnership ownership,
         string file,
         string content,
         bool analyzers,
@@ -1458,24 +1459,38 @@ public sealed partial class FuseTools
         if (oracle is null)
             oracle = await TryOracleFromCaptureBundleAsync(runtime, root, file, content, client, cancellationToken);
 
-        var oracleTarget = discovery.SolutionPath ?? discovery.ProjectPaths.FirstOrDefault();
-        if (oracle is null && client.IsAvailable && oracleTarget is not null)
-        {
-            var candidate = await client.CheckAsync(oracleTarget, file, content, TimeSpan.FromMinutes(10), cancellationToken);
-            if (candidate.Verified)
-                oracle = candidate;
-        }
+        if (oracle is null && client.IsAvailable && ownership.IsResolved)
+            oracle = await TryOracleFromOwningProjectsAsync(client, ownership, file, content, cancellationToken);
 
         if (oracle is not null)
             return (oracle, 0);
 
-        if (discovery.ProjectPaths.Count == 0)
+        if (!ownership.IsResolved)
             return (CheckResult.Abstain("no project found to build (no oracle-grade capture and no buildable project)."), 0);
 
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         var buildResult = await new Fuse.Semantics.BuildGradeChecker(processRunner: runtime.ProcessRunner).CheckAsync(
-            root, discovery.ProjectPaths, file, content, cancellationToken);
+            root, ownership, file, content, cancellationToken);
         return (buildResult, stopwatch.ElapsedMilliseconds);
+    }
+
+    private static async Task<CheckResult?> TryOracleFromOwningProjectsAsync(
+        Fuse.Semantics.BuildCaptureClient client,
+        ProjectOwnership ownership,
+        string file,
+        string content,
+        CancellationToken cancellationToken)
+    {
+        var diagnostics = new List<CheckDiagnostic>();
+        foreach (var project in ownership.ProjectPaths.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var candidate = await client.CheckAsync(project, file, content, TimeSpan.FromMinutes(10), cancellationToken);
+            if (!candidate.Verified)
+                return null;
+            diagnostics.AddRange(candidate.Diagnostics);
+        }
+
+        return CheckResult.Ok(diagnostics.Distinct().ToList());
     }
 
     internal static async Task<Fuse.Indexing.CheckResult?> TryOracleFromCaptureBundleAsync(

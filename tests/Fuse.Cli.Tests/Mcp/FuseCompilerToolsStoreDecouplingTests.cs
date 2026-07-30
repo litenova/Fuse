@@ -77,6 +77,32 @@ public sealed class FuseCompilerToolsStoreDecouplingTests : IDisposable
     }
 
     [Fact]
+    public async Task FuseCheck_uses_the_owning_project_without_loading_an_ambiguous_solution()
+    {
+        var indexer = _provider.GetRequiredService<SemanticIndexer>();
+        var work = CreateBuildableWorkspace();
+        File.WriteAllText(Path.Combine(work, "A.sln"), "Microsoft Visual Studio Solution File, Format Version 12.00");
+        File.WriteAllText(Path.Combine(work, "B.sln"), "Microsoft Visual Studio Solution File, Format Version 12.00");
+
+        try
+        {
+            var output = await FuseTools.FuseCheckAsync(
+                indexer,
+                work,
+                "Widget.cs",
+                "namespace Sample; public sealed class Widget { public int Spin() => Nope; }",
+                cancellationToken: CancellationToken.None);
+
+            Assert.Contains("verification grade: build", output);
+            Assert.DoesNotContain("workspace selection is ambiguous", output, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            try { Directory.Delete(work, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
     public async Task FuseTest_returns_busy_header_when_covering_selection_store_is_locked()
     {
         var indexer = _provider.GetRequiredService<SemanticIndexer>();

@@ -132,4 +132,52 @@ public sealed class BuildGradeCheckerTests
             Cleanup(work);
         }
     }
+
+    [Fact]
+    public async Task Linked_source_is_verified_against_its_explicit_owner()
+    {
+        var work = Path.Combine(Path.GetTempPath(), "fuse-build-grade-linked", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(work, "src", "App"));
+        Directory.CreateDirectory(Path.Combine(work, "Shared"));
+        try
+        {
+            var project = Path.Combine(work, "src", "App", "App.csproj");
+            await File.WriteAllTextAsync(project, """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <PropertyGroup>
+                    <TargetFramework>net10.0</TargetFramework>
+                    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+                  </PropertyGroup>
+                  <ItemGroup>
+                    <Compile Include="../../Shared/Shared.cs" Link="Shared.cs" />
+                  </ItemGroup>
+                </Project>
+                """);
+            await File.WriteAllTextAsync(
+                Path.Combine(work, "Shared", "Shared.cs"),
+                "namespace Shared; public sealed class SharedType { public int Spin() => 42; }");
+            var ownership = new ProjectOwnership(
+                work,
+                "Shared/Shared.cs",
+                [project]);
+
+            var result = await new BuildGradeChecker().CheckAsync(
+                work,
+                ownership,
+                "Shared/Shared.cs",
+                "namespace Shared; public sealed class SharedType { public int Spin() => Missing; }",
+                CancellationToken.None);
+
+            Assert.Equal("build", result.Grade);
+            Assert.True(result.Verified, result.Reason);
+            Assert.False(result.IsClean);
+            var error = Assert.Single(result.Diagnostics, diagnostic => diagnostic.Severity == "Error");
+            Assert.StartsWith("CS", error.Id);
+            Assert.Equal("Shared/Shared.cs", error.FilePath);
+        }
+        finally
+        {
+            Cleanup(work);
+        }
+    }
 }

@@ -155,6 +155,36 @@ public sealed class DotNetWorkspaceDiscoverer
         return Task.FromResult(new WorkspaceDiscoveryResult(WorkspaceKind.Solution, best, projects, fullRoot));
     }
 
+    /// <summary>
+    ///     Lists project files that can own a file-specific compiler request without selecting a full solution.
+    /// </summary>
+    /// <param name="root">The repository root.</param>
+    /// <param name="cancellationToken">A token that stops directory traversal.</param>
+    /// <returns>The absolute project paths, sorted by path.</returns>
+    /// <remarks>
+    ///     A pinned <c>.csproj</c> is the one explicit workspace target. A pinned solution does not narrow the
+    ///     list because this method avoids loading or parsing the solution before it identifies the project that
+    ///     includes the requested source file.
+    /// </remarks>
+    public Task<IReadOnlyList<string>> DiscoverProjectPathsAsync(string root, CancellationToken cancellationToken)
+    {
+        var fullRoot = Path.GetFullPath(root);
+        var configuration = WorkspaceConfiguration.LoadOrThrow(fullRoot);
+        if (!string.IsNullOrWhiteSpace(configuration.Workspace))
+        {
+            var pinned = WorkspaceConfiguration.ResolveWorkspacePath(fullRoot, configuration.Workspace)!;
+            if (Path.GetExtension(pinned).Equals(".csproj", StringComparison.OrdinalIgnoreCase))
+                return Task.FromResult<IReadOnlyList<string>>([pinned]);
+        }
+
+        var ignored = new HashSet<string>(WorkspaceExclusions.LoadDirectoryNames(fullRoot), StringComparer.OrdinalIgnoreCase);
+        var projects = EnumerateFiles(fullRoot, ignored, cancellationToken)
+            .Where(file => Path.GetExtension(file).Equals(".csproj", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(file => file, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return Task.FromResult<IReadOnlyList<string>>(projects);
+    }
+
     private static WorkspaceConfigurationException AmbiguousWorkspace(string root, IReadOnlyList<string> candidates) =>
         new($"workspace selection is ambiguous: {string.Join(", ", candidates.Select(path => Relative(root, path)))}. Set the 'workspace' property in fuse.json.");
 
