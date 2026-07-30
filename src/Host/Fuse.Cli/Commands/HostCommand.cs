@@ -69,7 +69,9 @@ public sealed class HostCommand
         builder.Logging.SetMinimumLevel(LogLevel.Information);
         builder.Services.AddSingleton<IConsoleUI, StderrConsoleUI>();
         builder.Services.AddFuse();
-        builder.Services.AddSingleton<FuseHostService>();
+        builder.Services.AddSingleton<FuseHostService>(serviceProvider => new FuseHostService(
+            serviceProvider.GetRequiredService<FuseHostRequestContext>(),
+            serviceProvider.GetRequiredService<ILogger<FuseHostService>>()));
 
         using var app = builder.Build();
         var service = app.Services.GetRequiredService<FuseHostService>();

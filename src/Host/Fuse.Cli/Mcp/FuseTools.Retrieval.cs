@@ -16,9 +16,9 @@ using ModelContextProtocol.Server;
 namespace Fuse.Cli.Mcp;
 
 /// <summary>
-///     The retrieval MCP tools (localize, resolve, context, review) over the persistent semantic index.
+///     Retrieval operations shared by the focused MCP tool handlers.
 /// </summary>
-public sealed partial class FuseTools
+internal static partial class FuseToolOperations
 {
     /// <summary>
     ///     Localizes a task to ranked candidate files and symbols (no source bodies).

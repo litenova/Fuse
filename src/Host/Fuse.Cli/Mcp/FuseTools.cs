@@ -15,16 +15,13 @@ using ModelContextProtocol.Server;
 namespace Fuse.Cli.Mcp;
 
 /// <summary>
-///     MCP tool definitions for Fuse, exposed to AI agents through the Model Context Protocol server.
+///     Shared operations behind the focused MCP tool handlers.
 /// </summary>
 /// <remarks>
-///     Each method maps to an MCP tool whose name is set by <see cref="McpServerToolAttribute" /> (for example
-///     <c>fuse_find</c>). The eight loop tools (workspace, find, context, impact, check, test, refactor, review)
-///     plus <c>fuse_reduce</c> work over the persistent semantic index; read tools build the index on first use.
-///     Tools return errors as descriptive strings rather than throwing.
+///     The handlers in <c>FuseMcpHandlers.cs</c> own the MCP contract. This type holds the shared operation
+///     implementations and availability formatting used by those handlers and the CLI.
 /// </remarks>
-[McpServerToolType]
-public sealed partial class FuseTools
+internal static partial class FuseToolOperations
 {
     /// <summary>
     ///     Prints a map of the indexed workspace (symbols, routes, counts).

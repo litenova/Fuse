@@ -82,7 +82,7 @@ public sealed class McpInstallTests
 
         foreach (var client in new[] { McpInstallClient.OpenCode, McpInstallClient.Kilo })
         {
-            var path = McpInstallService.GetConfigPath(client, McpInstallScope.Project, root);
+            var path = McpInstallFiles.GetConfigPath(client, McpInstallScope.Project, root);
             using var config = JsonDocument.Parse(await File.ReadAllTextAsync(path));
             var fuse = config.RootElement.GetProperty("mcp").GetProperty("fuse");
             Assert.Equal("local", fuse.GetProperty("type").GetString());
@@ -94,7 +94,7 @@ public sealed class McpInstallTests
 
         foreach (var client in new[] { McpInstallClient.Codex, McpInstallClient.Grok })
         {
-            var path = McpInstallService.GetConfigPath(client, McpInstallScope.Project, root);
+            var path = McpInstallFiles.GetConfigPath(client, McpInstallScope.Project, root);
             var config = await File.ReadAllTextAsync(path);
             Assert.Contains("[mcp_servers.fuse]", config);
             Assert.Contains("command = \"C:\\\\Tools\\\\fuse.exe\"", config);
@@ -149,26 +149,26 @@ public sealed class McpInstallTests
 
         Assert.Equal(
             Path.Combine(home.Root, ".cursor", "mcp.json"),
-            McpInstallService.GetConfigPath(McpInstallClient.Cursor, McpInstallScope.User, projectRoot));
+            McpInstallFiles.GetConfigPath(McpInstallClient.Cursor, McpInstallScope.User, projectRoot));
 
         // VS Code reads user-level MCP config from its profile directory (Code/User), not ~/.vscode.
-        var copilotUser = McpInstallService.GetConfigPath(McpInstallClient.Copilot, McpInstallScope.User, projectRoot);
+        var copilotUser = McpInstallFiles.GetConfigPath(McpInstallClient.Copilot, McpInstallScope.User, projectRoot);
         Assert.EndsWith(Path.Combine("Code", "User", "mcp.json"), copilotUser);
         Assert.DoesNotContain(Path.Combine(".vscode", "mcp.json"), copilotUser);
         Assert.StartsWith(home.Root, copilotUser, StringComparison.OrdinalIgnoreCase);
 
         Assert.Equal(
             Path.Combine(home.Root, ".config", "opencode", "opencode.json"),
-            McpInstallService.GetConfigPath(McpInstallClient.OpenCode, McpInstallScope.User, projectRoot));
+            McpInstallFiles.GetConfigPath(McpInstallClient.OpenCode, McpInstallScope.User, projectRoot));
         Assert.Equal(
             Path.Combine(home.Root, ".config", "kilo", "kilo.jsonc"),
-            McpInstallService.GetConfigPath(McpInstallClient.Kilo, McpInstallScope.User, projectRoot));
+            McpInstallFiles.GetConfigPath(McpInstallClient.Kilo, McpInstallScope.User, projectRoot));
         Assert.Equal(
             Path.Combine(home.Root, ".codex", "config.toml"),
-            McpInstallService.GetConfigPath(McpInstallClient.Codex, McpInstallScope.User, projectRoot));
+            McpInstallFiles.GetConfigPath(McpInstallClient.Codex, McpInstallScope.User, projectRoot));
         Assert.Equal(
             Path.Combine(home.Root, ".grok", "config.toml"),
-            McpInstallService.GetConfigPath(McpInstallClient.Grok, McpInstallScope.User, projectRoot));
+            McpInstallFiles.GetConfigPath(McpInstallClient.Grok, McpInstallScope.User, projectRoot));
     }
 
     [Fact]
@@ -176,7 +176,7 @@ public sealed class McpInstallTests
     {
         // Claude user scope goes through the Claude CLI, so there is no file path to return.
         var exception = Assert.Throws<NotSupportedException>(() =>
-            McpInstallService.GetConfigPath(McpInstallClient.Claude, McpInstallScope.User, CreateTempDirectory()));
+            McpInstallFiles.GetConfigPath(McpInstallClient.Claude, McpInstallScope.User, CreateTempDirectory()));
         Assert.Contains("Claude CLI", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -198,7 +198,7 @@ public sealed class McpInstallTests
 
         Assert.Equal(2, configured);
 
-        var cursorPath = McpInstallService.GetConfigPath(McpInstallClient.Cursor, McpInstallScope.User, projectRoot);
+        var cursorPath = McpInstallFiles.GetConfigPath(McpInstallClient.Cursor, McpInstallScope.User, projectRoot);
         Assert.True(File.Exists(cursorPath));
         var cursor = JsonSerializer.Deserialize(
             await File.ReadAllTextAsync(cursorPath),
@@ -207,7 +207,7 @@ public sealed class McpInstallTests
         Assert.Equal("/usr/local/bin/fuse", cursor!.McpServers["fuse"].Command);
         Assert.Equal(["mcp", "serve"], cursor.McpServers["fuse"].Args);
 
-        var copilotPath = McpInstallService.GetConfigPath(McpInstallClient.Copilot, McpInstallScope.User, projectRoot);
+        var copilotPath = McpInstallFiles.GetConfigPath(McpInstallClient.Copilot, McpInstallScope.User, projectRoot);
         Assert.True(File.Exists(copilotPath));
         var copilot = JsonSerializer.Deserialize(
             await File.ReadAllTextAsync(copilotPath),
@@ -242,7 +242,7 @@ public sealed class McpInstallTests
         Assert.All(
             new[] { McpInstallClient.OpenCode, McpInstallClient.Kilo, McpInstallClient.Codex, McpInstallClient.Grok },
             client => Assert.True(File.Exists(
-                McpInstallService.GetConfigPath(client, McpInstallScope.User, projectRoot))));
+                McpInstallFiles.GetConfigPath(client, McpInstallScope.User, projectRoot))));
         Assert.False(File.Exists(Path.Combine(projectRoot, "opencode.json")));
         Assert.False(File.Exists(Path.Combine(projectRoot, ".codex", "config.toml")));
     }
@@ -254,7 +254,7 @@ public sealed class McpInstallTests
     {
         using var home = new TempHomeScope();
         var projectRoot = CreateTempDirectory();
-        var configPath = McpInstallService.GetConfigPath(client, McpInstallScope.User, projectRoot);
+        var configPath = McpInstallFiles.GetConfigPath(client, McpInstallScope.User, projectRoot);
         Directory.CreateDirectory(Path.GetDirectoryName(configPath)!);
 
         if (client == McpInstallClient.Cursor)
@@ -357,7 +357,7 @@ public sealed class McpInstallTests
     [InlineData("fuse\0serve")]
     public void TryValidateFuseCommand_RejectsUnsafeCommands(string command)
     {
-        var valid = McpInstallService.TryValidateFuseCommand(command, out _, out var errorMessage);
+        var valid = McpInstallFiles.TryValidateFuseCommand(command, out _, out var errorMessage);
 
         Assert.False(valid);
         Assert.False(string.IsNullOrWhiteSpace(errorMessage));
@@ -369,7 +369,7 @@ public sealed class McpInstallTests
     [InlineData(null)]
     public void TryValidateFuseCommand_AcceptsSafeCommands(string? command)
     {
-        var valid = McpInstallService.TryValidateFuseCommand(command, out var resolved, out var errorMessage);
+        var valid = McpInstallFiles.TryValidateFuseCommand(command, out var resolved, out var errorMessage);
 
         Assert.True(valid);
         Assert.Null(errorMessage);
@@ -454,7 +454,7 @@ public sealed class McpInstallTests
     public async Task InstallAsync_LocalArrayConfig_PreservesRemoteServersAndTopLevelFields(McpInstallClient client)
     {
         var root = CreateTempDirectory();
-        var path = McpInstallService.GetConfigPath(client, McpInstallScope.Project, root);
+        var path = McpInstallFiles.GetConfigPath(client, McpInstallScope.Project, root);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         await File.WriteAllTextAsync(
             path,
@@ -496,7 +496,7 @@ public sealed class McpInstallTests
     public async Task InstallAsync_TomlConfig_ReplacesFuseTableAndPreservesOtherTables(McpInstallClient client)
     {
         var root = CreateTempDirectory();
-        var path = McpInstallService.GetConfigPath(client, McpInstallScope.Project, root);
+        var path = McpInstallFiles.GetConfigPath(client, McpInstallScope.Project, root);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         await File.WriteAllTextAsync(
             path,
@@ -542,22 +542,22 @@ public sealed class McpInstallTests
 
         Assert.Equal(
             Path.Combine(projectRoot, ".mcp.json"),
-            McpInstallService.GetConfigPath(McpInstallClient.Claude, McpInstallScope.Project, projectRoot));
+            McpInstallFiles.GetConfigPath(McpInstallClient.Claude, McpInstallScope.Project, projectRoot));
         Assert.Equal(
             Path.Combine(projectRoot, ".cursor", "mcp.json"),
-            McpInstallService.GetConfigPath(McpInstallClient.Cursor, McpInstallScope.Project, projectRoot));
+            McpInstallFiles.GetConfigPath(McpInstallClient.Cursor, McpInstallScope.Project, projectRoot));
         Assert.Equal(
             Path.Combine(projectRoot, "opencode.json"),
-            McpInstallService.GetConfigPath(McpInstallClient.OpenCode, McpInstallScope.Project, projectRoot));
+            McpInstallFiles.GetConfigPath(McpInstallClient.OpenCode, McpInstallScope.Project, projectRoot));
         Assert.Equal(
             Path.Combine(projectRoot, ".kilo", "kilo.jsonc"),
-            McpInstallService.GetConfigPath(McpInstallClient.Kilo, McpInstallScope.Project, projectRoot));
+            McpInstallFiles.GetConfigPath(McpInstallClient.Kilo, McpInstallScope.Project, projectRoot));
         Assert.Equal(
             Path.Combine(projectRoot, ".codex", "config.toml"),
-            McpInstallService.GetConfigPath(McpInstallClient.Codex, McpInstallScope.Project, projectRoot));
+            McpInstallFiles.GetConfigPath(McpInstallClient.Codex, McpInstallScope.Project, projectRoot));
         Assert.Equal(
             Path.Combine(projectRoot, ".grok", "config.toml"),
-            McpInstallService.GetConfigPath(McpInstallClient.Grok, McpInstallScope.Project, projectRoot));
+            McpInstallFiles.GetConfigPath(McpInstallClient.Grok, McpInstallScope.Project, projectRoot));
     }
 
     [Fact]
@@ -568,20 +568,20 @@ public sealed class McpInstallTests
         File.WriteAllText(openCodeJsonc, "{}");
         Assert.Equal(
             openCodeJsonc,
-            McpInstallService.GetConfigPath(McpInstallClient.OpenCode, McpInstallScope.Project, openCodeRoot));
+            McpInstallFiles.GetConfigPath(McpInstallClient.OpenCode, McpInstallScope.Project, openCodeRoot));
 
         var kiloRoot = CreateTempDirectory();
         var kiloJson = Path.Combine(kiloRoot, "kilo.json");
         File.WriteAllText(kiloJson, "{}");
         Assert.Equal(
             kiloJson,
-            McpInstallService.GetConfigPath(McpInstallClient.Kilo, McpInstallScope.Project, kiloRoot));
+            McpInstallFiles.GetConfigPath(McpInstallClient.Kilo, McpInstallScope.Project, kiloRoot));
     }
 
     [Fact]
     public void ResolveFuseCommand_UsesProcessPathWhenAvailable()
     {
-        var path = McpInstallService.ResolveFuseCommand();
+        var path = McpInstallFiles.ResolveFuseCommand();
         Assert.False(string.IsNullOrWhiteSpace(path));
     }
 
@@ -970,15 +970,15 @@ public sealed class McpInstallTests
         {
             Root = Path.Combine(Path.GetTempPath(), "fuse-install-home", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(Root);
-            _originalHome = Environment.GetEnvironmentVariable(McpInstallService.UserProfileOverrideEnvironmentVariable);
-            Environment.SetEnvironmentVariable(McpInstallService.UserProfileOverrideEnvironmentVariable, Root);
+            _originalHome = Environment.GetEnvironmentVariable(McpInstallFiles.UserProfileOverrideEnvironmentVariable);
+            Environment.SetEnvironmentVariable(McpInstallFiles.UserProfileOverrideEnvironmentVariable, Root);
         }
 
         public string Root { get; }
 
         public void Dispose()
         {
-            Environment.SetEnvironmentVariable(McpInstallService.UserProfileOverrideEnvironmentVariable, _originalHome);
+            Environment.SetEnvironmentVariable(McpInstallFiles.UserProfileOverrideEnvironmentVariable, _originalHome);
             try
             {
                 Directory.Delete(Root, recursive: true);

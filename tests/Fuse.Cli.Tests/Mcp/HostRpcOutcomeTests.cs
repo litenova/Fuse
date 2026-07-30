@@ -93,14 +93,16 @@ public sealed class HostRpcOutcomeTests : IDisposable
             new CheckDiagnostic("CS1061", "Error", "'Widget' does not contain a definition for 'Nope'", "Widget.cs", 1),
         ]);
 
-        var service = new FuseHostService(
+        var hostContext = new FuseHostRequestContext(
             indexer,
             _provider.GetRequiredService<IChangeSource>(),
             _provider.GetRequiredService<ContentReductionPipeline>(),
             _provider.GetRequiredService<ISecretRedactor>(),
             _provider.GetRequiredService<IGeneratedCodeDetector>(),
             _provider.GetRequiredService<IndexCoordinator>(),
-            _provider.GetRequiredService<IWorkspaceIndexJobManager>(),
+            _provider.GetRequiredService<IWorkspaceIndexJobManager>());
+        var service = new FuseHostService(
+            hostContext,
             NullLogger<FuseHostService>.Instance,
             work,
             daemonResident);

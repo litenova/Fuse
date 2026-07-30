@@ -20,15 +20,18 @@ public sealed class FuseHostClientTests : IDisposable
 {
     private readonly ServiceProvider _provider = new ServiceCollection().AddFuseForTests().BuildServiceProvider();
 
-    private FuseHostService NewService() => new(
-        _provider.GetRequiredService<SemanticIndexer>(),
-        _provider.GetRequiredService<IChangeSource>(),
-        _provider.GetRequiredService<ContentReductionPipeline>(),
-        _provider.GetRequiredService<ISecretRedactor>(),
-        _provider.GetRequiredService<IGeneratedCodeDetector>(),
-        _provider.GetRequiredService<IndexCoordinator>(),
-        _provider.GetRequiredService<IWorkspaceIndexJobManager>(),
-        NullLogger<FuseHostService>.Instance);
+    private FuseHostService NewService()
+    {
+        var context = new FuseHostRequestContext(
+            _provider.GetRequiredService<SemanticIndexer>(),
+            _provider.GetRequiredService<IChangeSource>(),
+            _provider.GetRequiredService<ContentReductionPipeline>(),
+            _provider.GetRequiredService<ISecretRedactor>(),
+            _provider.GetRequiredService<IGeneratedCodeDetector>(),
+            _provider.GetRequiredService<IndexCoordinator>(),
+            _provider.GetRequiredService<IWorkspaceIndexJobManager>());
+        return new FuseHostService(context, NullLogger<FuseHostService>.Instance);
+    }
 
     [Fact]
     public async Task No_host_serving_the_root_returns_null()

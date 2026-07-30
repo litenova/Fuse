@@ -37,8 +37,8 @@ internal sealed class ClaudeMcpClientInstaller : IMcpClientInstaller
 
     public Task<bool> InstallAsync(McpClientInstallRequest request) =>
         request.Scope == McpInstallScope.User
-            ? McpInstallService.RegisterClaudeUserAsync(request.FuseCommand, request.ConsoleUI, request.CancellationToken)
-            : Task.FromResult(McpInstallService.WriteClaudeProjectConfig(request.ProjectRoot, request.FuseCommand, request.ConsoleUI));
+            ? McpInstallFiles.RegisterClaudeUserAsync(request.FuseCommand, request.ConsoleUI, request.CancellationToken)
+            : Task.FromResult(McpInstallFiles.WriteClaudeProjectConfig(request.ProjectRoot, request.FuseCommand, request.ConsoleUI));
 }
 
 internal sealed class CursorMcpClientInstaller : IMcpClientInstaller
@@ -46,7 +46,7 @@ internal sealed class CursorMcpClientInstaller : IMcpClientInstaller
     public McpInstallClient Client => McpInstallClient.Cursor;
 
     public Task<bool> InstallAsync(McpClientInstallRequest request) =>
-        Task.FromResult(McpInstallService.WriteCursorConfig(request.Scope, request.ProjectRoot, request.FuseCommand, request.ConsoleUI));
+        Task.FromResult(McpInstallFiles.WriteCursorConfig(request.Scope, request.ProjectRoot, request.FuseCommand, request.ConsoleUI));
 }
 
 internal sealed class CopilotMcpClientInstaller : IMcpClientInstaller
@@ -54,7 +54,7 @@ internal sealed class CopilotMcpClientInstaller : IMcpClientInstaller
     public McpInstallClient Client => McpInstallClient.Copilot;
 
     public Task<bool> InstallAsync(McpClientInstallRequest request) =>
-        Task.FromResult(McpInstallService.WriteCopilotConfig(request.Scope, request.ProjectRoot, request.FuseCommand, request.ConsoleUI));
+        Task.FromResult(McpInstallFiles.WriteCopilotConfig(request.Scope, request.ProjectRoot, request.FuseCommand, request.ConsoleUI));
 }
 
 internal sealed class OpenCodeMcpClientInstaller : IMcpClientInstaller
@@ -62,7 +62,7 @@ internal sealed class OpenCodeMcpClientInstaller : IMcpClientInstaller
     public McpInstallClient Client => McpInstallClient.OpenCode;
 
     public Task<bool> InstallAsync(McpClientInstallRequest request) =>
-        Task.FromResult(McpInstallService.WriteLocalArrayConfig(Client, request.Scope, request.ProjectRoot, request.FuseCommand, request.ConsoleUI));
+        Task.FromResult(McpInstallFiles.WriteLocalArrayConfig(Client, request.Scope, request.ProjectRoot, request.FuseCommand, request.ConsoleUI));
 }
 
 internal sealed class KiloMcpClientInstaller : IMcpClientInstaller
@@ -70,7 +70,7 @@ internal sealed class KiloMcpClientInstaller : IMcpClientInstaller
     public McpInstallClient Client => McpInstallClient.Kilo;
 
     public Task<bool> InstallAsync(McpClientInstallRequest request) =>
-        Task.FromResult(McpInstallService.WriteLocalArrayConfig(Client, request.Scope, request.ProjectRoot, request.FuseCommand, request.ConsoleUI));
+        Task.FromResult(McpInstallFiles.WriteLocalArrayConfig(Client, request.Scope, request.ProjectRoot, request.FuseCommand, request.ConsoleUI));
 }
 
 internal sealed class CodexMcpClientInstaller : IMcpClientInstaller
@@ -78,7 +78,7 @@ internal sealed class CodexMcpClientInstaller : IMcpClientInstaller
     public McpInstallClient Client => McpInstallClient.Codex;
 
     public Task<bool> InstallAsync(McpClientInstallRequest request) =>
-        Task.FromResult(McpInstallService.WriteTomlConfig(Client, request.Scope, request.ProjectRoot, request.FuseCommand, request.ConsoleUI));
+        Task.FromResult(McpInstallFiles.WriteTomlConfig(Client, request.Scope, request.ProjectRoot, request.FuseCommand, request.ConsoleUI));
 }
 
 internal sealed class GrokMcpClientInstaller : IMcpClientInstaller
@@ -86,7 +86,7 @@ internal sealed class GrokMcpClientInstaller : IMcpClientInstaller
     public McpInstallClient Client => McpInstallClient.Grok;
 
     public Task<bool> InstallAsync(McpClientInstallRequest request) =>
-        Task.FromResult(McpInstallService.WriteTomlConfig(Client, request.Scope, request.ProjectRoot, request.FuseCommand, request.ConsoleUI));
+        Task.FromResult(McpInstallFiles.WriteTomlConfig(Client, request.Scope, request.ProjectRoot, request.FuseCommand, request.ConsoleUI));
 }
 
 internal static class McpClientInstallerCatalog

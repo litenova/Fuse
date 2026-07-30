@@ -81,7 +81,7 @@ public sealed class McpInstallGoldenTests
             new RecordingConsoleUI(),
             CancellationToken.None);
 
-        var path = McpInstallService.GetConfigPath(client, McpInstallScope.Project, root);
+        var path = McpInstallFiles.GetConfigPath(client, McpInstallScope.Project, root);
         var golden = await File.ReadAllTextAsync(path);
         using var document = JsonDocument.Parse(golden);
         var fuse = document.RootElement.GetProperty("mcp").GetProperty("fuse");
@@ -107,7 +107,7 @@ public sealed class McpInstallGoldenTests
             new RecordingConsoleUI(),
             CancellationToken.None);
 
-        var path = McpInstallService.GetConfigPath(client, McpInstallScope.Project, root);
+        var path = McpInstallFiles.GetConfigPath(client, McpInstallScope.Project, root);
         var golden = await File.ReadAllTextAsync(path);
 
         Assert.Contains("[mcp_servers.fuse]", golden);

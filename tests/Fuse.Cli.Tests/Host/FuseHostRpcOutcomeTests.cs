@@ -24,16 +24,18 @@ public sealed class FuseHostRpcOutcomeTests : IDisposable
 {
     private readonly ServiceProvider _provider = new ServiceCollection().AddFuseForTests().BuildServiceProvider();
 
-    private FuseHostService NewService(string? servedRoot = null) => new(
-        _provider.GetRequiredService<SemanticIndexer>(),
-        _provider.GetRequiredService<IChangeSource>(),
-        _provider.GetRequiredService<ContentReductionPipeline>(),
-        _provider.GetRequiredService<ISecretRedactor>(),
-        _provider.GetRequiredService<IGeneratedCodeDetector>(),
-        _provider.GetRequiredService<IndexCoordinator>(),
-        _provider.GetRequiredService<IWorkspaceIndexJobManager>(),
-        NullLogger<FuseHostService>.Instance,
-        servedRoot);
+    private FuseHostService NewService(string? servedRoot = null)
+    {
+        var context = new FuseHostRequestContext(
+            _provider.GetRequiredService<SemanticIndexer>(),
+            _provider.GetRequiredService<IChangeSource>(),
+            _provider.GetRequiredService<ContentReductionPipeline>(),
+            _provider.GetRequiredService<ISecretRedactor>(),
+            _provider.GetRequiredService<IGeneratedCodeDetector>(),
+            _provider.GetRequiredService<IndexCoordinator>(),
+            _provider.GetRequiredService<IWorkspaceIndexJobManager>());
+        return new FuseHostService(context, NullLogger<FuseHostService>.Instance, servedRoot);
+    }
 
     [Fact]
     public async Task Protocol_mismatch_client_treats_stale_host_as_absent()

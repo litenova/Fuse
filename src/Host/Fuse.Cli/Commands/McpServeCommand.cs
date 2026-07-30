@@ -31,7 +31,7 @@ public sealed class McpServeCommand
     }
 
     /// <summary>
-    ///     Builds and runs the MCP host, serving the Fuse <see cref="FuseTools" /> and <see cref="FuseResources" />
+    ///     Builds and runs the MCP host, serving the focused Fuse tool handlers and <see cref="FuseResources" />
     ///     over the stdio transport.
     /// </summary>
     /// <param name="context">The CLI invocation context supplying the cancellation token that shuts the host down.</param>
@@ -115,7 +115,15 @@ public sealed class McpServeCommand
 
         mcpServer
             .WithStdioServerTransport()
-            .WithTools<FuseTools>()
+            .WithTools<FuseWorkspaceMcpHandler>()
+            .WithTools<FuseFindMcpHandler>()
+            .WithTools<FuseContextMcpHandler>()
+            .WithTools<FuseImpactMcpHandler>()
+            .WithTools<FuseCheckMcpHandler>()
+            .WithTools<FuseTestMcpHandler>()
+            .WithTools<FuseRefactorMcpHandler>()
+            .WithTools<FuseReviewMcpHandler>()
+            .WithTools<FuseReduceMcpHandler>()
             .WithResources<FuseResources>()
             // Register the playbook prompts (U3): selectable, anchored plans that teach the verified-edit loop.
             .WithPrompts<FusePrompts>();

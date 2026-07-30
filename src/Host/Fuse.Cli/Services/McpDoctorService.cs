@@ -66,8 +66,8 @@ public sealed class McpDoctorService
 
         return new McpDoctorReport(
             RunningVersion: RunningVersion(),
-            RunningExecutable: McpInstallService.ResolveFuseCommand(),
-            PathExecutable: McpInstallService.FindExecutableOnPath("fuse"),
+            RunningExecutable: McpInstallFiles.ResolveFuseCommand(),
+            PathExecutable: McpInstallFiles.FindExecutableOnPath("fuse"),
             Scope: scope.ToString().ToLowerInvariant(),
             RepositoryIdentity: repositoryResolved ? "resolved" : "unresolved",
             RepositoryRoot: repositoryResolved ? repositoryRoot : null,
@@ -88,7 +88,7 @@ public sealed class McpDoctorService
         var configPath = TryGetConfigPath(client, scope, projectRoot);
         var registration = ReadRegistration(client, scope, configPath);
         var commandState = CommandState(registration.Command);
-        var instructionPath = McpInstallService.GetInstructionPath(client, scope, projectRoot);
+        var instructionPath = McpInstallFiles.GetInstructionPath(client, scope, projectRoot);
         var instructionState = ReadInstructionState(instructionPath);
         var detail = registration.Detail;
 
@@ -114,7 +114,7 @@ public sealed class McpDoctorService
         }
 
         return new McpDoctorClientReport(
-            McpInstallService.DescribeClient(client),
+            McpInstallFiles.DescribeClient(client),
             configPath,
             registration.State,
             registration.Command,
@@ -217,7 +217,7 @@ public sealed class McpDoctorService
     {
         if (client == McpInstallClient.Claude && scope == McpInstallScope.User)
         {
-            return McpInstallService.FindExecutableOnPath("claude") is null
+            return McpInstallFiles.FindExecutableOnPath("claude") is null
                 ? ("missing", null, "Claude Code CLI is not on PATH, so user-scope registration cannot be verified.")
                 : ("cli_registration_unverified", null, "Claude Code owns its user-scope registration through the claude CLI.");
         }
@@ -279,7 +279,7 @@ public sealed class McpDoctorService
         return root.ValueKind == JsonValueKind.Object
                && root.TryGetProperty(containerName, out var container)
                && container.ValueKind == JsonValueKind.Object
-               && container.TryGetProperty(McpInstallService.ServerName, out server)
+               && container.TryGetProperty(McpInstallFiles.ServerName, out server)
                && server.ValueKind == JsonValueKind.Object;
     }
 
@@ -315,7 +315,7 @@ public sealed class McpDoctorService
             return "not_checked";
         if (Path.IsPathFullyQualified(command))
             return File.Exists(command) ? "valid" : "invalid_command_path";
-        return McpInstallService.FindExecutableOnPath(command) is null ? "missing_from_path" : "valid";
+        return McpInstallFiles.FindExecutableOnPath(command) is null ? "missing_from_path" : "valid";
     }
 
     private static string ReadInstructionState(string? instructionPath)
@@ -328,7 +328,7 @@ public sealed class McpDoctorService
         try
         {
             var content = File.ReadAllText(instructionPath);
-            if (McpInstallService.HasCurrentManagedRuleBlock(content))
+            if (McpInstallFiles.HasCurrentManagedRuleBlock(content))
                 return "current";
             return content.Contains("<!-- fuse:begin", StringComparison.Ordinal) ? "outdated" : "missing";
         }
@@ -342,7 +342,7 @@ public sealed class McpDoctorService
     {
         try
         {
-            return McpInstallService.GetConfigPath(client, scope, root);
+            return McpInstallFiles.GetConfigPath(client, scope, root);
         }
         catch (NotSupportedException)
         {

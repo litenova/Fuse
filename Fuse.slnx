@@ -40,6 +40,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Fuse.Cli.Tests/Fuse.Cli.Tests.csproj" />
+    <Project Path="tests/Fuse.Architecture.Tests/Fuse.Architecture.Tests.csproj" />
     <Project Path="tests/Fuse.Collection.Tests/Fuse.Collection.Tests.csproj" />
     <Project Path="tests/Fuse.Emission.Tests/Fuse.Emission.Tests.csproj" />
     <Project Path="tests/Fuse.Plugins.Formats.Web.Tests/Fuse.Plugins.Formats.Web.Tests.csproj" />

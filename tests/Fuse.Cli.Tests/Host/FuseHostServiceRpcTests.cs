@@ -21,16 +21,18 @@ public sealed class FuseHostServiceRpcTests : IDisposable
 {
     private readonly ServiceProvider _provider = new ServiceCollection().AddFuseForTests().BuildServiceProvider();
 
-    private FuseHostService NewService(Fuse.Workspace.IResidentWorkspaceProvider? residentWorkspaces = null) => new(
-        _provider.GetRequiredService<SemanticIndexer>(),
-        _provider.GetRequiredService<IChangeSource>(),
-        _provider.GetRequiredService<ContentReductionPipeline>(),
-        _provider.GetRequiredService<ISecretRedactor>(),
-        _provider.GetRequiredService<IGeneratedCodeDetector>(),
-        _provider.GetRequiredService<IndexCoordinator>(),
-        _provider.GetRequiredService<IWorkspaceIndexJobManager>(),
-        NullLogger<FuseHostService>.Instance,
-        residentWorkspaces: residentWorkspaces);
+    private FuseHostService NewService(Fuse.Workspace.IResidentWorkspaceProvider? residentWorkspaces = null)
+    {
+        var context = new FuseHostRequestContext(
+            _provider.GetRequiredService<SemanticIndexer>(),
+            _provider.GetRequiredService<IChangeSource>(),
+            _provider.GetRequiredService<ContentReductionPipeline>(),
+            _provider.GetRequiredService<ISecretRedactor>(),
+            _provider.GetRequiredService<IGeneratedCodeDetector>(),
+            _provider.GetRequiredService<IndexCoordinator>(),
+            _provider.GetRequiredService<IWorkspaceIndexJobManager>());
+        return new FuseHostService(context, NullLogger<FuseHostService>.Instance, residentWorkspaces: residentWorkspaces);
+    }
 
     private static string SessionToken(FuseHostService service) => service.Handshake().SessionToken;
 

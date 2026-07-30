@@ -9,9 +9,9 @@ using Fuse.Collection.FileSystem;
 namespace Fuse.Cli.Services;
 
 /// <summary>
-///     Writes MCP client configuration so an AI client can launch <c>fuse mcp serve</c> automatically.
+///     Reads and writes the client-specific files used by the MCP installation coordinator.
 /// </summary>
-public sealed class McpInstallService
+internal static class McpInstallFiles
 {
     /// <summary>
     ///     Environment variable overriding the user profile root for MCP install paths. Used by tests to
@@ -24,111 +24,6 @@ public sealed class McpInstallService
     // The client launches `fuse mcp serve` with no environment block. The shared daemon and syntax-first index
     // behavior ship in the binary; compiler analysis starts only from an explicit semantic request.
     private static readonly string[] ServeArguments = ["mcp", "serve"];
-    private readonly IReadOnlyDictionary<McpInstallClient, IMcpClientInstaller> _installers;
-
-    /// <summary>
-    ///     Initializes an installation coordinator with the built-in client installers.
-    /// </summary>
-    public McpInstallService() : this(McpClientInstallerCatalog.CreateDefault())
-    {
-    }
-
-    /// <summary>
-    ///     Initializes an installation coordinator with one installer per supported client.
-    /// </summary>
-    /// <param name="installers">The client-specific registration writers.</param>
-    public McpInstallService(IEnumerable<IMcpClientInstaller> installers)
-    {
-        ArgumentNullException.ThrowIfNull(installers);
-        _installers = installers.ToDictionary(installer => installer.Client);
-    }
-
-    /// <summary>
-    ///     Registers Fuse with the requested MCP clients at the given scope.
-    /// </summary>
-    /// <param name="clients">The clients to configure.</param>
-    /// <param name="scope">Project-local files or user-global registration.</param>
-    /// <param name="projectDirectory">A path inside the project repository; defaults to the current directory.</param>
-    /// <param name="fuseCommand">The executable the client should launch; defaults to the running binary or <c>fuse</c>.</param>
-    /// <param name="writeRules">
-    ///     When <see langword="true" />, also writes task-routing guidance for the <c>fuse_*</c> tools into each
-    ///     configured client's instruction file when that client has a documented file. At project scope, also appends
-    ///     <c>.fuse/</c> to <c>.gitignore</c> when no equivalent entry exists.
-    /// </param>
-    /// <param name="consoleUI">The console UI for status output.</param>
-    /// <param name="cancellationToken">A token that cancels Claude CLI registration.</param>
-    /// <returns>The number of clients configured successfully.</returns>
-    public async Task<int> InstallAsync(
-        IReadOnlyList<McpInstallClient> clients,
-        McpInstallScope scope,
-        string? projectDirectory,
-        string? fuseCommand,
-        bool writeRules,
-        IConsoleUI consoleUI,
-        CancellationToken cancellationToken)
-    {
-        if (!TryValidateFuseCommand(fuseCommand, out var command, out var validationError))
-        {
-            consoleUI.WriteError(validationError!);
-            return 0;
-        }
-
-        var requestedProjectRoot = string.IsNullOrWhiteSpace(projectDirectory)
-            ? Directory.GetCurrentDirectory()
-            : Path.GetFullPath(projectDirectory);
-        var projectRoot = requestedProjectRoot;
-        if (scope == McpInstallScope.Project)
-        {
-            if (!WorkspaceIdentityResolver.TryResolveRepositoryRoot(requestedProjectRoot, out projectRoot))
-            {
-                consoleUI.WriteError(
-                    $"Project-scope MCP registration requires a Git repository identity. "
-                    + $"'{Path.GetFullPath(requestedProjectRoot)}' is not inside a Git repository; no files were written.");
-                return 0;
-            }
-
-            if (!string.Equals(
-                    Path.TrimEndingDirectorySeparator(Path.GetFullPath(requestedProjectRoot)),
-                    projectRoot,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                consoleUI.WriteStep($"Resolved project scope to repository root: {projectRoot}");
-            }
-        }
-
-        var configuredClients = new List<McpInstallClient>(clients.Count);
-        foreach (var client in clients)
-        {
-            if (!_installers.TryGetValue(client, out var installer))
-            {
-                consoleUI.WriteError($"No installer is registered for {DescribeClient(client)}.");
-                continue;
-            }
-
-            var success = await installer.InstallAsync(
-                new McpClientInstallRequest(scope, projectRoot, command, consoleUI, cancellationToken));
-
-            if (success)
-                configuredClients.Add(client);
-        }
-
-        if (writeRules)
-        {
-            foreach (var client in configuredClients)
-                WriteClientRule(client, scope, projectRoot, consoleUI);
-
-            if (scope == McpInstallScope.Project && configuredClients.Count > 0)
-            {
-                GitIgnoreHelper.TryEnsureFuseEntry(
-                    projectRoot,
-                    consoleUI.WriteStep,
-                    consoleUI.WriteStep);
-            }
-        }
-
-        return configuredClients.Count;
-    }
-
     /// <summary>
     ///     Resolves the Fuse executable path for MCP registration.
     /// </summary>
@@ -618,7 +513,7 @@ public sealed class McpInstallService
     /// <param name="projectRoot">The project root for project-scoped rule files.</param>
     /// <param name="consoleUI">The console UI for status output.</param>
     /// <returns><see langword="true" /> when a rule file was written; <see langword="false" /> when skipped.</returns>
-    private static bool WriteClientRule(
+    internal static bool WriteClientRule(
         McpInstallClient client,
         McpInstallScope scope,
         string projectRoot,
