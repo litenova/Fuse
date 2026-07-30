@@ -25,6 +25,7 @@ namespace Fuse.Semantics;
 public sealed class ChangeSignatureRefactorer
 {
     private readonly WarmSolutionCache _cache;
+    private readonly ChangeSignatureEditPlanner _editPlanner = new();
     private readonly ChangeSignatureValidator _validator = new();
     private readonly ChangeSignatureVerifier _verifier = new();
 
@@ -177,7 +178,7 @@ public sealed class ChangeSignatureRefactorer
         var baseline = await _verifier.CollectErrorSignaturesAsync(solution, cancellationToken);
         return await RewriteVerifyAndStageAsync(
             solution, method, family, "CancellationToken", parameterName, baseline,
-            ResolveTokenArgument, cancellationToken);
+            ChangeSignatureEditPlanner.ResolveTokenArgument, cancellationToken);
     }
 
     /// <summary>
@@ -236,7 +237,7 @@ public sealed class ChangeSignatureRefactorer
             return ChangeSignatureResult.Abstain($"'{parameterName}' is used in the body of {usedIn}; remove-parameter abstains (it is not a dead parameter)");
 
         var baseline = await _verifier.CollectErrorSignaturesAsync(solution, cancellationToken);
-        var rewrite = await ApplyRemovalAsync(solution, family, parameterName, index, cancellationToken);
+        var rewrite = await _editPlanner.RemoveParameterAsync(solution, family, parameterName, index, cancellationToken);
         if (rewrite.Solution is null)
             return ChangeSignatureResult.Abstain(rewrite.Reason!);
 
@@ -250,107 +251,6 @@ public sealed class ChangeSignatureRefactorer
 
         return ChangeSignatureResult.Ok(method.ToDisplayString(), $"removed {parameterName}", diffs);
     }
-
-    // Removes the parameter at the given index from every family declaration and the matching argument at every
-    // call site (a named argument named parameterName, else the positional argument at index), abstaining when a
-    // removed argument is not side-effect-free (dropping it could change behavior).
-    private async Task<(Solution? Solution, string? Reason)> ApplyRemovalAsync(
-        Solution solution,
-        IReadOnlyCollection<IMethodSymbol> family,
-        string parameterName,
-        int index,
-        CancellationToken cancellationToken)
-    {
-        var declEdits = new Dictionary<DocumentId, List<int>>();
-        var callEdits = new Dictionary<DocumentId, List<int>>();
-
-        foreach (var member in family)
-        {
-            foreach (var reference in member.DeclaringSyntaxReferences)
-            {
-                var doc = solution.GetDocument(reference.SyntaxTree);
-                if (doc is null)
-                    continue;
-                var node = await reference.GetSyntaxAsync(cancellationToken);
-                if (node is BaseMethodDeclarationSyntax { ParameterList: { } list } && index < list.Parameters.Count)
-                    AddDeclSite(declEdits, doc.Id, list.Parameters[index].SpanStart);
-            }
-
-            foreach (var referenced in await SymbolFinder.FindReferencesAsync(member, solution, cancellationToken))
-            {
-                foreach (var location in referenced.Locations)
-                {
-                    var doc = location.Document;
-                    var root = await doc.GetSyntaxRootAsync(cancellationToken);
-                    var token = root?.FindToken(location.Location.SourceSpan.Start);
-                    var invocation = token?.Parent?.AncestorsAndSelf().OfType<InvocationExpressionSyntax>().FirstOrDefault();
-                    if (invocation is null)
-                        continue;
-                    var argument = SelectArgument(invocation.ArgumentList, parameterName, index);
-                    if (argument is null)
-                        continue; // The parameter was omitted at this site (an optional argument); nothing to drop.
-                    if (!IsSideEffectFree(argument.Expression))
-                        return (null, $"call site at {HumanNode(invocation)} passes a non-trivial argument for '{parameterName}' that would be dropped; remove-parameter abstains (possible side effect)");
-                    AddDeclSite(callEdits, doc.Id, argument.SpanStart);
-                }
-            }
-        }
-
-        var changed = solution;
-        foreach (var docId in declEdits.Keys.Concat(callEdits.Keys).Distinct())
-        {
-            var document = changed.GetDocument(docId)!;
-            var editor = await DocumentEditor.CreateAsync(document, cancellationToken);
-            var root = await document.GetSyntaxRootAsync(cancellationToken);
-            if (root is null)
-                continue;
-
-            if (declEdits.TryGetValue(docId, out var declSpans))
-                foreach (var span in declSpans)
-                {
-                    var parameter = root.FindToken(span).Parent?.AncestorsAndSelf().OfType<ParameterSyntax>().FirstOrDefault();
-                    if (parameter is not null)
-                        editor.RemoveNode(parameter);
-                }
-
-            if (callEdits.TryGetValue(docId, out var callSpans))
-                foreach (var span in callSpans)
-                {
-                    var argument = root.FindToken(span).Parent?.AncestorsAndSelf().OfType<ArgumentSyntax>().FirstOrDefault();
-                    if (argument is not null)
-                        editor.RemoveNode(argument);
-                }
-
-            changed = changed.WithDocumentSyntaxRoot(docId, await editor.GetChangedDocument().GetSyntaxRootAsync(cancellationToken) ?? root);
-        }
-
-        return (changed, null);
-    }
-
-    // The argument that binds to the parameter: a named argument matching the name, else the positional argument
-    // at the index (when the call supplied that many positional arguments), else null (the parameter was omitted).
-    private static ArgumentSyntax? SelectArgument(ArgumentListSyntax list, string parameterName, int index)
-    {
-        var named = list.Arguments.FirstOrDefault(a => a.NameColon?.Name.Identifier.Text == parameterName);
-        if (named is not null)
-            return named;
-        var positional = list.Arguments.Where(a => a.NameColon is null).ToList();
-        return index < positional.Count ? positional[index] : null;
-    }
-
-    // A conservative side-effect-free test: literals, identifiers, member access, `default`, and `this`/`base` are
-    // safe to drop; anything that can invoke code (a call, object creation, an assignment) is not.
-    private static bool IsSideEffectFree(ExpressionSyntax expression) => expression switch
-    {
-        LiteralExpressionSyntax => true,
-        IdentifierNameSyntax => true,
-        MemberAccessExpressionSyntax member => IsSideEffectFree(member.Expression),
-        DefaultExpressionSyntax => true,
-        ThisExpressionSyntax or BaseExpressionSyntax => true,
-        ParenthesizedExpressionSyntax paren => IsSideEffectFree(paren.Expression),
-        _ when expression.IsKind(SyntaxKind.DefaultLiteralExpression) => true,
-        _ => false,
-    };
 
     /// <summary>
     ///     Reorders a method's parameters (and its override/interface family) into the given order and returns the
@@ -405,7 +305,7 @@ public sealed class ChangeSignatureRefactorer
             return ChangeSignatureResult.Abstain($"call site at {positionalSite} uses positional arguments; reorder abstains (only named-argument call sites are safe to reorder)");
 
         var baseline = await _verifier.CollectErrorSignaturesAsync(solution, cancellationToken);
-        var rewrite = await ApplyReorderAsync(solution, family, permutation, cancellationToken);
+        var rewrite = await _editPlanner.ReorderParametersAsync(solution, family, permutation, cancellationToken);
         if (rewrite.Solution is null)
             return ChangeSignatureResult.Abstain(rewrite.Reason!);
 
@@ -420,53 +320,6 @@ public sealed class ChangeSignatureRefactorer
         return ChangeSignatureResult.Ok(method.ToDisplayString(), $"reordered to ({string.Join(", ", newOrder)})", diffs);
     }
 
-    // Reorders each family declaration's parameter list per the permutation (all call sites are named, so they
-    // need no edit). Trivia is normalized to ", " separators for a clean diff.
-    private async Task<(Solution? Solution, string? Reason)> ApplyReorderAsync(
-        Solution solution,
-        IReadOnlyCollection<IMethodSymbol> family,
-        int[] permutation,
-        CancellationToken cancellationToken)
-    {
-        var declEdits = new Dictionary<DocumentId, List<int>>();
-        foreach (var member in family)
-            foreach (var reference in member.DeclaringSyntaxReferences)
-            {
-                var doc = solution.GetDocument(reference.SyntaxTree);
-                if (doc is null)
-                    continue;
-                var node = await reference.GetSyntaxAsync(cancellationToken);
-                if (node is BaseMethodDeclarationSyntax { ParameterList: { } list } && list.Parameters.Count == permutation.Length)
-                    AddDeclSite(declEdits, doc.Id, list.SpanStart);
-            }
-
-        var changed = solution;
-        foreach (var docId in declEdits.Keys)
-        {
-            var document = changed.GetDocument(docId)!;
-            var editor = await DocumentEditor.CreateAsync(document, cancellationToken);
-            var root = await document.GetSyntaxRootAsync(cancellationToken);
-            if (root is null)
-                continue;
-            foreach (var span in declEdits[docId])
-            {
-                var list = root.FindToken(span).Parent?.AncestorsAndSelf().OfType<ParameterListSyntax>().FirstOrDefault();
-                if (list is null || list.Parameters.Count != permutation.Length)
-                    continue;
-                var reordered = permutation
-                    .Select((oldIndex, newIndex) => list.Parameters[oldIndex]
-                        .WithLeadingTrivia()
-                        .WithLeadingTrivia(newIndex == 0 ? default : SyntaxFactory.Space))
-                    .ToArray();
-                editor.ReplaceNode(list, list.WithParameters(SyntaxFactory.SeparatedList(reordered)));
-            }
-
-            changed = changed.WithDocumentSyntaxRoot(docId, await editor.GetChangedDocument().GetSyntaxRootAsync(cancellationToken) ?? root);
-        }
-
-        return (changed, null);
-    }
-
     // The shared tail both operations use: rewrite with the given per-site argument resolver, verify by recompile
     // (abstain on any introduced error), and stage the diffs (with any manual follow-ups).
     private async Task<ChangeSignatureResult> RewriteVerifyAndStageAsync(
@@ -479,7 +332,7 @@ public sealed class ChangeSignatureRefactorer
         Func<SemanticModel?, InvocationExpressionSyntax, (string Arg, bool FollowUp)> argResolver,
         CancellationToken cancellationToken)
     {
-        var rewrite = await ApplyRewriteAsync(solution, family, parameterType, parameterName, argResolver, cancellationToken);
+        var rewrite = await _editPlanner.AddParameterAsync(solution, family, parameterType, parameterName, argResolver, cancellationToken);
         if (rewrite.Solution is null)
             return ChangeSignatureResult.Abstain(rewrite.Reason!);
         var changed = rewrite.Solution;
@@ -499,144 +352,6 @@ public sealed class ChangeSignatureRefactorer
             return ChangeSignatureResult.Abstain("the rewrite produced no change (the method or its call sites were not found in source)");
 
         return ChangeSignatureResult.Ok(method.ToDisplayString(), $"{parameterType} {parameterName}", diffs, rewrite.FollowUps);
-    }
-
-    // Applies the parameter to every family declaration and an argument to every invocation call site, grouped by
-    // document so each document is edited once. The per-site argument comes from argResolver, so add-parameter
-    // passes a constant while the CancellationToken recipe threads an in-scope token (or default, flagged as a
-    // manual follow-up). Non-invocation references (method groups, nameof) are left alone; if that breaks
-    // compilation the verify gate abstains.
-    private async Task<(Solution? Solution, string? Reason, IReadOnlyList<string> FollowUps)> ApplyRewriteAsync(
-        Solution solution,
-        IReadOnlyCollection<IMethodSymbol> family,
-        string parameterType,
-        string parameterName,
-        Func<SemanticModel?, InvocationExpressionSyntax, (string Arg, bool FollowUp)> argResolver,
-        CancellationToken cancellationToken)
-    {
-        // Collect edit sites per document: declaration parameter-list spans, and (argument-list span, arg text).
-        var declSites = new Dictionary<DocumentId, List<int>>();
-        var callSites = new Dictionary<DocumentId, List<(int Span, string Arg)>>();
-        var followUps = new List<string>();
-
-        foreach (var member in family)
-        {
-            foreach (var reference in member.DeclaringSyntaxReferences)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var doc = solution.GetDocument(reference.SyntaxTree);
-                if (doc is null)
-                    continue;
-                var node = await reference.GetSyntaxAsync(cancellationToken);
-                if (node is BaseMethodDeclarationSyntax { ParameterList: { } list })
-                    AddDeclSite(declSites, doc.Id, list.SpanStart);
-            }
-
-            foreach (var referenced in await SymbolFinder.FindReferencesAsync(member, solution, cancellationToken))
-            {
-                foreach (var location in referenced.Locations)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var doc = location.Document;
-                    var root = await doc.GetSyntaxRootAsync(cancellationToken);
-                    var token = root?.FindToken(location.Location.SourceSpan.Start);
-                    var invocation = token?.Parent?.AncestorsAndSelf().OfType<InvocationExpressionSyntax>().FirstOrDefault();
-                    if (invocation is null)
-                        continue;
-                    var model = await doc.GetSemanticModelAsync(cancellationToken);
-                    var (arg, followUp) = argResolver(model, invocation);
-                    if (AddCallSite(callSites, doc.Id, invocation.ArgumentList.SpanStart, arg) && followUp)
-                        followUps.Add(HumanNode(invocation));
-                }
-            }
-        }
-
-        var changed = solution;
-        var affected = declSites.Keys.Concat(callSites.Keys).Distinct().ToList();
-        foreach (var docId in affected)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var document = changed.GetDocument(docId)!;
-            var editor = await DocumentEditor.CreateAsync(document, cancellationToken);
-            var root = await document.GetSyntaxRootAsync(cancellationToken);
-            if (root is null)
-                continue;
-
-            if (declSites.TryGetValue(docId, out var declSpans))
-            {
-                foreach (var span in declSpans)
-                {
-                    var list = root.FindToken(span).Parent?.AncestorsAndSelf().OfType<ParameterListSyntax>().FirstOrDefault();
-                    if (list is null)
-                        continue;
-                    // Leading space so the inserted separator renders "int x, int n", not "int x,int n" - a clean
-                    // staged diff an agent can apply without a reformat.
-                    var parameter = SyntaxFactory.Parameter(SyntaxFactory.Identifier(parameterName))
-                        .WithType(SyntaxFactory.ParseTypeName(parameterType).WithTrailingTrivia(SyntaxFactory.Space))
-                        .WithLeadingTrivia(SyntaxFactory.Space);
-                    editor.ReplaceNode(list, list.AddParameters(parameter));
-                }
-            }
-
-            if (callSites.TryGetValue(docId, out var callSpans))
-            {
-                foreach (var (span, arg) in callSpans)
-                {
-                    var list = root.FindToken(span).Parent?.AncestorsAndSelf().OfType<ArgumentListSyntax>().FirstOrDefault();
-                    if (list is null)
-                        continue;
-                    var argument = SyntaxFactory.Argument(SyntaxFactory.ParseExpression(arg))
-                        .WithLeadingTrivia(SyntaxFactory.Space);
-                    editor.ReplaceNode(list, list.AddArguments(argument));
-                }
-            }
-
-            changed = changed.WithDocumentSyntaxRoot(docId, await editor.GetChangedDocument().GetSyntaxRootAsync(cancellationToken) ?? root);
-        }
-
-        return (changed, null, followUps);
-    }
-
-    // Resolves the argument for a CancellationToken threading call site: the name of an in-scope CancellationToken
-    // (a parameter or local visible at the call), or "default" flagged as a manual follow-up when none is in scope.
-    private static (string Arg, bool FollowUp) ResolveTokenArgument(SemanticModel? model, InvocationExpressionSyntax invocation)
-    {
-        if (model is not null)
-        {
-            var inScope = model.LookupSymbols(invocation.SpanStart)
-                .Where(s => s is IParameterSymbol or ILocalSymbol)
-                .Select(s => (Symbol: s, Type: (s as IParameterSymbol)?.Type ?? (s as ILocalSymbol)?.Type))
-                .FirstOrDefault(t => t.Type is { Name: "CancellationToken", ContainingNamespace.Name: "Threading" });
-            if (inScope.Symbol is not null)
-                return (inScope.Symbol.Name, false);
-        }
-
-        // No token in scope: pass default and list the site so a human threads a real token later.
-        return ("default", true);
-    }
-
-    private static string HumanNode(SyntaxNode node)
-    {
-        var span = node.GetLocation().GetLineSpan();
-        return $"{System.IO.Path.GetFileName(span.Path)}:{span.StartLinePosition.Line + 1}";
-    }
-
-    private static void AddDeclSite(Dictionary<DocumentId, List<int>> sites, DocumentId id, int span)
-    {
-        if (!sites.TryGetValue(id, out var list))
-            sites[id] = list = [];
-        if (!list.Contains(span))
-            list.Add(span);
-    }
-
-    private static bool AddCallSite(Dictionary<DocumentId, List<(int Span, string Arg)>> sites, DocumentId id, int span, string arg)
-    {
-        if (!sites.TryGetValue(id, out var list))
-            sites[id] = list = [];
-        if (list.Any(s => s.Span == span))
-            return false;
-        list.Add((span, arg));
-        return true;
     }
 
 }
