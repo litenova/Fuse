@@ -1,5 +1,5 @@
-using Fuse.Semantics;
 using System.Text.Json.Serialization;
+using Fuse.Semantics;
 
 namespace Fuse.Cli.Mcp;
 
@@ -193,71 +193,6 @@ public sealed record IndexJobSnapshot(
 public sealed record IndexJobStartResult(IndexJobSnapshot Snapshot, bool Joined, bool Conflict);
 
 /// <summary>
-///     Owns one cancellable index job for each normalized repository root.
-/// </summary>
-public interface IWorkspaceIndexJobManager : IAsyncDisposable
-{
-    /// <summary>Starts a compatible job or joins the repository's active job.</summary>
-    /// <param name="request">The requested index operation.</param>
-    /// <param name="cancellationToken">Cancels only this caller's request wait.</param>
-    /// <returns>The shared job snapshot and acceptance outcome.</returns>
-    Task<IndexJobStartResult> StartOrJoinAsync(IndexJobRequest request, CancellationToken cancellationToken);
-
-    /// <summary>Gets the current or most recently finished job for a repository root.</summary>
-    /// <param name="root">The repository root.</param>
-    /// <returns>The job snapshot, or null when no job has been recorded in this process.</returns>
-    IndexJobSnapshot? GetStatus(string root);
-
-    /// <summary>Requests cancellation of the active repository job.</summary>
-    /// <param name="root">The repository root.</param>
-    /// <param name="cancellationToken">Cancels only the cancellation request wait.</param>
-    /// <returns>The job snapshot, or null when no active job exists.</returns>
-    Task<IndexJobSnapshot?> CancelAsync(string root, CancellationToken cancellationToken);
-
-    /// <summary>Waits for the repository's active or retained job to reach a terminal state.</summary>
-    /// <param name="root">The repository root.</param>
-    /// <param name="cancellationToken">Cancels only this caller's wait.</param>
-    /// <returns>The terminal job snapshot, or null when no job exists.</returns>
-    Task<IndexJobSnapshot?> WaitForCompletionAsync(string root, CancellationToken cancellationToken);
-
-    /// <summary>
-    ///     Waits until a source job has committed its syntax tier. A semantic job completes this wait before its
-    ///     compiler stages finish, allowing read tools to use the syntax index while compiler analysis continues.
-    /// </summary>
-    /// <param name="root">The repository root.</param>
-    /// <param name="cancellationToken">Cancels only this caller's wait.</param>
-    /// <returns>
-    ///     The current snapshot after syntax becomes readable, or the terminal snapshot when the job stops before
-    ///     committing syntax. Returns null when no job exists.
-    /// </returns>
-    Task<IndexJobSnapshot?> WaitForSyntaxReadyAsync(string root, CancellationToken cancellationToken) =>
-        WaitForCompletionAsync(root, cancellationToken);
-
-    /// <summary>Cancels jobs during host shutdown and waits for their workers to stop.</summary>
-    /// <param name="cancellationToken">Bounds the shutdown wait.</param>
-    /// <returns>A task that completes after active workers stop or the wait is cancelled.</returns>
-    Task ShutdownAsync(CancellationToken cancellationToken);
-}
-
-/// <summary>
-///     Executes a repository index pass on behalf of the job manager.
-/// </summary>
-public interface IWorkspaceIndexJobExecutor
-{
-    /// <summary>Runs the requested index work and reports stage boundaries.</summary>
-    /// <param name="jobId">The daemon-owned job identifier to persist with its state marker.</param>
-    /// <param name="request">The normalized repository request.</param>
-    /// <param name="progress">The manager-owned progress callback.</param>
-    /// <param name="cancellationToken">The job lifetime cancellation token.</param>
-    /// <returns>The final index result.</returns>
-    Task<SemanticIndexResult> ExecuteAsync(
-        string jobId,
-        IndexJobRequest request,
-        IProgress<IndexJobProgress> progress,
-        CancellationToken cancellationToken);
-}
-
-/// <summary>
 ///     A mutable-stage update sent from an index executor to its job manager.
 /// </summary>
 /// <param name="Phase">The stage now in progress.</param>
@@ -271,20 +206,3 @@ public sealed record IndexJobProgress(
     long? TotalUnits = null,
     string? CurrentItem = null,
     string? Warning = null);
-
-/// <summary>
-///     Delivers progress on the reporting thread. Index work can run on a thread-pool thread, but phase updates
-///     must retain their order so a later phase never overwrites a newer snapshot with an earlier queued callback.
-/// </summary>
-/// <typeparam name="T">The progress value type.</typeparam>
-internal sealed class InlineProgress<T> : IProgress<T>
-{
-    private readonly Action<T> _report;
-
-    /// <summary>Initializes a synchronous progress sink.</summary>
-    /// <param name="report">The callback that consumes each progress update.</param>
-    public InlineProgress(Action<T> report) => _report = report;
-
-    /// <inheritdoc />
-    public void Report(T value) => _report(value);
-}

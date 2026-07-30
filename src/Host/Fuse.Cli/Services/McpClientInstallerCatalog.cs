@@ -3,95 +3,14 @@ using Fuse.Cli.Configuration.McpInstall;
 namespace Fuse.Cli.Services;
 
 /// <summary>
-///     Installs one supported MCP client registration from a normalized coordinator request.
+///     The set of shipped MCP client installers. Adding a supported client means adding one installer here and
+///     registering it in composition; no other code branches on the client.
 /// </summary>
-public interface IMcpClientInstaller
-{
-    /// <summary>Gets the client this installer owns.</summary>
-    McpInstallClient Client { get; }
-
-    /// <summary>Writes or updates this client's MCP registration.</summary>
-    /// <param name="request">The normalized registration request.</param>
-    /// <returns>True when registration was written or already current.</returns>
-    Task<bool> InstallAsync(McpClientInstallRequest request);
-}
-
-/// <summary>
-///     The validated input shared by each client-specific MCP installer.
-/// </summary>
-/// <param name="Scope">The requested project or user scope.</param>
-/// <param name="ProjectRoot">The resolved repository root or user-scope path base.</param>
-/// <param name="FuseCommand">The executable the client must launch.</param>
-/// <param name="ConsoleUI">The caller's human-readable reporting surface.</param>
-/// <param name="CancellationToken">The token that cancels external client registration work.</param>
-public sealed record McpClientInstallRequest(
-    McpInstallScope Scope,
-    string ProjectRoot,
-    string FuseCommand,
-    IConsoleUI ConsoleUI,
-    CancellationToken CancellationToken);
-
-internal sealed class ClaudeMcpClientInstaller : IMcpClientInstaller
-{
-    public McpInstallClient Client => McpInstallClient.Claude;
-
-    public Task<bool> InstallAsync(McpClientInstallRequest request) =>
-        request.Scope == McpInstallScope.User
-            ? McpInstallFiles.RegisterClaudeUserAsync(request.FuseCommand, request.ConsoleUI, request.CancellationToken)
-            : Task.FromResult(McpInstallFiles.WriteClaudeProjectConfig(request.ProjectRoot, request.FuseCommand, request.ConsoleUI));
-}
-
-internal sealed class CursorMcpClientInstaller : IMcpClientInstaller
-{
-    public McpInstallClient Client => McpInstallClient.Cursor;
-
-    public Task<bool> InstallAsync(McpClientInstallRequest request) =>
-        Task.FromResult(McpInstallFiles.WriteCursorConfig(request.Scope, request.ProjectRoot, request.FuseCommand, request.ConsoleUI));
-}
-
-internal sealed class CopilotMcpClientInstaller : IMcpClientInstaller
-{
-    public McpInstallClient Client => McpInstallClient.Copilot;
-
-    public Task<bool> InstallAsync(McpClientInstallRequest request) =>
-        Task.FromResult(McpInstallFiles.WriteCopilotConfig(request.Scope, request.ProjectRoot, request.FuseCommand, request.ConsoleUI));
-}
-
-internal sealed class OpenCodeMcpClientInstaller : IMcpClientInstaller
-{
-    public McpInstallClient Client => McpInstallClient.OpenCode;
-
-    public Task<bool> InstallAsync(McpClientInstallRequest request) =>
-        Task.FromResult(McpInstallFiles.WriteLocalArrayConfig(Client, request.Scope, request.ProjectRoot, request.FuseCommand, request.ConsoleUI));
-}
-
-internal sealed class KiloMcpClientInstaller : IMcpClientInstaller
-{
-    public McpInstallClient Client => McpInstallClient.Kilo;
-
-    public Task<bool> InstallAsync(McpClientInstallRequest request) =>
-        Task.FromResult(McpInstallFiles.WriteLocalArrayConfig(Client, request.Scope, request.ProjectRoot, request.FuseCommand, request.ConsoleUI));
-}
-
-internal sealed class CodexMcpClientInstaller : IMcpClientInstaller
-{
-    public McpInstallClient Client => McpInstallClient.Codex;
-
-    public Task<bool> InstallAsync(McpClientInstallRequest request) =>
-        Task.FromResult(McpInstallFiles.WriteTomlConfig(Client, request.Scope, request.ProjectRoot, request.FuseCommand, request.ConsoleUI));
-}
-
-internal sealed class GrokMcpClientInstaller : IMcpClientInstaller
-{
-    public McpInstallClient Client => McpInstallClient.Grok;
-
-    public Task<bool> InstallAsync(McpClientInstallRequest request) =>
-        Task.FromResult(McpInstallFiles.WriteTomlConfig(Client, request.Scope, request.ProjectRoot, request.FuseCommand, request.ConsoleUI));
-}
-
 internal static class McpClientInstallerCatalog
 {
-    public static IReadOnlyList<IMcpClientInstaller> CreateDefault() =>
+    /// <summary>Creates one installer per supported client, in the order installation reports them.</summary>
+    /// <returns>The shipped installers.</returns>
+    internal static IReadOnlyList<IMcpClientInstaller> CreateDefault() =>
     [
         new ClaudeMcpClientInstaller(),
         new CursorMcpClientInstaller(),
@@ -101,4 +20,83 @@ internal static class McpClientInstallerCatalog
         new CodexMcpClientInstaller(),
         new GrokMcpClientInstaller(),
     ];
+}
+
+/// <summary>Registers Fuse with Claude Code, using its own CLI for user scope and a config file for project scope.</summary>
+internal sealed class ClaudeMcpClientInstaller : IMcpClientInstaller
+{
+    /// <inheritdoc />
+    public McpInstallClient Client => McpInstallClient.Claude;
+
+    /// <inheritdoc />
+    public Task<bool> InstallAsync(McpClientInstallRequest request) =>
+        request.Scope == McpInstallScope.User
+            ? McpInstallFiles.RegisterClaudeUserAsync(request.FuseCommand, request.ConsoleUI, request.CancellationToken)
+            : Task.FromResult(McpInstallFiles.WriteClaudeProjectConfig(request.ProjectRoot, request.FuseCommand, request.ConsoleUI));
+}
+
+/// <summary>Registers Fuse with Cursor.</summary>
+internal sealed class CursorMcpClientInstaller : IMcpClientInstaller
+{
+    /// <inheritdoc />
+    public McpInstallClient Client => McpInstallClient.Cursor;
+
+    /// <inheritdoc />
+    public Task<bool> InstallAsync(McpClientInstallRequest request) =>
+        Task.FromResult(McpInstallFiles.WriteCursorConfig(request.Scope, request.ProjectRoot, request.FuseCommand, request.ConsoleUI));
+}
+
+/// <summary>Registers Fuse with GitHub Copilot.</summary>
+internal sealed class CopilotMcpClientInstaller : IMcpClientInstaller
+{
+    /// <inheritdoc />
+    public McpInstallClient Client => McpInstallClient.Copilot;
+
+    /// <inheritdoc />
+    public Task<bool> InstallAsync(McpClientInstallRequest request) =>
+        Task.FromResult(McpInstallFiles.WriteCopilotConfig(request.Scope, request.ProjectRoot, request.FuseCommand, request.ConsoleUI));
+}
+
+/// <summary>Registers Fuse with OpenCode, whose config lists servers in a local array.</summary>
+internal sealed class OpenCodeMcpClientInstaller : IMcpClientInstaller
+{
+    /// <inheritdoc />
+    public McpInstallClient Client => McpInstallClient.OpenCode;
+
+    /// <inheritdoc />
+    public Task<bool> InstallAsync(McpClientInstallRequest request) =>
+        Task.FromResult(McpInstallFiles.WriteLocalArrayConfig(Client, request.Scope, request.ProjectRoot, request.FuseCommand, request.ConsoleUI));
+}
+
+/// <summary>Registers Fuse with Kilo Code, whose config lists servers in a local array.</summary>
+internal sealed class KiloMcpClientInstaller : IMcpClientInstaller
+{
+    /// <inheritdoc />
+    public McpInstallClient Client => McpInstallClient.Kilo;
+
+    /// <inheritdoc />
+    public Task<bool> InstallAsync(McpClientInstallRequest request) =>
+        Task.FromResult(McpInstallFiles.WriteLocalArrayConfig(Client, request.Scope, request.ProjectRoot, request.FuseCommand, request.ConsoleUI));
+}
+
+/// <summary>Registers Fuse with Codex, whose config is TOML.</summary>
+internal sealed class CodexMcpClientInstaller : IMcpClientInstaller
+{
+    /// <inheritdoc />
+    public McpInstallClient Client => McpInstallClient.Codex;
+
+    /// <inheritdoc />
+    public Task<bool> InstallAsync(McpClientInstallRequest request) =>
+        Task.FromResult(McpInstallFiles.WriteTomlConfig(Client, request.Scope, request.ProjectRoot, request.FuseCommand, request.ConsoleUI));
+}
+
+/// <summary>Registers Fuse with Grok Build, whose config is TOML.</summary>
+internal sealed class GrokMcpClientInstaller : IMcpClientInstaller
+{
+    /// <inheritdoc />
+    public McpInstallClient Client => McpInstallClient.Grok;
+
+    /// <inheritdoc />
+    public Task<bool> InstallAsync(McpClientInstallRequest request) =>
+        Task.FromResult(McpInstallFiles.WriteTomlConfig(Client, request.Scope, request.ProjectRoot, request.FuseCommand, request.ConsoleUI));
 }

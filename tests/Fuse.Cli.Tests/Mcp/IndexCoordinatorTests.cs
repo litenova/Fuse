@@ -240,7 +240,7 @@ public sealed class IndexConcurrencyIntegrationTests : IAsyncLifetime, IDisposab
                 CancellationToken.None);
         }
 
-        var tasks = Enumerable.Range(0, 8).Select(_ => FuseTools.FuseFindAsync(
+        var tasks = Enumerable.Range(0, 8).Select(_ => FindToolOperations.ExecuteAsync(
             Indexer,
             ChangeSource,
             "Widget",
@@ -306,7 +306,7 @@ public sealed class IndexConcurrencyIntegrationTests : IAsyncLifetime, IDisposab
             await seed.UpsertFilesAsync(files, CancellationToken.None);
         }
 
-        var opens = Enumerable.Range(0, 24).Select(_ => FuseTools.FuseFindAsync(
+        var opens = Enumerable.Range(0, 24).Select(_ => FindToolOperations.ExecuteAsync(
             Indexer,
             ChangeSource,
             "F1",

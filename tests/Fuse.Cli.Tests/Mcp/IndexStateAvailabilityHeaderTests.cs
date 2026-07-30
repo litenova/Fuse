@@ -95,7 +95,7 @@ public sealed class IndexStateAvailabilityHeaderTests : IDisposable
     {
         if (expectedState == "not_indexed")
         {
-            var header = await FuseTools.FormatNotIndexedAvailabilityHeaderAsync(_root, CancellationToken.None);
+            var header = await IndexAvailabilityReporter.NotIndexedHeaderAsync(_root, CancellationToken.None);
             AssertHeaderShape(header, expectedState, 0);
             AvailabilityHeaderGoldenAssert.AssertMatches($"availability-header-{expectedState}", NormalizeForGolden(header));
             return;
@@ -119,8 +119,8 @@ public sealed class IndexStateAvailabilityHeaderTests : IDisposable
         await WorkspaceIndexManifest.CompleteAsync(_root, store, inventory, CancellationToken.None);
 
         var headerFromStore = expectedState == "index_busy"
-            ? await FuseTools.OracleAvailabilityHeaderAsync(store, _root, CancellationToken.None, indexStateOverride: "index_busy")
-            : await FuseTools.OracleAvailabilityHeaderAsync(store, _root, CancellationToken.None);
+            ? await IndexAvailabilityReporter.OracleHeaderAsync(store, _root, CancellationToken.None, indexStateOverride: "index_busy")
+            : await IndexAvailabilityReporter.OracleHeaderAsync(store, _root, CancellationToken.None);
 
         AssertHeaderShape(headerFromStore, expectedState, expectedFiles!.Value);
         AvailabilityHeaderGoldenAssert.AssertMatches($"availability-header-{expectedState}", NormalizeForGolden(headerFromStore));
@@ -146,7 +146,7 @@ public sealed class IndexStateAvailabilityHeaderTests : IDisposable
                 _provider.GetRequiredService<PooledCheckWorker>(),
                 _provider.GetRequiredService<IProcessRunner>());
 
-            var result = await FuseTools.FuseFindAsync(
+            var result = await FindToolOperations.ExecuteAsync(
                 Indexer,
                 ChangeSource,
                 "App",

@@ -77,7 +77,7 @@ public sealed class WorkspacePathResolverTests
         var root = TempRoot();
         try
         {
-            var output = await FuseTools.FuseCheckAsync(
+            var output = await CheckToolOperations.ExecuteAsync(
                 indexer, root, "../escaped.cs", "class X {}", cancellationToken: CancellationToken.None);
 
             Assert.Contains("refusing to check", output);
@@ -95,7 +95,7 @@ public sealed class WorkspacePathResolverTests
         var root = TempRoot();
         try
         {
-            var output = await FuseTools.FuseReduceAsync(
+            var output = await ReduceToolOperations.ExecuteAsync(
                 orchestrator, templates, root, files: ["../escaped.cs"], cancellationToken: CancellationToken.None);
 
             Assert.Contains("refusing to reduce", output);
@@ -119,7 +119,7 @@ public sealed class WorkspacePathResolverTests
                 ]
                 """;
 
-            var output = await FuseTools.FuseTestAsync(
+            var output = await TestToolOperations.ExecuteAsync(
                 indexer, path: root, candidates: candidates, cancellationToken: CancellationToken.None);
 
             Assert.Contains("refusing to race", output);

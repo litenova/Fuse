@@ -46,7 +46,7 @@ public sealed class DoctorPersistedDiagnosisTests : IDisposable
     {
         await SeedPersistedDiagnosisAsync();
 
-        var result = await FuseTools.FuseWorkspaceAsync(Indexer, Jobs, action: "doctor", path: _root, refresh: false);
+        var result = await WorkspaceToolOperations.ExecuteAsync(Indexer, Jobs, action: "doctor", path: _root, refresh: false);
 
         Assert.Contains("diagnosis source: warm index", result);
         Assert.Contains("oracle-grade (all projects loaded clean)", result); // A live load of a solution-less root could not report this.
@@ -58,7 +58,7 @@ public sealed class DoctorPersistedDiagnosisTests : IDisposable
     {
         await SeedPersistedDiagnosisAsync();
 
-        var result = await FuseTools.FuseWorkspaceAsync(Indexer, Jobs, action: "doctor", path: _root, refresh: true);
+        var result = await WorkspaceToolOperations.ExecuteAsync(Indexer, Jobs, action: "doctor", path: _root, refresh: true);
 
         Assert.Contains("diagnosis source: live MSBuild load", result);
         Assert.DoesNotContain("oracle-grade (all projects loaded clean)", result); // The live load sees no solution.

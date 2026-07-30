@@ -57,7 +57,7 @@ public sealed class ApiSurfacesDocParityTests
 
     private static HashSet<string> GetMcpToolNames()
     {
-        return typeof(FuseTools).Assembly
+        return typeof(FuseWorkspaceHandler).Assembly
             .GetTypes()
             .Where(type => type.GetCustomAttribute<McpServerToolTypeAttribute>() is not null)
             .SelectMany(type => type.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance))

@@ -12,13 +12,13 @@ using ModelContextProtocol.Server;
 namespace Fuse.Cli.Mcp;
 
 /// <summary>
-///     MCP resource definitions for Fuse V3, exposed to AI agents through the Model Context Protocol server.
+///     MCP resource definitions exposed to AI agents through the Model Context Protocol server.
 /// </summary>
 /// <remarks>
 ///     Each method backs an MCP resource addressed by a <c>fuse://</c> URI template. The resources mirror the
-///     read workflows of the equivalent <see cref="FuseTools" /> tools over the persistent semantic index: the
-///     index is built on first use, no files are written, and errors are returned as descriptive strings rather
-///     than thrown. Use the tools for full control; the resources are the fixed-default addressable form.
+///     read workflows of the equivalent <c>fuse_*</c> tools over the persistent semantic index: the index is
+///     built on first use, no files are written, and errors are returned as descriptive strings rather than
+///     thrown. Use the tools for full control; the resources are the fixed-default addressable form.
 /// </remarks>
 [McpServerResourceType]
 public sealed class FuseResources
@@ -106,7 +106,7 @@ public sealed class FuseResources
         await using var store = await OpenIndexedAsync(toolRuntime, indexer, root, cancellationToken);
         var mode = await store.GetMetaAsync("index_mode", cancellationToken) ?? "unknown";
         var builder = new StringBuilder();
-        builder.AppendLine(await FuseTools.OracleAvailabilityHeaderAsync(
+        builder.AppendLine(await IndexAvailabilityReporter.OracleHeaderAsync(
             store, root, cancellationToken, residentWorkspaces: toolRuntime.ResidentWorkspaces));
         builder.AppendLine($"workspace: {root}");
         builder.AppendLine($"index mode: {mode}");

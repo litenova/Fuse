@@ -75,7 +75,7 @@ public sealed class ImpactCommand
             return;
         }
 
-        var output = await FuseTools.FuseImpactAsync(
+        var output = await ImpactToolOperations.ExecuteAsync(
             _indexer, Symbol, Path, Limit, Package, FromVersion, ToVersion, session: "", context.CancellationToken,
             runtime: _runtime);
         _consoleUI.WriteResult(output);

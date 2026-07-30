@@ -105,7 +105,7 @@ public sealed class ReviewCommand
         // gated by the check session's red state. It opens the index itself, so it does not need a prior index.
         if (Handoff)
         {
-            var handoff = await FuseTools.BuildHandoffAsync(
+            var handoff = await ReviewToolOperations.BuildHandoffAsync(
                 _indexer,
                 _changeSource,
                 root,

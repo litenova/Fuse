@@ -20,7 +20,7 @@ public sealed class WorkspaceIdentityMcpTests : IDisposable
     {
         var root = CreateTempDirectory(markAsRepository: false);
 
-        var result = await FuseTools.FuseWorkspaceAsync(
+        var result = await WorkspaceToolOperations.ExecuteAsync(
             _services.GetRequiredService<SemanticIndexer>(),
             Jobs,
             action: "status",
@@ -36,7 +36,7 @@ public sealed class WorkspaceIdentityMcpTests : IDisposable
     {
         var root = CreateTempDirectory(markAsRepository: false);
 
-        var result = await FuseTools.FuseImpactAsync(
+        var result = await ImpactToolOperations.ExecuteAsync(
             _services.GetRequiredService<SemanticIndexer>(),
             path: root,
             package: "Example.Package",
@@ -66,7 +66,7 @@ public sealed class WorkspaceIdentityMcpTests : IDisposable
             await seed.SetMetaAsync("index_mode", "syntax", CancellationToken.None);
         }
 
-        var started = await FuseTools.FuseWorkspaceAsync(
+        var started = await WorkspaceToolOperations.ExecuteAsync(
             _services.GetRequiredService<SemanticIndexer>(),
             Jobs,
             action: "index",
@@ -78,7 +78,7 @@ public sealed class WorkspaceIdentityMcpTests : IDisposable
         Assert.NotNull(completed);
         Assert.Equal(IndexJobState.Completed, completed!.State);
 
-        var result = await FuseTools.FuseWorkspaceAsync(
+        var result = await WorkspaceToolOperations.ExecuteAsync(
             _services.GetRequiredService<SemanticIndexer>(),
             Jobs,
             action: "status",
@@ -100,7 +100,7 @@ public sealed class WorkspaceIdentityMcpTests : IDisposable
         var root = CreateTempDirectory(markAsRepository: true);
         await File.WriteAllTextAsync(Path.Combine(root, "OrderService.cs"), "public class OrderService { }");
 
-        var result = await FuseTools.FuseTestAsync(
+        var result = await TestToolOperations.ExecuteAsync(
             _services.GetRequiredService<SemanticIndexer>(),
             symbol: "OrderService",
             path: root);

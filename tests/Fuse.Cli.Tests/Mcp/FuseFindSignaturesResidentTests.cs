@@ -52,7 +52,7 @@ public sealed class FuseFindSignaturesResidentTests : IDisposable
                 new PooledCheckWorker(),
                 new OwnedProcessRunner());
 
-            var output = await FuseTools.FuseFindAsync(
+            var output = await FindToolOperations.ExecuteAsync(
                 indexer, changeSource, "System.Text.Json.JsonSerializer.Serialize", work, kind: "signatures",
                 cancellationToken: CancellationToken.None,
                 runtime: runtime);
@@ -97,7 +97,7 @@ public sealed class FuseFindSignaturesResidentTests : IDisposable
                 new PooledCheckWorker(),
                 new OwnedProcessRunner());
 
-            var output = await FuseTools.FuseFindAsync(
+            var output = await FindToolOperations.ExecuteAsync(
                 indexer,
                 changeSource,
                 "System.Text.Json.JsonSerializer.Serialize",
@@ -140,7 +140,7 @@ public sealed class FuseFindSignaturesResidentTests : IDisposable
                 new WarmSolutionCache(),
                 new PooledCheckWorker(),
                 new OwnedProcessRunner());
-            var output = await FuseTools.FuseFindAsync(
+            var output = await FindToolOperations.ExecuteAsync(
                 indexer,
                 changeSource,
                 "Widget",

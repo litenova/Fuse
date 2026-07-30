@@ -8,18 +8,6 @@ namespace Fuse.Cli.Mcp;
 /// </summary>
 public sealed class SemanticIndexJobExecutor : IWorkspaceIndexJobExecutor
 {
-    private const string JobIdMetaKey = "index_job_id";
-    private const string JobPhaseMetaKey = "index_job_phase";
-    private const string JobDepthMetaKey = "index_job_depth";
-    private const string JobStartedMetaKey = "index_job_started_at";
-    private const string JobStateMetaKey = "index_job_state";
-    private const string JobErrorCodeMetaKey = "index_job_error_code";
-    private const string JobErrorMessageMetaKey = "index_job_error_message";
-    private const string InterruptedJobIdMetaKey = "index_interrupted_job_id";
-    private const string InterruptedPhaseMetaKey = "index_interrupted_phase";
-    private const string InterruptedDepthMetaKey = "index_interrupted_depth";
-    private const string InterruptedStartedMetaKey = "index_interrupted_started_at";
-    private const string InterruptedStateMetaKey = "index_interrupted_state";
     private readonly IndexCoordinator _coordinator;
     private readonly SemanticIndexer _indexer;
     private readonly TimeProvider _timeProvider;
@@ -230,28 +218,28 @@ public sealed class SemanticIndexJobExecutor : IWorkspaceIndexJobExecutor
         IProgress<IndexJobProgress> progress,
         CancellationToken cancellationToken)
     {
-        var state = await store.GetMetaAsync(JobStateMetaKey, cancellationToken);
+        var state = await store.GetMetaAsync(IndexJobMetaKeys.State, cancellationToken);
         if (!string.Equals(state, "running", StringComparison.Ordinal)
             && !string.Equals(state, "cancelling", StringComparison.Ordinal))
         {
             return;
         }
 
-        var previousJobId = await store.GetMetaAsync(JobIdMetaKey, cancellationToken);
+        var previousJobId = await store.GetMetaAsync(IndexJobMetaKeys.JobId, cancellationToken);
         if (string.IsNullOrWhiteSpace(previousJobId)
             || string.Equals(previousJobId, jobId, StringComparison.Ordinal))
         {
             return;
         }
 
-        var previousPhase = await store.GetMetaAsync(JobPhaseMetaKey, cancellationToken) ?? IndexPhase.Inventory.ToString();
-        var previousDepth = await store.GetMetaAsync(JobDepthMetaKey, cancellationToken) ?? IndexDepth.Syntax.ToString();
-        var previousStarted = await store.GetMetaAsync(JobStartedMetaKey, cancellationToken) ?? string.Empty;
-        await store.SetMetaAsync(InterruptedJobIdMetaKey, previousJobId, cancellationToken);
-        await store.SetMetaAsync(InterruptedPhaseMetaKey, previousPhase, cancellationToken);
-        await store.SetMetaAsync(InterruptedDepthMetaKey, previousDepth, cancellationToken);
-        await store.SetMetaAsync(InterruptedStartedMetaKey, previousStarted, cancellationToken);
-        await store.SetMetaAsync(InterruptedStateMetaKey, "interrupted", cancellationToken);
+        var previousPhase = await store.GetMetaAsync(IndexJobMetaKeys.Phase, cancellationToken) ?? IndexPhase.Inventory.ToString();
+        var previousDepth = await store.GetMetaAsync(IndexJobMetaKeys.Depth, cancellationToken) ?? IndexDepth.Syntax.ToString();
+        var previousStarted = await store.GetMetaAsync(IndexJobMetaKeys.StartedAt, cancellationToken) ?? string.Empty;
+        await store.SetMetaAsync(IndexJobMetaKeys.InterruptedJobId, previousJobId, cancellationToken);
+        await store.SetMetaAsync(IndexJobMetaKeys.InterruptedPhase, previousPhase, cancellationToken);
+        await store.SetMetaAsync(IndexJobMetaKeys.InterruptedDepth, previousDepth, cancellationToken);
+        await store.SetMetaAsync(IndexJobMetaKeys.InterruptedStartedAt, previousStarted, cancellationToken);
+        await store.SetMetaAsync(IndexJobMetaKeys.InterruptedState, "interrupted", cancellationToken);
         progress.Report(new IndexJobProgress(
             IndexPhase.Inventory,
             CurrentItem: "resuming committed index batches",
@@ -268,31 +256,19 @@ public sealed class SemanticIndexJobExecutor : IWorkspaceIndexJobExecutor
         string? errorCode = null,
         string? errorMessage = null)
     {
-        var existingJobId = await store.GetMetaAsync(JobIdMetaKey, cancellationToken);
+        var existingJobId = await store.GetMetaAsync(IndexJobMetaKeys.JobId, cancellationToken);
         var startedAt = string.Equals(existingJobId, jobId, StringComparison.Ordinal)
-            ? await store.GetMetaAsync(JobStartedMetaKey, cancellationToken)
+            ? await store.GetMetaAsync(IndexJobMetaKeys.StartedAt, cancellationToken)
             : null;
-        await store.SetMetaAsync(JobIdMetaKey, jobId, cancellationToken);
-        await store.SetMetaAsync(JobPhaseMetaKey, phase.ToString(), cancellationToken);
-        await store.SetMetaAsync(JobDepthMetaKey, request.Depth.ToString(), cancellationToken);
+        await store.SetMetaAsync(IndexJobMetaKeys.JobId, jobId, cancellationToken);
+        await store.SetMetaAsync(IndexJobMetaKeys.Phase, phase.ToString(), cancellationToken);
+        await store.SetMetaAsync(IndexJobMetaKeys.Depth, request.Depth.ToString(), cancellationToken);
         await store.SetMetaAsync(
-            JobStartedMetaKey,
+            IndexJobMetaKeys.StartedAt,
             string.IsNullOrWhiteSpace(startedAt) ? _timeProvider.GetUtcNow().ToString("O") : startedAt,
             cancellationToken);
-        await store.SetMetaAsync(JobStateMetaKey, state, cancellationToken);
-        await store.SetMetaAsync(JobErrorCodeMetaKey, errorCode ?? string.Empty, cancellationToken);
-        await store.SetMetaAsync(JobErrorMessageMetaKey, errorMessage ?? string.Empty, cancellationToken);
-    }
-}
-
-/// <summary>
-///     Identifies invalid job input that callers can correct without treating the index pipeline as a failure.
-/// </summary>
-public sealed class IndexJobValidationException : Exception
-{
-    /// <summary>Initializes a new validation exception.</summary>
-    /// <param name="message">The direct correction message.</param>
-    public IndexJobValidationException(string message) : base(message)
-    {
+        await store.SetMetaAsync(IndexJobMetaKeys.State, state, cancellationToken);
+        await store.SetMetaAsync(IndexJobMetaKeys.ErrorCode, errorCode ?? string.Empty, cancellationToken);
+        await store.SetMetaAsync(IndexJobMetaKeys.ErrorMessage, errorMessage ?? string.Empty, cancellationToken);
     }
 }

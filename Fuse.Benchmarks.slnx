@@ -1,8 +1,8 @@
 <Solution>
   <Configurations>
+    <BuildType Name="Debug" />
+    <BuildType Name="Release" />
     <Platform Name="Any CPU" />
-    <Platform Name="x64" />
-    <Platform Name="x86" />
   </Configurations>
   <Folder Name="/tests/benchmarks/">
     <Project Path="tests/benchmarks/Fuse.Benchmarks/Fuse.Benchmarks.csproj" />

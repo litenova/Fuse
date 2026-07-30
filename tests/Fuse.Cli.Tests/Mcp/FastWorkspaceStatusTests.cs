@@ -38,7 +38,7 @@ public sealed class FastWorkspaceStatusTests : IAsyncLifetime, IDisposable
         var databasePath = Fuse.Reduction.Caching.FuseStorePaths.ResolveDatabasePath(_root);
         Assert.False(File.Exists(databasePath));
 
-        var status = await FuseTools.FuseWorkspaceAsync(Indexer, Jobs, action: "status", path: _root);
+        var status = await WorkspaceToolOperations.ExecuteAsync(Indexer, Jobs, action: "status", path: _root);
 
         Assert.False(File.Exists(databasePath));
         Assert.Contains("index_state: not_indexed", status);
@@ -68,7 +68,7 @@ public sealed class FastWorkspaceStatusTests : IAsyncLifetime, IDisposable
         }
 
         var stopwatch = Stopwatch.StartNew();
-        var status = await FuseTools.FuseWorkspaceAsync(Indexer, Jobs, action: "status", path: _root);
+        var status = await WorkspaceToolOperations.ExecuteAsync(Indexer, Jobs, action: "status", path: _root);
         stopwatch.Stop();
 
         Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(2), $"status took {stopwatch.Elapsed.TotalSeconds:F1}s");
@@ -83,7 +83,7 @@ public sealed class FastWorkspaceStatusTests : IAsyncLifetime, IDisposable
         var databasePath = Fuse.Reduction.Caching.FuseStorePaths.ResolveDatabasePath(_root);
         Assert.False(File.Exists(databasePath));
 
-        var doctor = await FuseTools.FuseWorkspaceAsync(Indexer, Jobs, action: "doctor", path: _root);
+        var doctor = await WorkspaceToolOperations.ExecuteAsync(Indexer, Jobs, action: "doctor", path: _root);
 
         Assert.False(File.Exists(databasePath));
         Assert.StartsWith("index_state: not_indexed", doctor);
@@ -110,7 +110,7 @@ public sealed class FastWorkspaceStatusTests : IAsyncLifetime, IDisposable
         await lockCommand.ExecuteNonQueryAsync();
 
         var stopwatch = Stopwatch.StartNew();
-        var result = await FuseTools.FuseFindAsync(
+        var result = await FindToolOperations.ExecuteAsync(
             Indexer, ChangeSource, "App", path: _root, kind: "symbol");
         stopwatch.Stop();
 

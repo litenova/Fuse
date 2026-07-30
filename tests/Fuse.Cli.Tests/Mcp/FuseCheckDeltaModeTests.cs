@@ -31,14 +31,14 @@ public sealed class FuseCheckDeltaModeTests : IDisposable
             var runtime = FuseMcpRuntime.CreateIsolated(indexer, stub);
 
             // First call: no baseline yet, so the current (empty) set is established as the baseline.
-            var established = await FuseTools.FuseCheckAsync(
+            var established = await CheckToolOperations.ExecuteAsync(
                 indexer, work, session: "s1", cancellationToken: CancellationToken.None, runtime: runtime);
             Assert.Contains("established", established);
 
             // The agent edits and introduces an error; the resident whole-state now reports it.
             stub.Current = [new CheckDiagnostic("CS1061", "Error", "'Widget' does not contain a definition for 'Nope'", "Widget.cs", 1)];
 
-            var delta = await FuseTools.FuseCheckAsync(
+            var delta = await CheckToolOperations.ExecuteAsync(
                 indexer, work, session: "s1", cancellationToken: CancellationToken.None, runtime: runtime);
             Assert.Contains("1 introduced", delta);
             Assert.Contains("CS1061", delta);
@@ -61,11 +61,11 @@ public sealed class FuseCheckDeltaModeTests : IDisposable
                 [new CheckDiagnostic("CS0246", "Error", "type X not found", "Widget.cs", 3)]);
             var runtime = FuseMcpRuntime.CreateIsolated(indexer, stub);
 
-            await FuseTools.FuseCheckAsync(
+            await CheckToolOperations.ExecuteAsync(
                 indexer, work, session: "s2", cancellationToken: CancellationToken.None, runtime: runtime); // establish with the error present
             stub.Current = []; // the edit fixed it
 
-            var delta = await FuseTools.FuseCheckAsync(
+            var delta = await CheckToolOperations.ExecuteAsync(
                 indexer, work, session: "s2", cancellationToken: CancellationToken.None, runtime: runtime);
             Assert.Contains("1 resolved", delta);
         }
@@ -87,14 +87,14 @@ public sealed class FuseCheckDeltaModeTests : IDisposable
                 [new CheckDiagnostic("CS1061", "Error", "no member", "Widget.cs", 1)]);
             var runtime = FuseMcpRuntime.CreateIsolated(indexer, stub);
 
-            await FuseTools.FuseCheckAsync(
+            await CheckToolOperations.ExecuteAsync(
                 indexer, work, session: "s3", cancellationToken: CancellationToken.None, runtime: runtime); // baseline = 1 error
-            var reset = await FuseTools.FuseCheckAsync(
+            var reset = await CheckToolOperations.ExecuteAsync(
                 indexer, work, session: "s3", markGreen: true, cancellationToken: CancellationToken.None, runtime: runtime);
             Assert.Contains("marked green", reset);
 
             // After mark-green the current set is the new baseline, so there is no delta.
-            var delta = await FuseTools.FuseCheckAsync(
+            var delta = await CheckToolOperations.ExecuteAsync(
                 indexer, work, session: "s3", cancellationToken: CancellationToken.None, runtime: runtime);
             Assert.Contains("0 introduced, 0 resolved", delta);
         }
@@ -111,7 +111,7 @@ public sealed class FuseCheckDeltaModeTests : IDisposable
         var work = NewWorkspace();
         try
         {
-            var output = await FuseTools.FuseCheckAsync(indexer, work, session: "s4", cancellationToken: CancellationToken.None);
+            var output = await CheckToolOperations.ExecuteAsync(indexer, work, session: "s4", cancellationToken: CancellationToken.None);
             Assert.Contains("abstain", output);
             Assert.Contains("FUSE_RESIDENT", output);
         }

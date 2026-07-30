@@ -38,7 +38,7 @@ public sealed class FuseTestRaceTests : IDisposable
                 ]
                 """;
 
-            var output = await FuseTools.FuseTestAsync(
+            var output = await TestToolOperations.ExecuteAsync(
                 indexer, path: work, candidates: candidates, cancellationToken: CancellationToken.None, runtime: runtime);
 
             Assert.Contains("verification grade: oracle", output);
@@ -68,7 +68,7 @@ public sealed class FuseTestRaceTests : IDisposable
                 ]
                 """;
 
-            var output = await FuseTools.FuseTestAsync(
+            var output = await TestToolOperations.ExecuteAsync(
                 indexer, path: work, candidates: candidates, cancellationToken: CancellationToken.None, runtime: runtime);
 
             Assert.Contains("winner: none", output);
@@ -91,7 +91,7 @@ public sealed class FuseTestRaceTests : IDisposable
                 [{"id":"a","file":"Widget.cs","content":"x"},{"id":"b","file":"Widget.cs","content":"y"}]
                 """;
 
-            var output = await FuseTools.FuseTestAsync(
+            var output = await TestToolOperations.ExecuteAsync(
                 indexer, path: work, candidates: candidates, cancellationToken: CancellationToken.None);
 
             Assert.Contains("cannot race (abstain)", output);
@@ -113,7 +113,7 @@ public sealed class FuseTestRaceTests : IDisposable
             var candidates = "[" + string.Join(",",
                 Enumerable.Range(0, 5).Select(i => $"{{\"file\":\"W.cs\",\"content\":\"c{i}\"}}")) + "]";
 
-            var output = await FuseTools.FuseTestAsync(
+            var output = await TestToolOperations.ExecuteAsync(
                 indexer, path: work, candidates: candidates, maxCandidates: 4, cancellationToken: CancellationToken.None);
 
             Assert.Contains("exceed the bound", output);
@@ -131,11 +131,11 @@ public sealed class FuseTestRaceTests : IDisposable
         var work = NewWorkspace(out _);
         try
         {
-            var one = await FuseTools.FuseTestAsync(
+            var one = await TestToolOperations.ExecuteAsync(
                 indexer, path: work, candidates: """[{"file":"W.cs","content":"x"}]""", cancellationToken: CancellationToken.None);
             Assert.Contains("at least two candidates", one);
 
-            var bad = await FuseTools.FuseTestAsync(
+            var bad = await TestToolOperations.ExecuteAsync(
                 indexer, path: work, candidates: "{not json", cancellationToken: CancellationToken.None);
             Assert.Contains("must be a JSON array", bad);
         }

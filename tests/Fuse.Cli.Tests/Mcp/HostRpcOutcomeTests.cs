@@ -65,7 +65,7 @@ public sealed class HostRpcOutcomeTests : IDisposable
                 _provider.GetRequiredService<PooledCheckWorker>(),
                 _provider.GetRequiredService<IProcessRunner>());
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            var output = await FuseTools.FuseImpactAsync(
+            var output = await ImpactToolOperations.ExecuteAsync(
                 indexer, symbol: "Type0", path: root, cancellationToken: timeout.Token, runtime: runtime);
 
             Assert.StartsWith("index_state: ready", output);
@@ -98,7 +98,7 @@ public sealed class HostRpcOutcomeTests : IDisposable
                 _provider.GetRequiredService<PooledCheckWorker>(),
                 _provider.GetRequiredService<IProcessRunner>());
 
-            var output = await FuseTools.FuseImpactAsync(
+            var output = await ImpactToolOperations.ExecuteAsync(
                 _provider.GetRequiredService<SemanticIndexer>(),
                 symbol: "Widget",
                 path: root,
@@ -161,7 +161,7 @@ public sealed class HostRpcOutcomeTests : IDisposable
             await ready.Task.WaitAsync(TimeSpan.FromSeconds(10), cts.Token);
             var runtime = FuseMcpRuntime.CreateIsolated(indexer, new RemoteResidentWorkspaceProvider());
 
-            var output = await FuseTools.FuseCheckAsync(
+            var output = await CheckToolOperations.ExecuteAsync(
                 indexer,
                 work,
                 "Widget.cs",

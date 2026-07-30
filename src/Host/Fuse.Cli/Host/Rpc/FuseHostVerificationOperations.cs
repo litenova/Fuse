@@ -67,7 +67,7 @@ internal sealed class FuseHostVerificationOperations
     internal async Task<RefactorResultDto> RefactorAsync(string root, RefactorRequestDto request)
     {
         BudgetFor(root).ActivateWarm();
-        var output = await FuseTools.FuseRefactorCoreAsync(
+        var output = await RefactorToolOperations.RefactorCoreAsync(
             root,
             request.Symbol,
             request.NewName,
@@ -91,7 +91,7 @@ internal sealed class FuseHostVerificationOperations
         string newContent)
     {
         BudgetFor(root).ActivateCapture();
-        var result = await FuseTools.TryOracleFromCaptureBundleAsync(
+        var result = await CheckToolOperations.TryOracleFromCaptureBundleAsync(
             _host.Runtime,
             root,
             relativeFilePath,

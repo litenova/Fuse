@@ -33,7 +33,7 @@ public sealed class FuseCompilerToolsStoreDecouplingTests : IDisposable
         {
             using var foreignLock = AcquireWriterMutex(work);
 
-            var output = await FuseTools.FuseCheckAsync(
+            var output = await CheckToolOperations.ExecuteAsync(
                 indexer,
                 work,
                 "Widget.cs",
@@ -57,7 +57,7 @@ public sealed class FuseCompilerToolsStoreDecouplingTests : IDisposable
 
         try
         {
-            var output = await FuseTools.FuseCheckAsync(
+            var output = await CheckToolOperations.ExecuteAsync(
                 indexer,
                 work,
                 "Widget.cs",
@@ -86,7 +86,7 @@ public sealed class FuseCompilerToolsStoreDecouplingTests : IDisposable
 
         try
         {
-            var output = await FuseTools.FuseCheckAsync(
+            var output = await CheckToolOperations.ExecuteAsync(
                 indexer,
                 work,
                 "Widget.cs",
@@ -117,7 +117,7 @@ public sealed class FuseCompilerToolsStoreDecouplingTests : IDisposable
         await using var lockHolder = await HoldExclusiveSqliteLockAsync(databasePath);
         try
         {
-            var output = await FuseTools.FuseTestAsync(
+            var output = await TestToolOperations.ExecuteAsync(
                 indexer,
                 symbol: "OrderService",
                 path: work,

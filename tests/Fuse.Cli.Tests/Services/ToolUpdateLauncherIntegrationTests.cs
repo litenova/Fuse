@@ -111,7 +111,7 @@ public sealed class ToolUpdateLauncherIntegrationTests
 
     private static string FuseAssemblyPath()
     {
-        var location = typeof(FuseTools).Assembly.Location;
+        var location = typeof(FuseWorkspaceHandler).Assembly.Location;
         return File.Exists(location)
             ? location
             : throw new InvalidOperationException($"Could not locate fuse.dll for integration tests at '{location}'.");

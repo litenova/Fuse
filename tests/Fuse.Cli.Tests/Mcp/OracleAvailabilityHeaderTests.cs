@@ -29,7 +29,7 @@ public sealed class OracleAvailabilityHeaderTests : IAsyncLifetime
         await _store.SetMetaAsync("index_mode", "semantic", CancellationToken.None);
         await _store.SetMetaAsync(SemanticIndexer.StaleAsOfMetaKey, "0", CancellationToken.None);
 
-        var header = await FuseTools.OracleAvailabilityHeaderAsync(_store, _root, CancellationToken.None);
+        var header = await IndexAvailabilityReporter.OracleHeaderAsync(_store, _root, CancellationToken.None);
 
         Assert.StartsWith("index_state:", header);
         Assert.Contains("files_indexed:", header);
@@ -45,7 +45,7 @@ public sealed class OracleAvailabilityHeaderTests : IAsyncLifetime
         await _store.SetMetaAsync("index_mode", "partial", CancellationToken.None);
         await _store.SetMetaAsync(SemanticIndexer.StaleAsOfMetaKey, "7", CancellationToken.None);
 
-        var header = await FuseTools.OracleAvailabilityHeaderAsync(_store, _root, CancellationToken.None);
+        var header = await IndexAvailabilityReporter.OracleHeaderAsync(_store, _root, CancellationToken.None);
 
         Assert.Contains("index mode partial", header);
         Assert.Contains("7 known file(s) changed", header);
@@ -55,7 +55,7 @@ public sealed class OracleAvailabilityHeaderTests : IAsyncLifetime
     [Fact]
     public async Task Header_reports_unknown_mode_when_meta_absent()
     {
-        var header = await FuseTools.OracleAvailabilityHeaderAsync(_store, _root, CancellationToken.None);
+        var header = await IndexAvailabilityReporter.OracleHeaderAsync(_store, _root, CancellationToken.None);
 
         Assert.Contains("index mode unknown", header);
         // Tier-1 build capture is reported either way; without FUSE_BUILD_CAPTURE_WORKER it is not configured.
@@ -68,11 +68,11 @@ public sealed class OracleAvailabilityHeaderTests : IAsyncLifetime
         await _store.SetMetaAsync("index_mode", "semantic", CancellationToken.None);
 
         // Default seam: no resident workspace, so the header names the store as the truth source (S1/D8).
-        var storeBacked = await FuseTools.OracleAvailabilityHeaderAsync(_store, _root, CancellationToken.None);
+        var storeBacked = await IndexAvailabilityReporter.OracleHeaderAsync(_store, _root, CancellationToken.None);
         Assert.Contains("workspace store-backed", storeBacked);
 
         // With a resident workspace wired for this root, the header names it resident with its stamp.
-        var resident = await FuseTools.OracleAvailabilityHeaderAsync(
+        var resident = await IndexAvailabilityReporter.OracleHeaderAsync(
             _store,
             _root,
             CancellationToken.None,
@@ -100,7 +100,7 @@ public sealed class OracleAvailabilityHeaderTests : IAsyncLifetime
         // never reads the missing oracle as "cannot verify".
         await _store.SetMetaAsync("index_mode", "syntax", CancellationToken.None);
 
-        var header = await FuseTools.OracleAvailabilityHeaderAsync(_store, _root, CancellationToken.None);
+        var header = await IndexAvailabilityReporter.OracleHeaderAsync(_store, _root, CancellationToken.None);
 
         Assert.Contains("tier-1 build capture not configured", header);
         Assert.Contains("verify serves build-grade", header);

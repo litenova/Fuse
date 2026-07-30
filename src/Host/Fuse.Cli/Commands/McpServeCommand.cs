@@ -115,15 +115,15 @@ public sealed class McpServeCommand
 
         mcpServer
             .WithStdioServerTransport()
-            .WithTools<FuseWorkspaceMcpHandler>()
-            .WithTools<FuseFindMcpHandler>()
-            .WithTools<FuseContextMcpHandler>()
-            .WithTools<FuseImpactMcpHandler>()
-            .WithTools<FuseCheckMcpHandler>()
-            .WithTools<FuseTestMcpHandler>()
-            .WithTools<FuseRefactorMcpHandler>()
-            .WithTools<FuseReviewMcpHandler>()
-            .WithTools<FuseReduceMcpHandler>()
+            .WithTools<FuseWorkspaceHandler>()
+            .WithTools<FuseFindHandler>()
+            .WithTools<FuseContextHandler>()
+            .WithTools<FuseImpactHandler>()
+            .WithTools<FuseCheckHandler>()
+            .WithTools<FuseTestHandler>()
+            .WithTools<FuseRefactorHandler>()
+            .WithTools<FuseReviewHandler>()
+            .WithTools<FuseReduceHandler>()
             .WithResources<FuseResources>()
             // Register the playbook prompts (U3): selectable, anchored plans that teach the verified-edit loop.
             .WithPrompts<FusePrompts>();

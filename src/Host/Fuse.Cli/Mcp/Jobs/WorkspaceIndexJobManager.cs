@@ -122,6 +122,10 @@ public sealed class WorkspaceIndexJobManager : IWorkspaceIndexJobManager, IDispo
         }
         finally
         {
+            // The manager owns every job's cancellation source. Disposing them here (rather than when a worker
+            // finishes) removes the window where a concurrent CancelAsync could call Cancel on a disposed source.
+            foreach (var job in _jobs.Values)
+                job.Dispose();
             _shutdown.Dispose();
         }
     }
@@ -147,7 +151,7 @@ public sealed class WorkspaceIndexJobManager : IWorkspaceIndexJobManager, IDispo
             ? repositoryRoot
             : Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
 
-    private sealed class ManagedJob
+    private sealed class ManagedJob : IDisposable
     {
         private readonly object _sync = new();
         private readonly CancellationTokenSource _cancellation = new();
@@ -335,9 +339,11 @@ public sealed class WorkspaceIndexJobManager : IWorkspaceIndexJobManager, IDispo
             finally
             {
                 _syntaxReady.TrySetResult();
-                _cancellation.Dispose();
             }
         }
+
+        /// <summary>Releases the job's cancellation source. Only the owning manager calls this, after shutdown.</summary>
+        public void Dispose() => _cancellation.Dispose();
 
         private void UpdateProgress(IndexJobProgress update, TimeProvider timeProvider)
         {
@@ -476,28 +482,6 @@ public sealed class WorkspaceIndexJobManager : IWorkspaceIndexJobManager, IDispo
         private static bool SameCapture(string? first, string? second) =>
             string.Equals(first, second, StringComparison.OrdinalIgnoreCase);
 
-        private static IndexStorageSnapshot ReadStorage(string root)
-        {
-            try
-            {
-                var database = FuseStorePaths.ResolveDatabasePath(root);
-                var wal = database + "-wal";
-                var sharedMemory = database + "-shm";
-                var fuseDirectory = Path.GetDirectoryName(database)!;
-                return new IndexStorageSnapshot(
-                    SizeOf(database),
-                    SizeOf(wal),
-                    SizeOf(sharedMemory),
-                    Directory.Exists(fuseDirectory)
-                        ? Directory.EnumerateFiles(fuseDirectory, "*", SearchOption.TopDirectoryOnly).Sum(SizeOf)
-                        : 0);
-            }
-            catch (IOException)
-            {
-                return IndexStorageSnapshot.Empty;
-            }
-        }
-
-        private static long SizeOf(string path) => File.Exists(path) ? new FileInfo(path).Length : 0;
+        private static IndexStorageSnapshot ReadStorage(string root) => IndexStorageReader.Read(root);
     }
 }

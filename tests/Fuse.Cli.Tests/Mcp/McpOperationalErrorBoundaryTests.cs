@@ -21,7 +21,7 @@ public sealed class McpOperationalErrorBoundaryTests : IDisposable
     public async Task FuseWorkspace_status_returns_workspace_not_found_instead_of_throwing()
     {
         var missingRoot = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "missing");
-        var result = await FuseTools.FuseWorkspaceAsync(Indexer, Jobs, action: "status", path: missingRoot);
+        var result = await WorkspaceToolOperations.ExecuteAsync(Indexer, Jobs, action: "status", path: missingRoot);
         Assert.StartsWith(FuseOperationalErrors.WorkspaceNotFoundPrefix, result);
     }
 
@@ -29,14 +29,14 @@ public sealed class McpOperationalErrorBoundaryTests : IDisposable
     public async Task FuseFind_returns_validation_error_for_empty_query_instead_of_throwing()
     {
         var root = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")))!.FullName;
-        var result = await FuseTools.FuseFindAsync(Indexer, ChangeSource, "", path: root);
+        var result = await FindToolOperations.ExecuteAsync(Indexer, ChangeSource, "", path: root);
         Assert.StartsWith(FuseOperationalErrors.ValidationErrorPrefix, result);
     }
 
     [Fact]
     public async Task FuseReduce_returns_validation_error_for_empty_input_instead_of_throwing()
     {
-        var result = await FuseTools.FuseReduceAsync(null!, null!);
+        var result = await ReduceToolOperations.ExecuteAsync(null!, null!);
         Assert.StartsWith(FuseOperationalErrors.ValidationErrorPrefix, result);
     }
 

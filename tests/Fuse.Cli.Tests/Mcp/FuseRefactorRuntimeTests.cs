@@ -35,7 +35,7 @@ public sealed class FuseRefactorRuntimeTests
 
         try
         {
-            var output = await FuseTools.FuseRefactorCoreAsync(
+            var output = await RefactorToolOperations.RefactorCoreAsync(
                 root,
                 "Widget",
                 "Gadget",

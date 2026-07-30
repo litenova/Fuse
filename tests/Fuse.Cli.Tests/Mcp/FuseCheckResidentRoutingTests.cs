@@ -46,7 +46,7 @@ public sealed class FuseCheckResidentRoutingTests : IDisposable
                 new CheckDiagnostic("CS1061", "Error", "'Widget' does not contain a definition for 'Nope'", "Widget.cs", 1),
             ]));
 
-            var output = await FuseTools.FuseCheckAsync(
+            var output = await CheckToolOperations.ExecuteAsync(
                 indexer, work, "Widget.cs",
                 "namespace Sample; public sealed class Widget { public int Spin() => Nope; }",
                 cancellationToken: CancellationToken.None,
@@ -83,7 +83,7 @@ public sealed class FuseCheckResidentRoutingTests : IDisposable
             var root = Path.GetFullPath(work);
             var runtime = FuseMcpRuntime.CreateIsolated(indexer, new StubCheckProvider(root, []));
 
-            var output = await FuseTools.FuseCheckAsync(
+            var output = await CheckToolOperations.ExecuteAsync(
                 indexer, work, "Widget.cs",
                 "namespace Sample; public sealed class Widget { public int Spin() => 7; }",
                 cancellationToken: CancellationToken.None,

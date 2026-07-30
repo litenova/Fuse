@@ -59,6 +59,12 @@ public sealed class WorkspaceIndexStore : IWorkspaceIndexStore
     public const string FuseVersionMetaKey = "fuse_version";
 
     /// <summary>
+    ///     The <c>index_meta</c> key under which an index pass records the achieved index mode
+    ///     (<c>semantic</c>, <c>partial</c>, or <c>syntax</c>), so a read path reports the grade it can serve.
+    /// </summary>
+    public const string IndexModeMetaKey = "index_mode";
+
+    /// <summary>
     ///     The <c>index_meta</c> key under which the indexer stamps the extraction-contract version
     ///     (<see cref="WorkspaceIndexSchema.ExtractionContractVersion" />). Index reuse is gated on this and the
     ///     schema version, not on the product version, so a minor or patch bump that does not change extraction

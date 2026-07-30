@@ -42,7 +42,7 @@ public sealed class DegradedObservabilityTests
         Directory.CreateDirectory(Path.Combine(root, ".git"));
         try
         {
-            var header = await FuseTools.FormatBuildingSyntaxHeaderAsync(root, CancellationToken.None);
+            var header = await IndexAvailabilityReporter.BuildingSyntaxHeaderAsync(root, CancellationToken.None);
             Assert.Contains("index_state: building_syntax", header, StringComparison.Ordinal);
             Assert.Contains("grade: deferred (not semantic-ready)", header, StringComparison.Ordinal); // R30
             Assert.Contains("hint:", header, StringComparison.Ordinal);
