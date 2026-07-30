@@ -30,6 +30,7 @@ All notable changes to Fuse are documented here. The format is based on Keep a C
 - A default syntax job no longer tries to select a compiler workspace. Repositories with multiple root solution filters now complete syntax indexing; only `fuse index --semantic` asks for an unambiguous target.
 - Generated declaration indexing now retains type-level symbols and signature chunks only. Generated member rows no longer inflate the symbol, chunk, and full-text tables, while exact generated-type lookup remains available.
 - Index JSON snapshots now use named lifecycle values and follow the same redirected-output cadence as terminal progress: phase changes, ten-percent buckets, or five-second heartbeats.
+- Starting an index job no longer runs synchronous SQLite setup on the caller thread. A locked store now yields the bounded syntax-building header instead of waiting for the writer timeout.
 - Read-only index opens no longer rerun database pragmas or create schema tables. A contended find request now returns its availability header within the short read timeout. Resident compiler projection uses the same Git blob and SHA-256 identities as the scanner, so its follow-up reconcile does not rewrite unchanged files. Corrupt non-database files reach the derived-data recovery path instead of being described as a generic schema mismatch.
 
 ### Removed

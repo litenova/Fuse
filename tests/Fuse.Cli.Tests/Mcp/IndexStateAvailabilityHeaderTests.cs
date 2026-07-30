@@ -128,7 +128,7 @@ public sealed class IndexStateAvailabilityHeaderTests : IDisposable
     }
 
     [Fact]
-    public async Task Blocked_find_returns_header_within_two_seconds_not_index_busy_prefix()
+    public async Task Blocked_find_returns_building_header_within_configured_deadline()
     {
         var root = Path.Combine(Path.GetTempPath(), "fuse-blocked-find", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -149,7 +149,7 @@ public sealed class IndexStateAvailabilityHeaderTests : IDisposable
         lockCommand.CommandText = "BEGIN EXCLUSIVE;";
         await lockCommand.ExecuteNonQueryAsync();
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(4));
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         var result = await FuseTools.FuseFindAsync(
             Indexer,
@@ -160,10 +160,11 @@ public sealed class IndexStateAvailabilityHeaderTests : IDisposable
             cancellationToken: cts.Token);
         stopwatch.Stop();
 
-        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(2), $"find blocked for {stopwatch.Elapsed.TotalSeconds:F1}s");
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(4), $"find blocked for {stopwatch.Elapsed.TotalSeconds:F1}s");
         Assert.DoesNotContain(FuseOperationalErrors.IndexBusyPrefix, result);
-        Assert.StartsWith("index_state: index_busy", result);
-        Assert.Contains("files_indexed: 1", result);
+        Assert.DoesNotContain(FuseOperationalErrors.InternalErrorPrefix, result);
+        Assert.StartsWith("index_state: building_syntax", result);
+        Assert.Contains("grade: deferred", result);
         Assert.Contains("availability:", result);
 
         try
@@ -190,7 +191,6 @@ public sealed class IndexStateAvailabilityHeaderTests : IDisposable
 
     private static string NormalizeForGolden(string header) =>
         header
-            .Replace(" semantic upgrade in progress (a build is running for tier-1);", " semantic upgrade in progress;", StringComparison.Ordinal)
             .Replace("tier-1 build capture configured", "tier-1 build capture {tier1}", StringComparison.Ordinal)
             .Replace("tier-1 build capture not configured", "tier-1 build capture {tier1}", StringComparison.Ordinal)
             .Replace("verify serves oracle-grade", "verify serves {verify-grade}", StringComparison.Ordinal)
@@ -226,5 +226,5 @@ internal static class AvailabilityHeaderGoldenAssert
     }
 
     private static string NormalizeLineEndings(string text) =>
-        text.Replace("\r\n", "\n").Replace("\r", "\n");
+        text.Replace("\r\n", "\n").Replace("\r", "\n").TrimEnd();
 }

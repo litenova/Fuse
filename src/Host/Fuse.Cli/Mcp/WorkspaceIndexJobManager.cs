@@ -197,7 +197,9 @@ public sealed class WorkspaceIndexJobManager : IWorkspaceIndexJobManager, IDispo
             lock (_sync)
             {
                 _state = IndexJobState.Running;
-                _completion = RunAsync(executor, shutdownToken, timeProvider);
+                // An executor can perform synchronous SQLite setup before its first await. Run it on the job worker
+                // so start-or-join returns immediately and a read caller can honor its own bounded wait.
+                _completion = Task.Run(() => RunAsync(executor, shutdownToken, timeProvider));
             }
         }
 

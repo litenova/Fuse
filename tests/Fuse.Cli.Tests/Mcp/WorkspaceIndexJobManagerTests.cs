@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Fuse.Cli.Mcp;
 using Fuse.Semantics;
 using Xunit;
@@ -37,6 +38,25 @@ public sealed class WorkspaceIndexJobManagerTests : IAsyncLifetime
         Assert.Single(executor.Requests);
 
         executor.Release();
+        var completed = await manager.WaitForCompletionAsync(_root, CancellationToken.None);
+        Assert.Equal(IndexJobState.Completed, completed!.State);
+    }
+
+    [Fact]
+    public async Task Start_or_join_returns_before_synchronous_executor_work_completes()
+    {
+        var executor = new SynchronousDelayExecutor();
+        await using var manager = new WorkspaceIndexJobManager(executor);
+
+        var stopwatch = Stopwatch.StartNew();
+        var started = await manager.StartOrJoinAsync(Request(IndexDepth.Syntax), CancellationToken.None);
+        stopwatch.Stop();
+
+        Assert.False(started.Joined);
+        Assert.True(
+            stopwatch.Elapsed < TimeSpan.FromMilliseconds(500),
+            $"start-or-join blocked for {stopwatch.Elapsed.TotalMilliseconds:F0} ms");
+
         var completed = await manager.WaitForCompletionAsync(_root, CancellationToken.None);
         Assert.Equal(IndexJobState.Completed, completed!.State);
     }
@@ -235,6 +255,20 @@ public sealed class WorkspaceIndexJobManagerTests : IAsyncLifetime
         }
 
         public void Release() => _release.TrySetResult();
+    }
+
+    private sealed class SynchronousDelayExecutor : IWorkspaceIndexJobExecutor
+    {
+        public Task<SemanticIndexResult> ExecuteAsync(
+            string jobId,
+            IndexJobRequest request,
+            IProgress<IndexJobProgress> progress,
+            CancellationToken cancellationToken)
+        {
+            Thread.Sleep(TimeSpan.FromMilliseconds(750));
+            progress.Report(new IndexJobProgress(IndexPhase.SyntaxPersistence, 1, 1, "syntax committed"));
+            return Task.FromResult(new SemanticIndexResult("syntax", 1, 0, 1, 1, 0, []));
+        }
     }
 
     private sealed class TwoStageExecutor : IWorkspaceIndexJobExecutor

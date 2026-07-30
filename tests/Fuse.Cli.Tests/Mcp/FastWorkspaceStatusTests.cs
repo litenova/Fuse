@@ -73,25 +73,25 @@ public sealed class FastWorkspaceStatusTests : IAsyncLifetime, IDisposable
 
         Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(2), $"status took {stopwatch.Elapsed.TotalSeconds:F1}s");
         Assert.Contains("index_state: building_syntax", status);
-        Assert.Contains("semantic upgrade in progress", status);
+        Assert.Contains("compiler analysis in progress", status);
         Assert.Contains("files indexed: 1", status);
     }
 
     [Fact]
-    public async Task Doctor_warms_cold_repo_before_reporting_diagnosis()
+    public async Task Doctor_reports_cold_repo_without_creating_a_database()
     {
         var databasePath = Fuse.Reduction.Caching.FuseStorePaths.ResolveDatabasePath(_root);
         Assert.False(File.Exists(databasePath));
 
         var doctor = await FuseTools.FuseWorkspaceAsync(Indexer, Jobs, action: "doctor", path: _root);
 
-        Assert.True(File.Exists(databasePath));
-        Assert.StartsWith("index_state: ready", doctor);
+        Assert.False(File.Exists(databasePath));
+        Assert.StartsWith("index_state: not_indexed", doctor);
         Assert.Contains("load tier:", doctor);
     }
 
     [Fact]
-    public async Task FuseFind_returns_index_busy_when_database_is_locked()
+    public async Task FuseFind_returns_a_bounded_building_header_when_database_is_locked()
     {
         var databasePath = Fuse.Reduction.Caching.FuseStorePaths.ResolveDatabasePath(_root);
         Directory.CreateDirectory(Path.GetDirectoryName(databasePath)!);
@@ -112,10 +112,11 @@ public sealed class FastWorkspaceStatusTests : IAsyncLifetime, IDisposable
         var result = await FuseTools.FuseFindAsync(
             Indexer, ChangeSource, "App", path: _root, kind: "symbol");
 
-        Assert.StartsWith("index_state: index_busy", result);
-        Assert.Contains("files_indexed: 1", result);
+        Assert.StartsWith("index_state: building_syntax", result);
+        Assert.Contains("grade: deferred", result);
         Assert.Contains("availability:", result);
         Assert.DoesNotContain(FuseOperationalErrors.IndexBusyPrefix, result);
+        Assert.DoesNotContain(FuseOperationalErrors.InternalErrorPrefix, result);
     }
 
     public Task DisposeAsync()

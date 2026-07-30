@@ -103,7 +103,7 @@ public sealed class FuseCompilerToolsStoreDecouplingTests : IDisposable
     }
 
     [Fact]
-    public async Task FuseTest_returns_busy_header_when_covering_selection_store_is_locked()
+    public async Task FuseTest_returns_building_header_when_covering_selection_store_is_locked()
     {
         var indexer = _provider.GetRequiredService<SemanticIndexer>();
         var work = Path.Combine(Path.GetTempPath(), "fuse-test-store-busy", Guid.NewGuid().ToString("N"));
@@ -123,7 +123,9 @@ public sealed class FuseCompilerToolsStoreDecouplingTests : IDisposable
                 path: work,
                 cancellationToken: CancellationToken.None);
 
-            Assert.StartsWith("index_state: index_busy", output);
+            Assert.StartsWith("index_state: building_syntax", output);
+            Assert.Contains("grade: deferred", output);
+            Assert.DoesNotContain(FuseOperationalErrors.InternalErrorPrefix, output);
         }
         finally
         {
@@ -177,8 +179,8 @@ public sealed class FuseCompilerToolsStoreDecouplingTests : IDisposable
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         // locking_mode=EXCLUSIVE keeps the WAL/-shm locks held after the first write, so the covering-selection read
-        // connection is refused with SQLITE_BUSY. A plain BEGIN IMMEDIATE would only take the write lock and still
-        // let WAL readers through, so the covering open would succeed instead of surfacing index_busy.
+        // connection cannot open. A plain BEGIN IMMEDIATE would only take the write lock and still let WAL readers
+        // through, so the test would not exercise the bounded building response.
         command.CommandText =
             "PRAGMA locking_mode=EXCLUSIVE; BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS _fuse_lock_probe(x);";
         await command.ExecuteNonQueryAsync();

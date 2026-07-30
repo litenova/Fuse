@@ -2,4 +2,4 @@ index_state: building_syntax
 files_indexed: 1
 grade: deferred (not semantic-ready)
 hint: index warming (syntax tier building); use your native search meanwhile and retry fuse once index_state is ready.
-availability: index mode syntax; full-text search available; tier-1 build capture {tier1}; verify serves {verify-grade}; workspace store-backed; semantic upgrade in progress; up to date.
+availability: index mode syntax; full-text search available; tier-1 build capture {tier1}; verify serves {verify-grade}; workspace store-backed; compiler analysis in progress; up to date.
