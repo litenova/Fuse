@@ -52,6 +52,7 @@ public static class FuseServiceCollectionExtensions
         services.AddSingleton(_ => new RoslynWorkspaceLoader());
         services.AddSingleton(_ => SemanticAnalysisRunner.CreateDefault());
         services.AddSingleton<WorkspaceFileScanner>();
+        services.AddSingleton<IProcessRunner, OwnedProcessRunner>();
         services.AddSingleton<BuildCaptureClient>();
         // The indexer is retained by the singleton job executor. Register it with the same host lifetime so
         // its compiler client and held-solution cache cannot be captured from a shorter-lived service.

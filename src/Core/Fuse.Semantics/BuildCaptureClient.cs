@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text;
 using System.Text.Json;
 using Fuse.Indexing;
 
@@ -21,13 +20,18 @@ namespace Fuse.Semantics;
 public sealed class BuildCaptureClient
 {
     private readonly string? _workerDllPath;
+    private readonly IProcessRunner _processRunner;
 
     /// <summary>
     ///     Initializes a new instance of the <see cref="BuildCaptureClient" /> class.
     /// </summary>
     /// <param name="workerDllPath">An explicit path to the worker dll; when null, the worker is discovered by <see cref="ResolveWorkerPath" />.</param>
-    public BuildCaptureClient(string? workerDllPath = null) =>
+    /// <param name="processRunner">The owned process runner used to start and cancel worker process trees.</param>
+    public BuildCaptureClient(string? workerDllPath = null, IProcessRunner? processRunner = null)
+    {
         _workerDllPath = workerDllPath ?? ResolveWorkerPath();
+        _processRunner = processRunner ?? new OwnedProcessRunner();
+    }
 
     /// <summary>Whether a worker dll is configured, so tier-1 build capture can be attempted.</summary>
     public bool IsAvailable => !string.IsNullOrWhiteSpace(_workerDllPath) && File.Exists(_workerDllPath);
@@ -66,6 +70,7 @@ public sealed class BuildCaptureClient
     /// <param name="buildTarget">The absolute path to the solution or project to build and capture.</param>
     /// <param name="timeout">The maximum time to allow the worker (build plus rehydration) to run.</param>
     /// <param name="cancellationToken">A token to cancel the capture.</param>
+    /// <param name="workspaceRoot">The repository root used to normalize captured source paths, or null.</param>
     /// <returns>
     ///     The capture result, or a failed result when the worker is unavailable, times out, or emits no parseable
     ///     output, so the caller falls back to a lower tier.
@@ -93,49 +98,7 @@ public sealed class BuildCaptureClient
             psi.ArgumentList.Add(workspaceRoot);
         }
 
-        using var process = new Process { StartInfo = psi };
-        var stdout = new StringBuilder();
-        process.OutputDataReceived += (_, e) => { if (e.Data is not null) stdout.AppendLine(e.Data); };
-        try
-        {
-            process.Start();
-        }
-        catch (Exception ex)
-        {
-            return CaptureResult.Failed($"could not start build-capture worker: {ex.Message}");
-        }
-
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(timeout);
-        try
-        {
-            await process.WaitForExitAsync(timeoutCts.Token);
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
-            return CaptureResult.Failed($"build-capture worker timed out after {timeout.TotalSeconds:F0}s");
-        }
-
-        // The worker writes exactly one JSON object on stdout (the last non-empty line); parse it.
-        var line = stdout.ToString()
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .LastOrDefault(l => l.StartsWith('{'));
-        if (line is null)
-            return CaptureResult.Failed("build-capture worker produced no parseable output");
-
-        try
-        {
-            return JsonSerializer.Deserialize(line, BuildCaptureJsonContext.Default.CaptureResult)
-                   ?? CaptureResult.Failed("build-capture worker output deserialized to null");
-        }
-        catch (JsonException ex)
-        {
-            return CaptureResult.Failed($"could not parse build-capture worker output: {ex.Message}");
-        }
+        return await RunCaptureAsync(psi, timeout, cancellationToken);
     }
 
     /// <summary>
@@ -149,6 +112,7 @@ public sealed class BuildCaptureClient
     /// <param name="complogOutPath">The absolute path the worker writes the portable compiler log to.</param>
     /// <param name="timeout">The maximum time to allow the worker to run.</param>
     /// <param name="cancellationToken">A token to cancel the capture.</param>
+    /// <param name="workspaceRoot">The repository root used to normalize captured source paths, or null.</param>
     /// <returns>The capture result (the extracted graph) on success, or a failed result.</returns>
     public async Task<CaptureResult> CaptureBundleAsync(
         string buildTarget, string complogOutPath, TimeSpan timeout, CancellationToken cancellationToken, string? workspaceRoot = null)
@@ -174,47 +138,7 @@ public sealed class BuildCaptureClient
             psi.ArgumentList.Add(workspaceRoot);
         }
 
-        using var process = new Process { StartInfo = psi };
-        var stdout = new StringBuilder();
-        process.OutputDataReceived += (_, e) => { if (e.Data is not null) stdout.AppendLine(e.Data); };
-        try
-        {
-            process.Start();
-        }
-        catch (Exception ex)
-        {
-            return CaptureResult.Failed($"could not start build-capture worker: {ex.Message}");
-        }
-
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(timeout);
-        try
-        {
-            await process.WaitForExitAsync(timeoutCts.Token);
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
-            return CaptureResult.Failed($"build-capture worker timed out after {timeout.TotalSeconds:F0}s");
-        }
-
-        var line = stdout.ToString()
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .LastOrDefault(l => l.StartsWith('{'));
-        if (line is null)
-            return CaptureResult.Failed("build-capture worker produced no parseable output");
-
-        try
-        {
-            return JsonSerializer.Deserialize(line, BuildCaptureJsonContext.Default.CaptureResult)
-                   ?? CaptureResult.Failed("build-capture worker output deserialized to null");
-        }
-        catch (JsonException ex)
-        {
-            return CaptureResult.Failed($"could not parse build-capture worker output: {ex.Message}");
-        }
+        return await RunCaptureAsync(psi, timeout, cancellationToken);
     }
 
     /// <summary>
@@ -227,6 +151,7 @@ public sealed class BuildCaptureClient
     /// <param name="complogOutDir">The directory the worker writes the per-project compiler logs to.</param>
     /// <param name="timeout">The maximum time to allow the worker to run.</param>
     /// <param name="cancellationToken">A token to cancel the merge.</param>
+    /// <param name="workspaceRoot">The repository root used to normalize captured source paths, or null.</param>
     /// <returns>The merged graph on success, or a failed result (worker unavailable, timeout, or a secret finding).</returns>
     public async Task<CaptureResult> MergeFragmentsAsync(
         string fragmentsDir, string complogOutDir, TimeSpan timeout, CancellationToken cancellationToken, string? workspaceRoot = null)
@@ -252,47 +177,7 @@ public sealed class BuildCaptureClient
             psi.ArgumentList.Add(workspaceRoot);
         }
 
-        using var process = new Process { StartInfo = psi };
-        var stdout = new StringBuilder();
-        process.OutputDataReceived += (_, e) => { if (e.Data is not null) stdout.AppendLine(e.Data); };
-        try
-        {
-            process.Start();
-        }
-        catch (Exception ex)
-        {
-            return CaptureResult.Failed($"could not start build-capture worker: {ex.Message}");
-        }
-
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(timeout);
-        try
-        {
-            await process.WaitForExitAsync(timeoutCts.Token);
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
-            return CaptureResult.Failed($"build-capture worker timed out after {timeout.TotalSeconds:F0}s");
-        }
-
-        var line = stdout.ToString()
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .LastOrDefault(l => l.StartsWith('{'));
-        if (line is null)
-            return CaptureResult.Failed("build-capture worker produced no parseable output");
-
-        try
-        {
-            return JsonSerializer.Deserialize(line, BuildCaptureJsonContext.Default.CaptureResult)
-                   ?? CaptureResult.Failed("build-capture worker output deserialized to null");
-        }
-        catch (JsonException ex)
-        {
-            return CaptureResult.Failed($"could not parse build-capture worker output: {ex.Message}");
-        }
+        return await RunCaptureAsync(psi, timeout, cancellationToken);
     }
 
     /// <summary>
@@ -352,51 +237,67 @@ public sealed class BuildCaptureClient
             psi.ArgumentList.Add(relativeFilePath);
             psi.ArgumentList.Add(contentFile);
 
-            using var process = new Process { StartInfo = psi };
-            var stdout = new StringBuilder();
-            process.OutputDataReceived += (_, e) => { if (e.Data is not null) stdout.AppendLine(e.Data); };
-            try
-            {
-                process.Start();
-            }
-            catch (Exception ex)
-            {
-                return CheckResult.Abstain($"could not start build-capture worker: {ex.Message}");
-            }
-
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeoutCts.CancelAfter(timeout);
-            try
-            {
-                await process.WaitForExitAsync(timeoutCts.Token);
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
-                return CheckResult.Abstain($"build-capture worker timed out after {timeout.TotalSeconds:F0}s");
-            }
-
-            var outLine = stdout.ToString()
-                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .LastOrDefault(l => l.StartsWith('{'));
-            if (outLine is null)
-                return CheckResult.Abstain("build-capture worker produced no parseable output");
-
-            try
-            {
-                return JsonSerializer.Deserialize(outLine, BuildCaptureJsonContext.Default.CheckResult)
-                       ?? CheckResult.Abstain("worker output deserialized to null");
-            }
-            catch (JsonException ex)
-            {
-                return CheckResult.Abstain($"could not parse worker output: {ex.Message}");
-            }
+            return await RunCheckAsync(psi, timeout, cancellationToken);
         }
         finally
         {
             try { File.Delete(contentFile); } catch (IOException) { }
         }
     }
+
+    private async Task<CaptureResult> RunCaptureAsync(
+        ProcessStartInfo startInfo,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        var execution = await _processRunner.RunAsync(startInfo, timeout, cancellationToken);
+        if (!execution.Started)
+            return CaptureResult.Failed($"could not start build-capture worker: {execution.StartError}");
+        if (execution.TimedOut)
+            return CaptureResult.Failed($"build-capture worker timed out after {timeout.TotalSeconds:F0}s");
+
+        var line = LastJsonLine(execution.StandardOutput);
+        if (line is null)
+            return CaptureResult.Failed("build-capture worker produced no parseable output");
+
+        try
+        {
+            return JsonSerializer.Deserialize(line, BuildCaptureJsonContext.Default.CaptureResult)
+                   ?? CaptureResult.Failed("build-capture worker output deserialized to null");
+        }
+        catch (JsonException ex)
+        {
+            return CaptureResult.Failed($"could not parse build-capture worker output: {ex.Message}");
+        }
+    }
+
+    private async Task<CheckResult> RunCheckAsync(
+        ProcessStartInfo startInfo,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        var execution = await _processRunner.RunAsync(startInfo, timeout, cancellationToken);
+        if (!execution.Started)
+            return CheckResult.Abstain($"could not start build-capture worker: {execution.StartError}");
+        if (execution.TimedOut)
+            return CheckResult.Abstain($"build-capture worker timed out after {timeout.TotalSeconds:F0}s");
+
+        var line = LastJsonLine(execution.StandardOutput);
+        if (line is null)
+            return CheckResult.Abstain("build-capture worker produced no parseable output");
+
+        try
+        {
+            return JsonSerializer.Deserialize(line, BuildCaptureJsonContext.Default.CheckResult)
+                   ?? CheckResult.Abstain("worker output deserialized to null");
+        }
+        catch (JsonException ex)
+        {
+            return CheckResult.Abstain($"could not parse worker output: {ex.Message}");
+        }
+    }
+
+    private static string? LastJsonLine(string output) => output
+        .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .LastOrDefault(line => line.StartsWith('{'));
 }
