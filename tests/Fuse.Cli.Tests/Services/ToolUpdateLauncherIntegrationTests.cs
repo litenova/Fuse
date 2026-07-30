@@ -82,6 +82,9 @@ public sealed class ToolUpdateLauncherIntegrationTests
 
     private static Process StartMcpServe(string repoRoot)
     {
+        // A parallel test or external temp cleanup can remove the empty root after TempRepoRoot creates it.
+        // Recreate it at the process boundary so ProcessStartInfo never receives a vanished working directory.
+        Directory.CreateDirectory(repoRoot);
         var fuseDll = FuseAssemblyPath();
         var startInfo = new ProcessStartInfo
         {
