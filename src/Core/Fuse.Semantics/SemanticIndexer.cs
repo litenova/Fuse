@@ -20,7 +20,6 @@ public sealed class SemanticIndexer
     private readonly RoslynWorkspaceLoader _loader;
     private readonly SemanticGraphExtractor _semanticGraph;
     private readonly LanguageSyntaxProviderRegistry _syntaxProviders;
-    private readonly BuildCaptureClient _buildCaptureClient;
     private readonly IndexFinalizer _finalizer = new();
     private readonly WorkspaceInventoryPlanner _inventory;
     private readonly SyntaxIndexStage _syntaxStage;
@@ -29,41 +28,6 @@ public sealed class SemanticIndexer
     private readonly WorkspaceLoadDiagnoser _loadDiagnoser;
     // R42: the host-owned warm-solution cache lets a second doctor in a session skip the full MSBuild load.
     private readonly WarmSolutionCache _warmSolutions;
-
-    // N4/C3 tier-1 build capture is default-ON: the oracle is the product. Opt out with FUSE_BUILD_CAPTURE=0
-    // (or false/no/off); any other value, or unset, enables it. It still no-ops when no worker is discoverable
-    // (the tool bundles one - see BuildCaptureClient.ResolveWorkerPath) or there is no build target, so a
-    // deployment without the worker degrades cleanly to the MSBuildWorkspace and syntax tiers.
-    private static readonly TimeSpan BuildCaptureTimeout = TimeSpan.FromMinutes(10);
-
-    internal static bool BuildCaptureEnabled()
-    {
-        var value = Environment.GetEnvironmentVariable("FUSE_BUILD_CAPTURE");
-        if (value is null)
-            return true;
-        return !(value.Equals("0", StringComparison.Ordinal)
-                 || value.Equals("false", StringComparison.OrdinalIgnoreCase)
-                 || value.Equals("no", StringComparison.OrdinalIgnoreCase)
-                 || value.Equals("off", StringComparison.OrdinalIgnoreCase));
-    }
-
-    // Runs the tier-1 build-capture worker for the discovered workspace. Returns the captured graph on success, or
-    // null when capture is disabled, the worker is unavailable, there is no build target, or the build failed.
-    private async Task<Fuse.Indexing.CaptureResult?> TryBuildCaptureAsync(
-        WorkspaceDiscoveryResult discovery, string root, CancellationToken cancellationToken)
-    {
-        if (!BuildCaptureEnabled() || !_buildCaptureClient.IsAvailable)
-            return null;
-        var buildTarget = discovery.SolutionPath ?? discovery.ProjectPaths.FirstOrDefault();
-        if (buildTarget is null)
-            return null;
-        // Pass the workspace root so the worker keys extracted symbol/node/route/DI/options file paths to it, matching
-        // the root-relative files.normalized_path the store resolves foreign keys against. Without it the worker fell
-        // back to each project's directory, producing project-relative paths that never resolved on a nested layout,
-        // so every symbol was dropped and every node stored an unlinked file_id.
-        var result = await _buildCaptureClient.CaptureAsync(buildTarget, BuildCaptureTimeout, cancellationToken, root);
-        return result.Succeeded ? result : null;
-    }
 
     /// <summary>
     ///     The index-store meta key that flags active compiler analysis after syntax data is available.
@@ -84,7 +48,6 @@ public sealed class SemanticIndexer
     /// <param name="hashService">The content hash service, used for project hashes.</param>
     /// <param name="analysisRunner">The semantic analyzer runner producing graph edges (semantic mode only).</param>
     /// <param name="warmSolutions">The host-owned cache for live MSBuild diagnostic loads.</param>
-    /// <param name="buildCaptureClient">The host-owned build-capture process client.</param>
     public SemanticIndexer(
         DotNetWorkspaceDiscoverer discoverer,
         RoslynWorkspaceLoader loader,
@@ -94,14 +57,12 @@ public sealed class SemanticIndexer
         SyntaxRouteExtractor routeExtractor,
         FileHashService hashService,
         SemanticAnalysisRunner analysisRunner,
-        WarmSolutionCache? warmSolutions = null,
-        BuildCaptureClient? buildCaptureClient = null)
+        WarmSolutionCache? warmSolutions = null)
     {
         _discoverer = discoverer;
         _loader = loader;
         _semanticGraph = new SemanticGraphExtractor(semanticSymbols, analysisRunner, hashService);
         _warmSolutions = warmSolutions ?? new WarmSolutionCache();
-        _buildCaptureClient = buildCaptureClient ?? new BuildCaptureClient();
         // The syntax tier is provider-driven: C# behind the seam (unchanged behavior), plus a second-language
         // syntax spike. Built internally so the existing constructor and its callers are unaffected; a later
         // change can make the provider set injectable for an external language plugin.
@@ -114,7 +75,8 @@ public sealed class SemanticIndexer
     }
 
     /// <summary>
-    ///     Indexes a workspace into the store.
+    ///     Indexes a workspace at the default syntax depth. Use <see cref="UpgradeToSemanticAsync" /> for an
+    ///     explicit compiler-backed pass.
     /// </summary>
     /// <param name="rootDirectory">The workspace root.</param>
     /// <param name="store">The index store to write to.</param>
@@ -124,57 +86,7 @@ public sealed class SemanticIndexer
         string rootDirectory,
         IWorkspaceIndexStore store,
         CancellationToken cancellationToken)
-    {
-        var root = Path.GetFullPath(rootDirectory);
-        await WorkspaceIndexManifest.BeginBuildAsync(root, store, cancellationToken);
-        var discovery = await _discoverer.DiscoverAsync(root, cancellationToken);
-        var scan = await ScanFilesAsync(root, cancellationToken);
-        var files = scan.Files;
-        await store.ClearFileDataAsync(files.Select(file => file.NormalizedPath).ToArray(), cancellationToken);
-
-        // Tier 1 (build capture, oracle-grade) when enabled and available: run the out-of-process worker, which
-        // builds the repo and rehydrates the exact compilations, and write its graph bundle. Falls back to the
-        // MSBuildWorkspace load (tier 2), which itself falls back to syntax (tier 3), on any capture failure.
-        var capture = await TryBuildCaptureAsync(discovery, root, cancellationToken);
-        SemanticIndexResult result;
-        LoadDiagnosis diagnosis;
-        if (capture is not null)
-        {
-            result = await _semanticIndexWriter.WriteCaptureAsync(root, store, files, capture, cancellationToken);
-            diagnosis = BuildDiagnosisFromCapture(discovery, capture);
-        }
-        else
-        {
-            var snapshot = await _loader.LoadAsync(discovery, cancellationToken);
-            result = snapshot.SemanticLoadSucceeded
-                ? await _semanticIndexWriter.WriteSemanticAsync(root, store, files, snapshot, cancellationToken)
-                : await _syntaxStage.IndexAllAsync(root, store, files, snapshot, cancellationToken);
-            diagnosis = BuildDiagnosisFromSnapshot(discovery, snapshot);
-        }
-
-        await store.SetMetaAsync("index_mode", result.Mode, cancellationToken);
-        // A full pass is the final word on the mode: clear any syntax-first pending flag a prior fast pass set.
-        await store.SetMetaAsync(SemanticPendingMetaKey, "0", cancellationToken);
-        // R43: stamp the per-project load diagnosis so doctor reports the tier from the warm index (no live load).
-        await _finalizer.StampLoadDiagnosisAsync(store, diagnosis, cancellationToken);
-        // Stamp the Fuse build that wrote this index so a later run on an incompatible upgrade rebuilds it.
-        await store.SetMetaAsync(WorkspaceIndexStore.FuseVersionMetaKey, FuseBuildInfo.Current, cancellationToken);
-        // R22: stamp the extraction-contract version so index reuse is gated on what was extracted, not the product
-        // version. Bump WorkspaceIndexSchema.ExtractionContractVersion in the same change as any extractor change.
-        await store.SetMetaAsync(
-            WorkspaceIndexStore.ExtractionVersionMetaKey,
-            WorkspaceIndexSchema.ExtractionContractVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            cancellationToken);
-        await store.PruneFilesAsync(files.Select(file => file.NormalizedPath).ToArray(), cancellationToken);
-        await store.SetMetaAsync(StaleAsOfMetaKey, "0", cancellationToken);
-        await _finalizer.StampIntegrityAsync(store, store, cancellationToken); // R31: record the post-build integrity result.
-        await _finalizer.StampSkippedFilesAsync(store, scan.Skipped, cancellationToken); // R35: record skipped files.
-        await _finalizer.StampDetailLimitedFilesAsync(store, scan.DetailLimited, cancellationToken);
-
-        await WorkspaceIndexManifest.CompleteAsync(root, store, files, cancellationToken);
-
-        return result;
-    }
+        => await IndexSyntaxFirstAsync(rootDirectory, store, cancellationToken);
 
     /// <summary>
     ///     Diagnoses the semantic load without writing the index: discovers the workspace, loads it through
@@ -199,7 +111,7 @@ public sealed class SemanticIndexer
     internal static LoadDiagnosis BuildDiagnosisFromSnapshot(WorkspaceDiscoveryResult discovery, RoslynWorkspaceSnapshot snapshot)
         => WorkspaceLoadDiagnoser.BuildFromSnapshot(discovery, snapshot);
 
-    // Builds the load diagnosis from a tier-1 build capture (the default index path). Every captured project
+    // Builds the load diagnosis from a tier-1 capture projection. Every captured project
     // produced a compilation (a project that failed to build does not rehydrate), so all are loaded; a project with
     // residual compile errors is graph-grade, matching the per-project reason strings the MSBuild loader produces.
     internal static LoadDiagnosis BuildDiagnosisFromCapture(WorkspaceDiscoveryResult discovery, Fuse.Indexing.CaptureResult capture)

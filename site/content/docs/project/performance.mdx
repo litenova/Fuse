@@ -64,7 +64,7 @@ These measurements describe the pre-4.4 background-upgrade workflow. Fuse 4.4 se
 
 On the semantic path the chunk and route extraction share one parse per file with the compilation instead of re-parsing the content string (R47), so the cold-index parse count per file drops with byte-identical output - a reduction of raw work, never an increase. The per-project wiring-analyzer pass also runs concurrently across projects (R45): on eShopOnWeb (10 projects) it dropped from ~3.4s to ~0.75s with byte-identical nodes and edges (environment-dependent, recorded in the R45 progress log).
 
-Tier-1 build capture (`dotnet build` then rehydrate from the log) is the higher-grade compiler path, not the faster one. The recorded pre-4.4 A/B on eShopOnWeb (10 projects, environment-dependent, recorded in the R49 progress log) cold-indexed capture-on at ~16.4s versus the tier-2 MSBuildWorkspace path at ~13.6-15.0s. In 4.4 capture is used only by an explicit semantic or compiler-backed request; the default syntax job does not build the workspace.
+Tier-1 build capture (`dotnet build` then rehydrate from the log) is the higher-grade compiler path, not the faster one. The recorded pre-4.4 A/B on eShopOnWeb (10 projects, environment-dependent, recorded in the R49 progress log) cold-indexed capture-on at ~16.4s versus the tier-2 MSBuildWorkspace path at ~13.6-15.0s. In 4.4 capture is reserved for portable capture and compiler-backed verification; the default syntax job and `fuse index --semantic` do not build the workspace through the capture worker.
 
 ## Warm Solution for refactor and doctor
 

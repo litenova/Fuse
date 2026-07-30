@@ -65,7 +65,6 @@ public sealed class DaemonOneTruthTests
         psi.ArgumentList.Add("--directory");
         psi.ArgumentList.Add(work);
         psi.Environment["FUSE_RESIDENT"] = "1";
-        psi.Environment["FUSE_BUILD_CAPTURE"] = "1";
 
         Process? daemon = null;
         try

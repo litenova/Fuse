@@ -4,13 +4,12 @@ using Fuse.Collection.Filters;
 using Fuse.Indexing;
 using Fuse.Semantics;
 using Microsoft.Data.Sqlite;
-using System.Diagnostics;
 using Xunit;
 using Xunit.Abstractions;
 
 namespace Fuse.Semantics.Tests;
 
-// P3.4: end-to-end semantic indexing of a real .csproj - project records, file linkage, index mode.
+// P3.4: syntax-first and explicit semantic indexing of a real .csproj.
 public sealed class SemanticIndexerTests : IAsyncLifetime
 {
     private readonly ITestOutputHelper _output;
@@ -29,7 +28,7 @@ public sealed class SemanticIndexerTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task IndexesRealProjectSemanticallyWithLinkedFiles()
+    public async Task IndexAsync_defaults_to_syntax_without_compiler_facts()
     {
         var indexer = CreateIndexer();
 
@@ -38,19 +37,16 @@ public sealed class SemanticIndexerTests : IAsyncLifetime
         foreach (var diagnostic in result.Diagnostics)
             _output.WriteLine($"{diagnostic.Severity} {diagnostic.Code}: {diagnostic.Message}");
 
-        Assert.True(result.Mode is "semantic" or "partial", $"expected semantic or partial, got {result.Mode}");
-        Assert.True(result.ProjectCount >= 1);
+        Assert.Equal("syntax", result.Mode);
+        Assert.Equal(0, result.ProjectCount);
         Assert.True(result.SymbolCount > 0);
 
         var state = await _store.GetStateAsync(CancellationToken.None);
         Assert.Equal(result.Mode, state.Mode);
 
-        // Files are linked to a project.
-        Assert.True(await CountAsync("SELECT count(*) FROM files WHERE project_id IS NOT NULL;") > 0,
-            "expected at least one file linked to a project");
-        // Symbols use semantic (assembly-qualified) ids, not the syntax fallback form.
-        Assert.True(await CountAsync("SELECT count(*) FROM symbols WHERE symbol_id LIKE 'symbol:fallback:%';") == 0,
-            "semantic mode should not emit fallback symbol ids");
+        Assert.Equal(0, await CountAsync("SELECT count(*) FROM files WHERE project_id IS NOT NULL;"));
+        Assert.True(await CountAsync("SELECT count(*) FROM symbols WHERE symbol_id LIKE 'symbol:fallback:%';") > 0,
+            "syntax mode should emit fallback symbol ids");
         Assert.True(await CountAsync("SELECT count(*) FROM symbols WHERE name = 'OrderService';") > 0);
     }
 
@@ -103,20 +99,6 @@ public sealed class SemanticIndexerTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task UpgradeToSemanticAsync_DoesNotStartBuildCaptureWorker()
-    {
-        var workerPath = Path.Combine(Path.GetDirectoryName(_databasePath)!, "fake-build-capture.dll");
-        await File.WriteAllTextAsync(workerPath, "placeholder");
-        var runner = new RecordingProcessRunner();
-        var indexer = CreateIndexer(new BuildCaptureClient(workerPath, runner));
-
-        await indexer.IndexSyntaxFirstAsync(_projectRoot, _store, CancellationToken.None);
-        await indexer.UpgradeToSemanticAsync(_projectRoot, _store, CancellationToken.None);
-
-        Assert.Equal(0, runner.InvocationCount);
-    }
-
-    [Fact]
     public async Task IndexSyntaxFirstAsync_IsDeterministic_AcrossParallelRuns()
     {
         // Parallel per-file extraction must produce a positionally identical symbol stream across runs.
@@ -149,7 +131,7 @@ public sealed class SemanticIndexerTests : IAsyncLifetime
         return ids;
     }
 
-    private SemanticIndexer CreateIndexer(BuildCaptureClient? buildCaptureClient = null)
+    private SemanticIndexer CreateIndexer()
     {
         var fileSystem = new PhysicalFileSystem();
         var pipeline = new FileCollectionPipeline(
@@ -164,8 +146,7 @@ public sealed class SemanticIndexerTests : IAsyncLifetime
             new SyntaxSymbolExtractor(),
             new SyntaxRouteExtractor(),
             new FileHashService(),
-            Fuse.Semantics.Analyzers.SemanticAnalysisRunner.CreateDefault(),
-            buildCaptureClient: buildCaptureClient);
+            Fuse.Semantics.Analyzers.SemanticAnalysisRunner.CreateDefault());
     }
 
     private async Task<long> CountAsync(string sql)
@@ -205,26 +186,6 @@ public sealed class SemanticIndexerTests : IAsyncLifetime
         {
             lock (_updates)
                 _updates.Add(value);
-        }
-    }
-
-    private sealed class RecordingProcessRunner : IProcessRunner
-    {
-        public int InvocationCount { get; private set; }
-
-        public Task<ProcessExecutionResult> RunAsync(
-            ProcessStartInfo startInfo,
-            TimeSpan timeout,
-            CancellationToken cancellationToken)
-        {
-            InvocationCount++;
-            return Task.FromResult(new ProcessExecutionResult(
-                Started: false,
-                ExitCode: null,
-                TimedOut: false,
-                StandardOutput: string.Empty,
-                StandardError: string.Empty,
-                StartError: "the build-capture worker must not run during semantic indexing"));
         }
     }
 
