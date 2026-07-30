@@ -15,6 +15,7 @@ All notable changes to Fuse are documented here. The format is based on Keep a C
 - `fuse_workspace action=index` now starts or joins the daemon job, `action=status` reports job details without creating an index, and `action=cancel` requests shared-job cancellation. A source edit starts a refresh job before a read returns indexed facts.
 - Syntax refreshes now build their inventory from `git ls-files -s -z` and porcelain-v2 status. Clean tracked files reuse the Git blob id, while dirty and untracked files stream a SHA-256 hash. Unchanged files no longer have their derived rows or FTS documents rewritten.
 - Generated files retain declarations, signatures, routes, and outlines without indexed method bodies or comments. Files over the 5 MiB source limit retain inventory metadata with an `inventory_only` detail level. Schema 18 uses contentless-delete FTS5 documents linked through `search_documents`; existing derived indexes rebuild.
+- Completed and cancelled index jobs now truncate the SQLite WAL. Full rebuilds set incremental auto-vacuum mode and compact FTS5 once; ordinary refreshes use one bounded merge and at most 1,024 reclaimed pages. An incompatible index removes only its known derived files, including obsolete reduction-cache sidecars and `r60-semantics.json`.
 
 ### Removed
 

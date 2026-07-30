@@ -76,6 +76,11 @@ internal sealed class IndexSchemaMigrator
         {
             await ExecuteAsync(connection, null, "PRAGMA foreign_keys = ON;", CancellationToken.None);
         }
+
+        // SQLite persists auto-vacuum mode only after VACUUM. Rebuilds are the one index path allowed to do this
+        // blocking operation; regular refreshes use the bounded incremental_vacuum maintenance path instead.
+        await ExecuteAsync(connection, null, "PRAGMA auto_vacuum = INCREMENTAL;", cancellationToken);
+        await ExecuteAsync(connection, null, "VACUUM;", cancellationToken);
     }
 
     /// <summary>

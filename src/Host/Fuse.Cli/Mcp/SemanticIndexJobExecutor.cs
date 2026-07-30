@@ -50,15 +50,15 @@ public sealed class SemanticIndexJobExecutor : IWorkspaceIndexJobExecutor
         IProgress<IndexJobProgress> progress,
         CancellationToken cancellationToken)
     {
-        await MarkAsync(store, jobId, request, IndexPhase.Inventory, "running", cancellationToken);
-        if (request.Force)
-        {
-            progress.Report(new IndexJobProgress(IndexPhase.Inventory, CurrentItem: "discarding derived index"));
-            await store.ResetAsync(cancellationToken);
-        }
-
         try
         {
+            await MarkAsync(store, jobId, request, IndexPhase.Inventory, "running", cancellationToken);
+            if (request.Force)
+            {
+                progress.Report(new IndexJobProgress(IndexPhase.Inventory, CurrentItem: "discarding derived index"));
+                await store.ResetAsync(cancellationToken);
+            }
+
             SemanticIndexResult result;
             if (request.CaptureBundlePath is not null)
             {
@@ -96,6 +96,11 @@ public sealed class SemanticIndexJobExecutor : IWorkspaceIndexJobExecutor
             }
 
             await MarkAsync(store, jobId, request, IndexPhase.Finalization, "completed", cancellationToken);
+            await MaintainAsync(
+                store,
+                completed: true,
+                progress: progress,
+                cancellationToken: cancellationToken);
             return result;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -103,6 +108,11 @@ public sealed class SemanticIndexJobExecutor : IWorkspaceIndexJobExecutor
             using var terminalWrite = new CancellationTokenSource();
             await MarkAsync(store, jobId, request, IndexPhase.Finalization, "cancelled", terminalWrite.Token);
             await store.SetMetaAsync(SemanticIndexer.SemanticPendingMetaKey, "0", terminalWrite.Token);
+            await MaintainAsync(
+                store,
+                completed: false,
+                progress: progress,
+                cancellationToken: terminalWrite.Token);
             throw;
         }
         catch (IndexJobValidationException ex)
@@ -126,6 +136,38 @@ public sealed class SemanticIndexJobExecutor : IWorkspaceIndexJobExecutor
             await MarkAsync(store, jobId, request, IndexPhase.Finalization, "failed", terminalWrite.Token, "index_failed", "Index job failed. Run 'fuse index status' for details.");
             await store.SetMetaAsync(SemanticIndexer.SemanticPendingMetaKey, "0", terminalWrite.Token);
             throw;
+        }
+    }
+
+    private static async Task MaintainAsync(
+        WorkspaceIndexStore store,
+        bool completed,
+        IProgress<IndexJobProgress> progress,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var replacedRowsRaw = await store.GetMetaAsync("last_index_fts_replacements", cancellationToken);
+            var replacedRows = int.TryParse(replacedRowsRaw, out var parsed) ? Math.Max(0, parsed) : 0;
+            var maintenance = await store.MaintainAfterIndexAsync(completed, replacedRows, cancellationToken);
+            if (maintenance.FullTextOptimized || maintenance.FullTextMerged || maintenance.VacuumedPages > 0)
+            {
+                progress.Report(new IndexJobProgress(
+                    IndexPhase.Finalization,
+                    CurrentItem: "maintaining SQLite index"));
+            }
+        }
+        catch (Microsoft.Data.Sqlite.SqliteException ex)
+        {
+            progress.Report(new IndexJobProgress(
+                IndexPhase.Finalization,
+                Warning: $"database maintenance skipped: {ex.SqliteErrorCode}"));
+        }
+        catch (IOException)
+        {
+            progress.Report(new IndexJobProgress(
+                IndexPhase.Finalization,
+                Warning: "database maintenance skipped: I/O error"));
         }
     }
 

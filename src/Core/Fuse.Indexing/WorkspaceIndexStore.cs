@@ -28,6 +28,7 @@ public sealed class WorkspaceIndexStore : IWorkspaceIndexStore
     private readonly ILogger<WorkspaceIndexStore>? _logger;
     private int _schemaVersion;
     private bool _initialized;
+    private bool _requiresFullTextOptimization;
 
     /// <summary>
     ///     Initializes a new instance of the <see cref="WorkspaceIndexStore" /> class.
@@ -109,11 +110,22 @@ public sealed class WorkspaceIndexStore : IWorkspaceIndexStore
     /// </summary>
     public bool FullTextSearchAvailable => _fts.Available;
 
+    /// <summary>
+    ///     Whether this store instance created, reset, or rebuilt the index and should run one full FTS5 optimize
+    ///     after the caller has populated its source rows.
+    /// </summary>
+    public bool RequiresFullTextOptimization => _requiresFullTextOptimization;
+
     /// <inheritdoc />
-    public Task<WorkspaceIndexInitializeOutcome> InitializeAsync(CancellationToken cancellationToken) =>
-        WorkspaceIndexRecovery.SerializeAsync(
+    public async Task<WorkspaceIndexInitializeOutcome> InitializeAsync(CancellationToken cancellationToken)
+    {
+        var databaseDidNotExist = !File.Exists(_connectionFactory.DatabasePath);
+        var outcome = await WorkspaceIndexRecovery.SerializeAsync(
             _connectionFactory.DatabasePath,
             () => InitializeSerializedAsync(cancellationToken));
+        _requiresFullTextOptimization |= databaseDidNotExist || outcome.RebuiltEmptyStore;
+        return outcome;
+    }
 
     /// <inheritdoc />
     public async Task ResetAsync(CancellationToken cancellationToken)
@@ -129,12 +141,26 @@ public sealed class WorkspaceIndexStore : IWorkspaceIndexStore
             cancellationToken);
         await StampExtractionVersionAsync(connection, cancellationToken);
         MarkInitialized(WorkspaceIndexSchema.TargetVersion, ftsAvailable);
+        _requiresFullTextOptimization = true;
     }
 
     private async Task<WorkspaceIndexInitializeOutcome> InitializeSerializedAsync(CancellationToken cancellationToken)
     {
         try
         {
+            var incompatibility = await GetIncompatibleDerivedDataReasonAsync(cancellationToken);
+            if (incompatibility is not null)
+            {
+                _logger?.LogInformation(
+                    "Removing incompatible derived index data at {DatabasePath} before the v4.4 rebuild.",
+                    _connectionFactory.DatabasePath);
+                WorkspaceIndexRecovery.DeleteIncompatibleDerivedFiles(_connectionFactory);
+                await InitializeCoreAsync(cancellationToken);
+                return new WorkspaceIndexInitializeOutcome(
+                    true,
+                    $"{incompatibility}; incompatible derived data removed");
+            }
+
             return await InitializeCoreAsync(cancellationToken);
         }
         catch (SqliteException ex) when (WorkspaceIndexRecovery.IsCorrupt(ex))
@@ -148,6 +174,23 @@ public sealed class WorkspaceIndexStore : IWorkspaceIndexStore
             await InitializeCoreAsync(cancellationToken);
             return new WorkspaceIndexInitializeOutcome(true, "corrupt database recovered");
         }
+    }
+
+    private async Task<string?> GetIncompatibleDerivedDataReasonAsync(CancellationToken cancellationToken)
+    {
+        if (!File.Exists(_connectionFactory.DatabasePath))
+            return null;
+
+        await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
+        var schemaVersion = await IndexSchemaMigrator.ReadVersionAsync(connection, cancellationToken);
+        if (schemaVersion != WorkspaceIndexSchema.TargetVersion)
+            return $"schema version {schemaVersion} is incompatible";
+
+        var extractionVersion = await IndexSchemaMigrator.ReadMetaAsync(connection, ExtractionVersionMetaKey, cancellationToken);
+        var fuseVersion = await IndexSchemaMigrator.ReadMetaAsync(connection, FuseVersionMetaKey, cancellationToken);
+        return ExtractionContractChanged(extractionVersion, fuseVersion)
+            ? $"after upgrade to extraction contract v{WorkspaceIndexSchema.ExtractionContractVersion}"
+            : null;
     }
 
     private async Task<WorkspaceIndexInitializeOutcome> InitializeCoreAsync(CancellationToken cancellationToken)
@@ -340,6 +383,92 @@ public sealed class WorkspaceIndexStore : IWorkspaceIndexStore
     {
         await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
         return await IndexSchemaMigrator.ReadMetaAsync(connection, key, cancellationToken);
+    }
+
+    /// <summary>
+    ///     Runs bounded maintenance after an index job. Completion checkpoints the WAL, full rebuilds compact FTS5,
+    ///     and incremental refreshes merge at most 500 FTS pages when replaced search rows exceed ten percent of
+    ///     the current document count. Incremental vacuum reclaims at most 1,024 free pages per job.
+    /// </summary>
+    /// <param name="completed">Whether the index job reached a completed state rather than cancellation.</param>
+    /// <param name="replacedSearchRows">The number of FTS documents replaced during the job.</param>
+    /// <param name="cancellationToken">A token that bounds this finalization request.</param>
+    /// <returns>The maintenance work that ran.</returns>
+    public async Task<IndexMaintenanceResult> MaintainAfterIndexAsync(
+        bool completed,
+        int replacedSearchRows,
+        CancellationToken cancellationToken)
+    {
+        const int mergePageLimit = 500;
+        const int vacuumPageLimit = 1024;
+        var optimized = false;
+        var merged = false;
+        var vacuumedPages = 0;
+
+        await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
+        if (completed && _fts.Available)
+        {
+            if (_requiresFullTextOptimization)
+            {
+                await ExecuteMaintenanceCommandAsync(
+                    connection,
+                    "INSERT INTO chunk_fts(chunk_fts) VALUES('optimize');",
+                    cancellationToken);
+                optimized = true;
+            }
+            else if (replacedSearchRows > 0)
+            {
+                var documents = await IndexSchemaMigrator.CountAsync(connection, "search_documents", cancellationToken);
+                if (documents > 0 && replacedSearchRows * 10 > documents)
+                {
+                    await ExecuteMaintenanceCommandAsync(
+                        connection,
+                        $"INSERT INTO chunk_fts(chunk_fts, rank) VALUES('merge', {mergePageLimit});",
+                        cancellationToken);
+                    merged = true;
+                }
+            }
+        }
+
+        if (completed)
+        {
+            var pageCount = await ReadPragmaIntAsync(connection, "page_count", cancellationToken);
+            var freePages = await ReadPragmaIntAsync(connection, "freelist_count", cancellationToken);
+            if (pageCount > 0 && freePages * 10 > pageCount)
+            {
+                vacuumedPages = Math.Min(freePages, vacuumPageLimit);
+                await ExecuteMaintenanceCommandAsync(
+                    connection,
+                    $"PRAGMA incremental_vacuum({vacuumedPages});",
+                    cancellationToken);
+            }
+        }
+
+        await ExecuteMaintenanceCommandAsync(connection, "PRAGMA wal_checkpoint(TRUNCATE);", cancellationToken);
+        if (completed)
+            _requiresFullTextOptimization = false;
+        return new IndexMaintenanceResult(optimized, merged, vacuumedPages, WalCheckpointed: true);
+    }
+
+    private static async Task<int> ReadPragmaIntAsync(
+        SqliteConnection connection,
+        string pragma,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"PRAGMA {pragma};";
+        var value = await command.ExecuteScalarAsync(cancellationToken);
+        return value is long count ? checked((int)count) : 0;
+    }
+
+    private static async Task ExecuteMaintenanceCommandAsync(
+        SqliteConnection connection,
+        string commandText,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = commandText;
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     /// <inheritdoc />

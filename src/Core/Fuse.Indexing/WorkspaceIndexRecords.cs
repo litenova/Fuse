@@ -8,6 +8,19 @@ namespace Fuse.Indexing;
 public sealed record LanguageCount(string Language, int Count);
 
 /// <summary>
+///     The bounded database work completed after an index job writes its final batch.
+/// </summary>
+/// <param name="FullTextOptimized">Whether a complete FTS5 optimize ran after a full rebuild.</param>
+/// <param name="FullTextMerged">Whether one bounded FTS5 merge ran after a large incremental replacement.</param>
+/// <param name="VacuumedPages">The number of free pages reclaimed by incremental vacuum.</param>
+/// <param name="WalCheckpointed">Whether a truncate checkpoint was requested.</param>
+public sealed record IndexMaintenanceResult(
+    bool FullTextOptimized,
+    bool FullTextMerged,
+    int VacuumedPages,
+    bool WalCheckpointed);
+
+/// <summary>
 ///     The amount of source-derived data retained for an indexed file.
 /// </summary>
 /// <remarks>
