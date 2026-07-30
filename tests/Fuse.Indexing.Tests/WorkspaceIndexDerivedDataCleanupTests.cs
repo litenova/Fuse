@@ -28,6 +28,8 @@ public sealed class WorkspaceIndexDerivedDataCleanupTests : IDisposable
             await seed.SetMetaAsync("obsolete_marker", "discard", CancellationToken.None);
         }
 
+        await File.WriteAllBytesAsync(databasePath + "-journal", []);
+
         var obsoletePaths = new[]
         {
             Path.Combine(fuseDirectory, "fuse-cache.db"),
@@ -45,6 +47,7 @@ public sealed class WorkspaceIndexDerivedDataCleanupTests : IDisposable
         Assert.True(outcome.RebuiltEmptyStore);
         Assert.Contains("extraction contract", outcome.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Null(await store.GetMetaAsync("obsolete_marker", CancellationToken.None));
+        Assert.False(File.Exists(databasePath + "-journal"));
         Assert.All(obsoletePaths, path => Assert.False(File.Exists(path), $"Expected obsolete derived file to be removed: {path}"));
         Assert.True(File.Exists(configPath));
         Assert.True(File.Exists(ignorePath));

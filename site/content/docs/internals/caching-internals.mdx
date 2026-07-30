@@ -3,7 +3,7 @@ title: Store Internals
 description: How the persistent SQLite semantic index is laid out, keyed by content hash, and updated incrementally.
 ---
 
-Indexing a workspace is repeatable work: the same source always yields the same symbols, chunks, and wiring edges. Fuse persists that derived graph in one SQLite file so a warm call reads precomputed structure instead of re-analyzing, and an edit re-indexes only the changed files. This page documents where the store lives, its layout, how content hashing drives incremental updates, and how the reduction cache fits in.
+Indexing a workspace is repeatable work: the same source yields the same symbols, chunks, and wiring edges. Fuse persists that graph in one SQLite file so a warm call reads precomputed structure instead of re-analyzing, and an edit re-indexes only changed files. This page documents where the store lives, its layout, how content hashing drives incremental updates, and how the bounded host-memory cache fits in.
 
 This page is for maintainers working on the store and for engineers diagnosing why a call did or did not see fresh data.
 
@@ -20,7 +20,7 @@ All semantic index data lives in a single SQLite database file named `fuse.db`. 
 | Inside a Git repo | Enabled. The nearest enclosing `.git` directory or file defines the canonical identity. | `{repoRoot}/.fuse/fuse.db`, never under the requested nested directory |
 | Outside a Git repo | Refused with `workspace_identity_unresolved:` before a daemon or index starts. `fuse_reduce` remains available. | One-shot non-MCP paths retain the per-directory fallback at `~/.fuse/roots/{hash}/fuse.db` (override the base with `FUSE_USER_DATA`). |
 
-Derived cache data (reduction output and per-run analysis index) lives in a sibling file `fuse-cache.db` in the same directory as the index (`{repoRoot}/.fuse/fuse-cache.db` in a repo, or `~/.fuse/roots/{hash}/fuse-cache.db` outside one). Corruption recovery on the cache file recreates only that database; it never deletes `fuse.db`.
+Reduction output and per-file analysis are not stored in `.fuse`. The host registers one `MemoryStoreFactory` for its lifetime and retains up to 64 MiB of encoded entries across repository-scoped cache views. Least-recently-used entries leave memory first. Stopping the daemon, or finishing a one-shot command, drops that cache. Fuse never creates `fuse-cache.db`.
 
 Each non-Git directory gets its own per-root store for non-MCP callers (R34), so two unrelated directories never share data. Workspace-scoped MCP tools deliberately do not use this fallback because there is no repository identity for the daemon, lock, and query root to share. The per-root stores under `~/.fuse/roots/` are derived data and can be deleted. The pre-4.2 single shared `~/.fuse/fuse.db` fallback is abandoned, not migrated; delete it if it lingers.
 
@@ -34,7 +34,7 @@ Repository identity is resolved before storage, locking, daemon attachment, or q
 |------|----------------|
 | `IndexSchemaMigrator` | Pragmas, `schema_version` migration and rebuild, relational DDL ensure, `index_meta` read/write, row counts for state |
 | `FtsSearchEngine` | FTS5 availability probe, `chunk_fts` indexing on chunk upsert/delete, BM25-ranked `SearchAsync` |
-| `SymbolGraphStore` | Files, projects, symbols, chunks (relational), nodes, edges, routes, DI and options bindings, co-change, graph and symbol queries |
+| `SymbolGraphStore` | Files, projects, symbols, chunks (relational), nodes, edges, routes, DI and options bindings, graph and symbol queries |
 | `SessionStore` | `check_sessions` baselines and `claim_ledger` rows, session listing per workspace root |
 
 ```mermaid
@@ -60,11 +60,9 @@ flowchart TB
     SS --> DB
 ```
 
-The file uses WAL journal mode with `synchronous = NORMAL` and foreign keys on. It is a relational schema, not a key-value cache: separate tables hold files, projects, symbols, chunks, semantic nodes, typed edges, routes, DI registrations, and options bindings, plus an FTS5 virtual table over chunk text (path, name, declared symbols, signature, comments, body, and a subtokens field that holds the subword expansion of the chunk's identifiers so a prose query word matches a compound name). `tfm_availability` records each target framework in which a canonical semantic fact exists; shared multi-target declarations therefore occupy one semantic row and several availability rows, while target-exclusive facts remain present. A `schema_version` row gates migration: a database older than the current version is dropped and rebuilt rather than migrated in place, so adding a full-text column (such as subtokens) is a version bump that rebuilds the index on the next run, with no incremental migration.
+The file uses WAL journal mode with `synchronous = NORMAL`, `wal_autocheckpoint = 1000`, a 64 MiB journal-size limit, incremental auto-vacuum, and foreign keys on. It is a relational schema, not a key-value cache: separate tables hold files, projects, symbols, chunks, semantic nodes, typed edges, routes, DI registrations, and options bindings. `search_documents` maps chunks to a contentless-delete FTS5 row, preventing a second relational copy of indexed source text. `files.index_detail` records `full`, `declarations`, or `inventory_only`; generated code retains declarations and outlines without method bodies or comments, and files above the 5 MiB source limit retain inventory metadata only. `tfm_availability` records each target framework in which a canonical semantic fact exists; shared multi-target declarations therefore occupy one semantic row and several availability rows, while target-exclusive facts remain present. A `schema_version` row gates migration: a database older than the current version is deleted and rebuilt rather than migrated in place.
 
 The `files` table carries a `language` column tagged from the provider that claims each file's extension (for example `csharp`, `python`), so retrieval can filter or blend by language over the language-agnostic tables; symbols and nodes inherit their language through their `file_id`. Adding the column is a schema version bump (currently 14), so the index rebuilds on the next run.
-
-A `git_cochange` table holds mined file-pair couplings (path_a, path_b, count, PMI, Jaccard, last-seen date). It is populated at index time by a bounded git-history miner: one `git log --no-merges --name-only` pass over a capped commit window, counting how often each pair of source files changed in the same commit, skipping wide commits (sweeps) and dropping one-off pairs to bound the pairwise blow-up. The single git invocation has a fixed argument list (a commit cap, no variable path list), so the external-process command line is bounded by construction. Mining is best-effort: a non-repository directory or a missing git executable simply leaves the table empty, and the co-change prior is then a no-op. A re-index clears and rewrites the table, so a fresh mine is authoritative.
 
 ```mermaid
 flowchart LR
@@ -80,7 +78,7 @@ flowchart LR
 
 ## Content hashing and incremental update
 
-Each file row stores an XXHash64 of its content. A warm reconcile scans the complete current inventory. An unchanged hash is left as is; an added or edited file is extracted; a removed file is hard-deleted from `files`, its derived tables, FTS, and co-change rows. The directory scan discovers additions without an explicit full index, while extraction remains proportional to the files whose content changed.
+Inventory starts with `git ls-files -s -z` and porcelain-v2 status. Clean tracked files reuse their Git blob ids without opening source files. Dirty and untracked files stream SHA-256 only when required. A warm reconcile compares those values with stored hashes: an unchanged hash is left as is; an added or edited file is extracted; a removed file is hard-deleted from `files`, its derived tables, and FTS rows. Extraction remains proportional to changed files.
 
 Every completed build publishes a `WorkspaceIndexManifest` in `index_meta`. It contains the normalized repository root, a `ready` build state, the complete file count, an inventory hash over each normalized path and content hash, and a completion timestamp. The build writes `building` before changing derived rows and writes `ready` last. A process interruption therefore cannot turn a partial write into a warm index.
 
@@ -122,7 +120,7 @@ FTS availability is a single source of truth. Both `OpenForReadAsync` and `GetSt
 
 ## The reduction cache
 
-Rendering a planned file to a token-reduced form is also repeatable, and that reduced output is cached so an unchanged file under the same reduction level is not reduced twice. The reduction cache is keyed by a content hash combined with a hash of the reduction options, so any change to the file or the level yields a distinct entry and a stale entry can never be served. It lives in `.fuse/fuse-cache.db` (a `kv` table), separate from the semantic index, and is derived data like the per-run analysis index.
+Rendering a planned file to a token-reduced form is also repeatable, and that reduced output is cached so an unchanged file under the same reduction level is not reduced twice while the host remains alive. The reduction cache is keyed by a content hash combined with a hash of the reduction options, so any change to the file or level yields a distinct entry. Reduction and analysis entries share the daemon-owned 64 MiB memory budget. The cache is repository-scoped, uses least-recently-used eviction, and never writes `.fuse/fuse-cache.db`.
 
 ## What this does not cover
 

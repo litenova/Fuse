@@ -1,12 +1,11 @@
 namespace Fuse.Reduction.Caching;
 
 /// <summary>
-///     Content-addressed key-value persistence for derived cache data in <c>fuse-cache.db</c>.
+///     Repository-scoped in-memory key-value storage for derived cache data.
 /// </summary>
 /// <remarks>
-///     Writes are buffered and committed in a single transaction at flush. Implementations must be safe for
-///     concurrent readers and writers within one fusion run. This store is separate from the semantic index
-///     at <c>fuse.db</c>.
+///     Implementations must be safe for concurrent readers and writers. <see cref="FlushAsync" /> is retained as
+///     a no-op lifecycle boundary for cache consumers; derived values are never written to disk.
 /// </remarks>
 public interface IKeyValueStore : IAsyncDisposable
 {
@@ -20,7 +19,7 @@ public interface IKeyValueStore : IAsyncDisposable
     bool TryGet(string store, string key, out byte[]? value);
 
     /// <summary>
-    ///     Buffers a value for the next flush.
+    ///     Stores a value in the process-lifetime cache.
     /// </summary>
     /// <param name="store">The logical store namespace.</param>
     /// <param name="key">The entry key within <paramref name="store" />.</param>
@@ -28,7 +27,7 @@ public interface IKeyValueStore : IAsyncDisposable
     void Set(string store, string key, byte[] value);
 
     /// <summary>
-    ///     Commits all buffered writes in one transaction.
+    ///     Completes a cache lifecycle boundary without writing data to disk.
     /// </summary>
     /// <param name="cancellationToken">Token used to cancel the flush.</param>
     Task FlushAsync(CancellationToken cancellationToken = default);

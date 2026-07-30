@@ -91,7 +91,7 @@ fuse index clean . --yes
 
 Use `--json` with start, status, or cancel for machine-readable job snapshots. Start writes JSON Lines snapshots while the job runs. A normal terminal view prints the current phase, completed file count, percent when known, and an ETA after five units in one phase. The first Ctrl+C requests cancellation and waits up to five seconds before returning exit code 130. A second Ctrl+C exits the CLI without stopping the daemon.
 
-`fuse index clean` cancels an active job, waits for its owned store to close, and removes only `.fuse/fuse.db`, its SQLite sidecars, `fuse-cache.db` sidecars, and `r60-semantics.json`. It never removes `fuse.json`, `.fuseignore`, or capture bundles. Interactive terminals display the exact targets and ask for confirmation; redirected input requires `--yes`.
+`fuse index clean` cancels an active job, waits for its owned store to close, and removes only `.fuse/fuse.db`, its SQLite sidecars, obsolete `fuse-cache.db` sidecars, and `r60-semantics.json`. It never removes `fuse.json`, `.fuseignore`, or capture bundles. Interactive terminals display the exact targets and ask for confirmation; redirected input requires `--yes`.
 
 ## fuse map
 

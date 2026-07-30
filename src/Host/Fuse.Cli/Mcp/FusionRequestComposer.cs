@@ -24,7 +24,7 @@ public static class FusionRequestComposer
             .WithSourceDirectory(resolvedPath)
             .WithTemplate(ProjectTemplate.DotNet)
             .WithInMemory(true)
-            .WithPersistentIndex(true)
+            .WithAnalysisCache(true)
             .WithEmissionOptions(new EmissionOptions
             {
                 MaxTokens = null,

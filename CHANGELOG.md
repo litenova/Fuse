@@ -16,6 +16,7 @@ All notable changes to Fuse are documented here. The format is based on Keep a C
 - Syntax refreshes now build their inventory from `git ls-files -s -z` and porcelain-v2 status. Clean tracked files reuse the Git blob id, while dirty and untracked files stream a SHA-256 hash. Unchanged files no longer have their derived rows or FTS documents rewritten.
 - Generated files retain declarations, signatures, routes, and outlines without indexed method bodies or comments. Files over the 5 MiB source limit retain inventory metadata with an `inventory_only` detail level. Schema 18 uses contentless-delete FTS5 documents linked through `search_documents`; existing derived indexes rebuild.
 - Completed and cancelled index jobs now truncate the SQLite WAL. Full rebuilds set incremental auto-vacuum mode and compact FTS5 once; ordinary refreshes use one bounded merge and at most 1,024 reclaimed pages. An incompatible index removes only its known derived files, including obsolete reduction-cache sidecars and `r60-semantics.json`.
+- Reduction output and per-file analysis now share a repository-scoped, daemon-owned memory cache capped at 64 MiB. The cache uses least-recently-used eviction and ends with the process; Fuse no longer creates `fuse-cache.db`.
 
 ### Removed
 

@@ -5,7 +5,7 @@ using Fuse.Collection.FileSystem;
 namespace Fuse.Reduction.Caching;
 
 /// <summary>
-///     Resolves on-disk paths for the persistent Fuse SQLite stores.
+///     Resolves on-disk paths for the persistent Fuse workspace index.
 /// </summary>
 public static class FuseStorePaths
 {
@@ -18,20 +18,11 @@ public static class FuseStorePaths
     /// <summary>The semantic index database file name inside the Fuse data directory.</summary>
     public const string DatabaseFileName = "fuse.db";
 
-    /// <summary>The derived key-value cache database file name inside the Fuse data directory.</summary>
-    public const string CacheDatabaseFileName = "fuse-cache.db";
-
     /// <summary>
     ///     The relative path from a git repository root to the semantic index database
     ///     (<c>.fuse/fuse.db</c>).
     /// </summary>
     public const string RepositoryDatabaseRelativePath = ".fuse/fuse.db";
-
-    /// <summary>
-    ///     The relative path from a git repository root to the derived key-value cache database
-    ///     (<c>.fuse/fuse-cache.db</c>).
-    /// </summary>
-    public const string RepositoryCacheDatabaseRelativePath = ".fuse/fuse-cache.db";
 
     /// <summary>
     ///     Returns the machine-wide Fuse data directory (<c>~/.fuse</c> by default).
@@ -57,28 +48,6 @@ public static class FuseStorePaths
     /// </returns>
     public static string ResolveDatabasePath(string sourceDirectory) =>
         ResolveStorePath(sourceDirectory, RepositoryDatabaseRelativePath, DatabaseFileName);
-
-    /// <summary>
-    ///     Resolves the absolute path to <c>fuse-cache.db</c> for a fusion source directory.
-    /// </summary>
-    /// <param name="sourceDirectory">The fusion source directory.</param>
-    /// <returns>
-    ///     <c>{repoRoot}/.fuse/fuse-cache.db</c> when inside a git repository; otherwise
-    ///     <c>~/.fuse/fuse-cache.db</c> (or <see cref="UserDataEnvironmentVariable" />).
-    /// </returns>
-    public static string ResolveCacheDatabasePath(string sourceDirectory) =>
-        ResolveStorePath(sourceDirectory, RepositoryCacheDatabaseRelativePath, CacheDatabaseFileName);
-
-    /// <summary>
-    ///     Returns whether <paramref name="databasePath" /> points at the semantic index database
-    ///     (<c>fuse.db</c>), which must never be deleted by derived-cache recovery.
-    /// </summary>
-    /// <param name="databasePath">An absolute or relative path to a SQLite database file.</param>
-    public static bool IsIndexDatabasePath(string databasePath)
-    {
-        var fileName = Path.GetFileName(Path.GetFullPath(databasePath));
-        return string.Equals(fileName, DatabaseFileName, StringComparison.OrdinalIgnoreCase);
-    }
 
     private static string ResolveStorePath(
         string sourceDirectory,

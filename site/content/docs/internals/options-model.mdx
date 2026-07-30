@@ -25,8 +25,9 @@ A fusion request is composed of three required option groups, up to one optional
 | Query | QueryOptions | none | Query scoping, when present |
 | InMemory | bool | false | Return content in memory instead of writing to disk |
 | Parallelism | int | 0 | Degree of parallelism; 0 means processor count |
-| UseReductionCache | bool | true | Use the on-disk reduction cache |
-| ClearReductionCache | bool | false | Clear the reduction cache before the run |
+| UseReductionCache | bool | true | Use the bounded host-memory reduction cache |
+| ClearReductionCache | bool | false | Clear this repository's reduction entries before the run |
+| UseAnalysisCache | bool | false | Reuse per-file analysis from the bounded host-memory cache |
 
 At most one of Focus, Changes, and Query may be present; the validator rejects any combination of two or more.
 

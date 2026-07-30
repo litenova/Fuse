@@ -100,6 +100,7 @@ internal static class WorkspaceIndexRecovery
         yield return databasePath;
         yield return databasePath + "-wal";
         yield return databasePath + "-shm";
+        yield return databasePath + "-journal";
     }
 
     private static void DeleteFileIfPresent(string path)

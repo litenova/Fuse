@@ -4,7 +4,8 @@ using Fuse.Fusion.Indexing;
 namespace Fuse.Fusion.Storage;
 
 /// <summary>
-///     Encode and decode helpers for values stored in a namespaced <see cref="Fuse.Reduction.Caching.IKeyValueStore" />.
+///     Encode and decode helpers for values stored in a namespaced host-memory
+///     <see cref="Fuse.Reduction.Caching.IKeyValueStore" />.
 /// </summary>
 /// <remarks>
 ///     Text formats use tab separation; symbol and token names contain neither tabs nor newlines, so no escaping

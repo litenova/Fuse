@@ -24,15 +24,15 @@ public sealed class ContentReductionPipelineCacheTests
         try
         {
             var (pipeline, sourceFile, provider, options) = CreatePipelineContext(filePath);
-            await using var store = new FuseStoreFactory().Open(root);
-            var cache = new SqliteReductionCache(store);
+            await using var store = new MemoryStoreFactory().Open(root);
+            var cache = new MemoryReductionCache(store);
 
             await pipeline.ReduceAsync([sourceFile], options, provider, 1, cache);
             await pipeline.ReduceAsync([sourceFile], options, provider, 1, cache);
 
             Assert.Equal(1, cache.Statistics.Hits);
             Assert.Equal(1, cache.Statistics.Misses);
-            Assert.True(File.Exists(Path.Combine(root, ".fuse", "fuse-cache.db")));
+            Assert.False(File.Exists(Path.Combine(root, ".fuse", "fuse-cache.db")));
             Assert.False(File.Exists(Path.Combine(root, ".fuse", "fuse.db")));
         }
         finally
@@ -42,7 +42,7 @@ public sealed class ContentReductionPipelineCacheTests
     }
 
     [Fact]
-    public async Task ReduceAsync_AfterFlushAndReopen_UsesPersistedCache()
+    public async Task ReduceAsync_AfterReopen_UsesSharedHostMemoryCache()
     {
         var root = CreateTempRoot();
         var filePath = Path.Combine(root, "sample.txt");
@@ -52,18 +52,18 @@ public sealed class ContentReductionPipelineCacheTests
         {
             var (pipeline, sourceFile, provider, options) = CreatePipelineContext(filePath);
 
-            await using (var store = new FuseStoreFactory().Open(root))
+            var factory = new MemoryStoreFactory();
+            await using (var store = factory.Open(root))
             {
-                var cache = new SqliteReductionCache(store);
+                var cache = new MemoryReductionCache(store);
                 await pipeline.ReduceAsync([sourceFile], options, provider, 1, cache);
                 Assert.Equal(0, cache.Statistics.Hits);
                 Assert.Equal(1, cache.Statistics.Misses);
-                await store.FlushAsync();
             }
 
-            await using (var store = new FuseStoreFactory().Open(root))
+            await using (var store = factory.Open(root))
             {
-                var cache = new SqliteReductionCache(store);
+                var cache = new MemoryReductionCache(store);
                 await pipeline.ReduceAsync([sourceFile], options, provider, 1, cache);
                 Assert.Equal(1, cache.Statistics.Hits);
                 Assert.Equal(0, cache.Statistics.Misses);

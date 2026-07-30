@@ -242,8 +242,8 @@ public sealed class IndexCleanCommand
             return;
         }
 
-        var targets = IndexStorageReader.DerivedFiles(root).Where(File.Exists).ToArray();
-        if (!Yes && !Confirm(targets))
+        var displayedTargets = IndexStorageReader.DerivedFiles(root).Where(File.Exists).ToArray();
+        if (!Yes && !Confirm(displayedTargets))
             return;
 
         try
@@ -252,6 +252,7 @@ public sealed class IndexCleanCommand
             await WaitForStopAsync(root, context.CancellationToken);
             var databasePath = FuseStorePaths.ResolveDatabasePath(root);
             SqliteConnection.ClearPool(new SqliteConnection($"Data Source={databasePath}"));
+            var targets = IndexStorageReader.DerivedFiles(root).Where(File.Exists).ToArray();
             foreach (var target in targets)
                 File.Delete(target);
             _consoleUI.WriteSuccess($"Removed {targets.Length} Fuse-derived file(s).");
@@ -319,9 +320,11 @@ internal static class IndexStorageReader
             database,
             database + "-wal",
             database + "-shm",
+            database + "-journal",
             Path.Combine(directory, "fuse-cache.db"),
             Path.Combine(directory, "fuse-cache.db-wal"),
             Path.Combine(directory, "fuse-cache.db-shm"),
+            Path.Combine(directory, "fuse-cache.db-journal"),
             Path.Combine(directory, "r60-semantics.json"),
         ];
     }

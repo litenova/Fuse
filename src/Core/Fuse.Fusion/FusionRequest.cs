@@ -23,7 +23,7 @@ public sealed class FusionRequest
         int parallelism = 0,
         bool useReductionCache = true,
         bool clearReductionCache = false,
-        bool usePersistentIndex = false,
+        bool useAnalysisCache = false,
         ExperimentalOptions? experimental = null)
     {
         Collection = collection;
@@ -35,7 +35,7 @@ public sealed class FusionRequest
         Parallelism = parallelism;
         UseReductionCache = useReductionCache;
         ClearReductionCache = clearReductionCache;
-        UsePersistentIndex = usePersistentIndex;
+        UseAnalysisCache = useAnalysisCache;
         Experimental = experimental ?? new ExperimentalOptions();
     }
 
@@ -75,30 +75,29 @@ public sealed class FusionRequest
     public int Parallelism { get; }
 
     /// <summary>
-    ///     Gets a value indicating whether per-file reduction results are cached in the SQLite store
-    ///     (<c>.fuse/fuse.db</c>).
+    ///     Gets a value indicating whether per-file reduction results are cached in the host memory cache.
     /// </summary>
     /// <remarks>
-    ///     The database path is <c>{repoRoot}/.fuse/fuse.db</c> inside a git repository, or
-    ///     <c>~/.fuse/fuse.db</c> (override with <c>FUSE_USER_DATA</c>) otherwise.
+    ///     The cache is bounded and exists only for the host or command process lifetime. It does not create
+    ///     a database file under the repository.
     /// </remarks>
     public bool UseReductionCache { get; }
 
     /// <summary>
-    ///     Gets a value indicating whether cached reduction entries in <c>.fuse/fuse.db</c> are cleared
-    ///     before fusion runs.
+    ///     Gets a value indicating whether cached reduction entries for this repository are cleared before fusion
+    ///     runs.
     /// </summary>
     public bool ClearReductionCache { get; }
 
     /// <summary>
-    ///     Gets a value indicating whether per-file dependency and symbol analysis is cached in
-    ///     <c>.fuse/fuse.db</c>, so repeated scoping calls reuse it. Off by default.
+    ///     Gets a value indicating whether per-file dependency and symbol analysis is cached in host memory, so
+    ///     repeated scoping calls reuse it. Off by default.
     /// </summary>
     /// <remarks>
-    ///     The database path is <c>{repoRoot}/.fuse/fuse.db</c> inside a git repository, or
-    ///     <c>~/.fuse/fuse.db</c> (override with <c>FUSE_USER_DATA</c>) otherwise.
+    ///     Entries share the bounded repository-scoped cache with reduction output and leave memory when the host
+    ///     exits or its cache reaches capacity.
     /// </remarks>
-    public bool UsePersistentIndex { get; }
+    public bool UseAnalysisCache { get; }
 
     /// <summary>
     ///     Gets the experimental scoring knobs (graph-centrality weight, query expansion) for this run.

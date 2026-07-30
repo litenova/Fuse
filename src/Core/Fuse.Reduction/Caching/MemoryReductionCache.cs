@@ -3,19 +3,18 @@ using System.Text;
 namespace Fuse.Reduction.Caching;
 
 /// <summary>
-///     Reduction cache view over a shared <see cref="IKeyValueStore" />.
+///     Reduction cache view over a bounded host-owned <see cref="IKeyValueStore" />.
 /// </summary>
-public sealed class SqliteReductionCache : IReductionCache
+public sealed class MemoryReductionCache : IReductionCache
 {
     private const string StoreName = "reduction";
-
     private readonly IKeyValueStore _store;
 
     /// <summary>
-    ///     Initializes a new instance of the <see cref="SqliteReductionCache" /> class.
+    ///     Initializes a new instance of the <see cref="MemoryReductionCache" /> class.
     /// </summary>
-    /// <param name="store">The per-run key-value store.</param>
-    public SqliteReductionCache(IKeyValueStore store) => _store = store;
+    /// <param name="store">The repository-scoped memory cache view for this run.</param>
+    public MemoryReductionCache(IKeyValueStore store) => _store = store;
 
     /// <inheritdoc />
     public ReductionCacheStatistics Statistics { get; } = new();
