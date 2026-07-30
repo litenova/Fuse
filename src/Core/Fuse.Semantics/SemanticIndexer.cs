@@ -29,6 +29,7 @@ public sealed class SemanticIndexer
     private readonly SemanticAnalysisRunner _analysisRunner;
     private readonly LanguageSyntaxProviderRegistry _syntaxProviders;
     private readonly BuildCaptureClient _buildCaptureClient;
+    private readonly IndexFinalizer _finalizer = new();
     // R42: the host-owned warm-solution cache lets a second doctor in a session skip the full MSBuild load.
     private readonly WarmSolutionCache _warmSolutions;
 
@@ -162,7 +163,7 @@ public sealed class SemanticIndexer
         // A full pass is the final word on the mode: clear any syntax-first pending flag a prior fast pass set.
         await store.SetMetaAsync(SemanticPendingMetaKey, "0", cancellationToken);
         // R43: stamp the per-project load diagnosis so doctor reports the tier from the warm index (no live load).
-        await StampLoadDiagnosisAsync(store, diagnosis, cancellationToken);
+        await _finalizer.StampLoadDiagnosisAsync(store, diagnosis, cancellationToken);
         // Stamp the Fuse build that wrote this index so a later run on an incompatible upgrade rebuilds it.
         await store.SetMetaAsync(WorkspaceIndexStore.FuseVersionMetaKey, FuseBuildInfo.Current, cancellationToken);
         // R22: stamp the extraction-contract version so index reuse is gated on what was extracted, not the product
@@ -173,9 +174,9 @@ public sealed class SemanticIndexer
             cancellationToken);
         await store.PruneFilesAsync(files.Select(file => file.NormalizedPath).ToArray(), cancellationToken);
         await store.SetMetaAsync(StaleAsOfMetaKey, "0", cancellationToken);
-        await StampIntegrityAsync(store, cancellationToken); // R31: record the post-build integrity result.
-        await StampSkippedFilesAsync(store, scan.Skipped, cancellationToken); // R35: record skipped files.
-        await StampDetailLimitedFilesAsync(store, scan.DetailLimited, cancellationToken);
+        await _finalizer.StampIntegrityAsync(store, store, cancellationToken); // R31: record the post-build integrity result.
+        await _finalizer.StampSkippedFilesAsync(store, scan.Skipped, cancellationToken); // R35: record skipped files.
+        await _finalizer.StampDetailLimitedFilesAsync(store, scan.DetailLimited, cancellationToken);
 
         await WorkspaceIndexManifest.CompleteAsync(root, store, files, cancellationToken);
 
@@ -271,42 +272,6 @@ public sealed class SemanticIndexer
             tier, reports.Count, reports.Count, reports, diagnostics, DescribeSelectedSolution(discovery), discovery.SelectionNote);
     }
 
-    // R43: stamp the load diagnosis into index_meta so doctor can report the tier and per-project reasons from the
-    // warm index without a live MSBuild load. Best-effort: a serialization or write hiccup must not fail the index.
-    private static async Task StampLoadDiagnosisAsync(
-        IWorkspaceIndexStore store, LoadDiagnosis diagnosis, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var persisted = new PersistedLoadDiagnosis(
-                diagnosis.Tier,
-                diagnosis.ProjectsLoaded,
-                diagnosis.ProjectsTotal,
-                diagnosis.Projects.Select(p => new PersistedProjectReport(p.Name, p.FilePath, p.Loaded, p.Reason)).ToList(),
-                diagnosis.SelectedSolution,
-                diagnosis.SelectionNote);
-            var json = System.Text.Json.JsonSerializer.Serialize(persisted, PersistedLoadDiagnosisJsonContext.Default.PersistedLoadDiagnosis);
-            await store.SetMetaAsync(WorkspaceIndexStore.LoadDiagnosisMetaKey, json, cancellationToken);
-        }
-        catch (Exception ex) when (ex is Microsoft.Data.Sqlite.SqliteException or IOException or System.Text.Json.JsonException)
-        {
-        }
-    }
-
-    // R31: record the post-build integrity result in index_meta, so the recorded health is auditable alongside
-    // the live check the read paths run. Best-effort: a read/write hiccup must not fail the index pass.
-    private static async Task StampIntegrityAsync(IWorkspaceIndexStore store, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var state = await store.GetStateAsync(cancellationToken);
-            await store.SetMetaAsync(WorkspaceIndexStore.IndexIntegrityMetaKey, IndexIntegrity.Check(state).Summary(), cancellationToken);
-        }
-        catch (Exception ex) when (ex is Microsoft.Data.Sqlite.SqliteException or IOException)
-        {
-        }
-    }
-
     /// <summary>
     ///     Indexes the workspace at the syntax tier only, skipping the MSBuild/Roslyn load, so a first call
     ///     serves context in a few seconds instead of waiting for the full semantic load. Sets the index mode to
@@ -356,7 +321,7 @@ public sealed class SemanticIndexer
         await store.SetMetaAsync(SemanticPendingMetaKey, "0", cancellationToken);
         // Stamp a syntax-tier diagnosis. Discovery is file based and does not load MSBuild.
         var discovery = await _discoverer.DiscoverAsync(root, cancellationToken);
-        await StampLoadDiagnosisAsync(store, BuildDiagnosisFromSnapshot(discovery, snapshot), cancellationToken);
+        await _finalizer.StampLoadDiagnosisAsync(store, BuildDiagnosisFromSnapshot(discovery, snapshot), cancellationToken);
         // Stamp the Fuse build even on the syntax-first pass so a partial index also carries provenance.
         await store.SetMetaAsync(WorkspaceIndexStore.FuseVersionMetaKey, FuseBuildInfo.Current, cancellationToken);
         // R22: stamp the extraction-contract version so index reuse is gated on what was extracted, not the product
@@ -367,8 +332,8 @@ public sealed class SemanticIndexer
             cancellationToken);
         await store.PruneFilesAsync(files.Select(file => file.NormalizedPath).ToArray(), cancellationToken);
         await store.SetMetaAsync(StaleAsOfMetaKey, "0", cancellationToken);
-        await StampSkippedFilesAsync(store, scan.Skipped, cancellationToken); // R35: surface skips from the first pass.
-        await StampDetailLimitedFilesAsync(store, scan.DetailLimited, cancellationToken);
+        await _finalizer.StampSkippedFilesAsync(store, scan.Skipped, cancellationToken); // R35: surface skips from the first pass.
+        await _finalizer.StampDetailLimitedFilesAsync(store, scan.DetailLimited, cancellationToken);
         await WorkspaceIndexManifest.CompleteAsync(root, store, files, cancellationToken);
         return result;
     }
@@ -422,7 +387,7 @@ public sealed class SemanticIndexer
         await store.SetMetaAsync("index_mode", result.Mode, cancellationToken);
         await store.SetMetaAsync(SemanticPendingMetaKey, "0", cancellationToken);
         // R43: stamp the per-project load diagnosis so doctor reports the tier from the warm index (no live load).
-        await StampLoadDiagnosisAsync(store, diagnosis, cancellationToken);
+        await _finalizer.StampLoadDiagnosisAsync(store, diagnosis, cancellationToken);
         await store.SetMetaAsync(WorkspaceIndexStore.FuseVersionMetaKey, FuseBuildInfo.Current, cancellationToken);
         // R22: stamp the extraction-contract version so index reuse is gated on what was extracted, not the product
         // version. Bump WorkspaceIndexSchema.ExtractionContractVersion in the same change as any extractor change.
@@ -432,7 +397,7 @@ public sealed class SemanticIndexer
             cancellationToken);
         await store.PruneFilesAsync(files.Select(file => file.NormalizedPath).ToArray(), cancellationToken);
         await store.SetMetaAsync(StaleAsOfMetaKey, "0", cancellationToken);
-        await StampIntegrityAsync(store, cancellationToken); // R31: record the post-upgrade integrity result.
+        await _finalizer.StampIntegrityAsync(store, store, cancellationToken); // R31: record the post-upgrade integrity result.
 
         await WorkspaceIndexManifest.CompleteAsync(root, store, files, cancellationToken);
         return result;
@@ -479,42 +444,6 @@ public sealed class SemanticIndexer
 
         return true;
     }
-
-    // R35: record the files skipped during a scan (too large, unreadable) into index_meta so doctor can surface
-    // them; a bounded summary keeps the meta value small on a repo with many skips.
-    private static async Task StampSkippedFilesAsync(
-        IWorkspaceIndexStore store, IReadOnlyList<SkippedFile> skipped, CancellationToken cancellationToken)
-    {
-        const int MaxListed = 20;
-        var summary = skipped.Count == 0
-            ? "0"
-            : $"{skipped.Count}: " + string.Join("; ", skipped.Take(MaxListed).Select(s => $"{s.Path} ({s.Reason})"))
-              + (skipped.Count > MaxListed ? $"; and {skipped.Count - MaxListed} more" : string.Empty);
-        await store.SetMetaAsync(WorkspaceIndexStore.SkippedFilesMetaKey, summary, cancellationToken);
-    }
-
-    private static async Task StampDetailLimitedFilesAsync(
-        IWorkspaceIndexStore store,
-        IReadOnlyList<DetailLimitedFile> detailLimited,
-        CancellationToken cancellationToken)
-    {
-        const int maxListed = 20;
-        var summary = detailLimited.Count == 0
-            ? "0"
-            : $"{detailLimited.Count}: " + string.Join(
-                "; ",
-                detailLimited.Take(maxListed).Select(file => $"{file.Path} ({ToDetailValue(file.DetailLevel)}: {file.Reason})"))
-              + (detailLimited.Count > maxListed ? $"; and {detailLimited.Count - maxListed} more" : string.Empty);
-        await store.SetMetaAsync(WorkspaceIndexStore.DetailLimitedFilesMetaKey, summary, cancellationToken);
-    }
-
-    private static string ToDetailValue(IndexDetailLevel detailLevel) => detailLevel switch
-    {
-        IndexDetailLevel.Full => "full",
-        IndexDetailLevel.Declarations => "declarations",
-        IndexDetailLevel.InventoryOnly => "inventory_only",
-        _ => throw new ArgumentOutOfRangeException(nameof(detailLevel), detailLevel, "unknown index detail level"),
-    };
 
     /// <summary>
     ///     Re-indexes a single changed file in place: clears that file's stored rows and re-extracts its
@@ -624,8 +553,8 @@ public sealed class SemanticIndexer
         if (dirtyCount == 0)
         {
             await store.SetMetaAsync(StaleAsOfMetaKey, "0", cancellationToken);
-            await StampSkippedFilesAsync(store, scan.Skipped, cancellationToken);
-            await StampDetailLimitedFilesAsync(store, scan.DetailLimited, cancellationToken);
+            await _finalizer.StampSkippedFilesAsync(store, scan.Skipped, cancellationToken);
+            await _finalizer.StampDetailLimitedFilesAsync(store, scan.DetailLimited, cancellationToken);
             await WorkspaceIndexManifest.CompleteAsync(root, store, scan.Files, cancellationToken);
             return new FreshnessResult(current.Count, 0, 0, Stamped: false);
         }
@@ -652,8 +581,8 @@ public sealed class SemanticIndexer
         }
 
         await store.SetMetaAsync(StaleAsOfMetaKey, "0", cancellationToken);
-        await StampSkippedFilesAsync(store, scan.Skipped, cancellationToken);
-        await StampDetailLimitedFilesAsync(store, scan.DetailLimited, cancellationToken);
+        await _finalizer.StampSkippedFilesAsync(store, scan.Skipped, cancellationToken);
+        await _finalizer.StampDetailLimitedFilesAsync(store, scan.DetailLimited, cancellationToken);
         await WorkspaceIndexManifest.CompleteAsync(root, store, scan.Files, cancellationToken);
         return new FreshnessResult(current.Count, reconciled, 0, Stamped: false);
     }
