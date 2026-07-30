@@ -25,6 +25,8 @@ Cli.Ext.ConfigureServices(services =>
     services.AddTransient<InitCommand>();
     services.AddTransient<McpCommand>();
     services.AddTransient<InstallCommand>();
+    services.AddSingleton<ToolUpdateLauncher>();
+    services.AddTransient<UpdateCommand>();
     services.AddSingleton<IMcpClientInstaller, ClaudeMcpClientInstaller>();
     services.AddSingleton<IMcpClientInstaller, CursorMcpClientInstaller>();
     services.AddSingleton<IMcpClientInstaller, CopilotMcpClientInstaller>();

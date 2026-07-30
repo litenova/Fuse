@@ -136,21 +136,30 @@ public sealed class ToolInstallLock : IDisposable
 /// </summary>
 public sealed class ToolUpdateLauncher
 {
-    private readonly Func<IReadOnlyList<FusePeerProcess>>? _listPeersForTests;
+    private readonly IFusePeerDiscovery _peerDiscovery;
+    private readonly IDetachedUpdateProcessLauncher _processLauncher;
 
     /// <summary>
     ///     Initializes a new instance of the <see cref="ToolUpdateLauncher" /> class.
     /// </summary>
-    public ToolUpdateLauncher()
+    public ToolUpdateLauncher() : this(new FusePeerDiscovery(), new DetachedUpdateProcessLauncher())
     {
     }
 
     /// <summary>
     ///     Initializes a test instance that supplies a fixed peer list instead of enumerating the OS process table.
     /// </summary>
-    /// <param name="listPeersForTests">The peer list to return from <see cref="FusePeerProcessCatalog.ListPeers" />.</param>
-    internal ToolUpdateLauncher(Func<IReadOnlyList<FusePeerProcess>> listPeersForTests) =>
-        _listPeersForTests = listPeersForTests;
+    /// <param name="listPeersForTests">The peer list to return from the peer-discovery service.</param>
+    internal ToolUpdateLauncher(Func<IReadOnlyList<FusePeerProcess>> listPeersForTests)
+        : this(new DelegateFusePeerDiscovery(listPeersForTests), new DetachedUpdateProcessLauncher())
+    {
+    }
+
+    internal ToolUpdateLauncher(IFusePeerDiscovery peerDiscovery, IDetachedUpdateProcessLauncher processLauncher)
+    {
+        _peerDiscovery = peerDiscovery;
+        _processLauncher = processLauncher;
+    }
 
     /// <summary>
     ///     Writes and starts the detached updater.
@@ -185,7 +194,7 @@ public sealed class ToolUpdateLauncher
             Directory.CreateDirectory(workDirectory);
             var scriptPath = Path.Combine(workDirectory, isWindows ? "update.ps1" : "update.sh");
             File.WriteAllText(scriptPath, ToolUpdatePlanner.BuildUpdaterScript(isWindows, Environment.ProcessId, arguments, logPath));
-            LaunchDetached(scriptPath, isWindows);
+            _processLauncher.Launch(scriptPath, isWindows);
         }
         catch (Exception ex)
         {
@@ -203,8 +212,7 @@ public sealed class ToolUpdateLauncher
         IReadOnlyList<FusePeerProcess> peers;
         try
         {
-            peers = _listPeersForTests?.Invoke()
-                ?? FusePeerProcessCatalog.ListPeers(installPath);
+            peers = _peerDiscovery.ListPeers(installPath);
         }
         catch (Exception)
         {
@@ -227,24 +235,6 @@ public sealed class ToolUpdateLauncher
         }
     }
 
-    // Launch the updater so it outlives this process. On Windows, PowerShell runs the .ps1 hidden; on POSIX,
-    // /bin/sh runs the script and the child continues after the parent exits.
-    private static void LaunchDetached(string scriptPath, bool isWindows)
-    {
-        var startInfo = isWindows
-            ? new ProcessStartInfo("powershell", $"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"{scriptPath}\"")
-            {
-                UseShellExecute = true,
-                CreateNoWindow = true,
-                WindowStyle = ProcessWindowStyle.Hidden,
-            }
-            : new ProcessStartInfo("/bin/sh", $"\"{scriptPath}\"")
-            {
-                UseShellExecute = false,
-            };
-
-        Process.Start(startInfo);
-    }
 }
 
 /// <summary>
@@ -393,9 +383,22 @@ internal static class FuseProcessStopSelector
 /// <summary>
 ///     Enumerates running Fuse peer processes for update termination.
 /// </summary>
-internal static class FusePeerProcessCatalog
+internal interface IFusePeerDiscovery
 {
-    internal static IReadOnlyList<FusePeerProcess> ListPeers(string installPath)
+    IReadOnlyList<FusePeerProcess> ListPeers(string installPath);
+}
+
+internal sealed class DelegateFusePeerDiscovery(Func<IReadOnlyList<FusePeerProcess>> listPeers) : IFusePeerDiscovery
+{
+    public IReadOnlyList<FusePeerProcess> ListPeers(string installPath) => listPeers();
+}
+
+/// <summary>
+///     Enumerates running Fuse peer processes for update termination.
+/// </summary>
+internal sealed class FusePeerDiscovery : IFusePeerDiscovery
+{
+    public IReadOnlyList<FusePeerProcess> ListPeers(string installPath)
     {
         var peers = new List<FusePeerProcess>();
         var seen = new HashSet<int>();

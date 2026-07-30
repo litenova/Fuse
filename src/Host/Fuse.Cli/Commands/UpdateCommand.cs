@@ -24,12 +24,13 @@ namespace Fuse.Cli.Commands;
 public sealed class UpdateCommand
 {
     private readonly IConsoleUI _consoleUI;
+    private readonly ToolUpdateLauncher _updateLauncher;
 
     /// <summary>
     ///     Initializes a new instance of the <see cref="UpdateCommand" /> class for CLI option binding only.
     /// </summary>
     /// <remarks>Used by DotMake.CommandLine to bind options; the console UI is null, so this instance must not run.</remarks>
-    public UpdateCommand() : this(null!)
+    public UpdateCommand() : this(null!, new ToolUpdateLauncher())
     {
     }
 
@@ -37,7 +38,12 @@ public sealed class UpdateCommand
     ///     Initializes a new instance of the <see cref="UpdateCommand" /> class.
     /// </summary>
     /// <param name="consoleUI">The console UI for status output.</param>
-    public UpdateCommand(IConsoleUI consoleUI) => _consoleUI = consoleUI;
+    /// <param name="updateLauncher">The application-owned detached update launcher.</param>
+    public UpdateCommand(IConsoleUI consoleUI, ToolUpdateLauncher updateLauncher)
+    {
+        _consoleUI = consoleUI;
+        _updateLauncher = updateLauncher;
+    }
 
     /// <summary>The exact version to install. Defaults to the latest stable on NuGet.</summary>
     /// <remarks>Named <c>to-version</c> rather than <c>version</c> so it does not shadow the global <c>--version</c>.</remarks>
@@ -61,7 +67,7 @@ public sealed class UpdateCommand
 
         // Explicit update: stop the other running hosts so they release their file locks, then hand off to the
         // detached updater that waits for this process to exit before replacing the tool files.
-        var result = new ToolUpdateLauncher().Launch(
+        var result = _updateLauncher.Launch(
             TargetVersion,
             stopOtherHosts: true,
             forceKillPeers: ForceKillPeers,
