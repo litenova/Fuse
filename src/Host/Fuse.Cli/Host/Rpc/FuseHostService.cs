@@ -59,17 +59,13 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
     private readonly TaskCompletionSource _shutdownRequested = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly object _payloadLock = new();
     private readonly HashSet<string> _payloadPaths = new(StringComparer.OrdinalIgnoreCase);
-    private readonly SemanticUpgradeSupervisor _upgradeSupervisor;
-    private readonly bool _backgroundSemanticUpgradeEnabled;
-    private readonly Fuse.Workspace.IResidentWorkspaceProvider? _residentWorkspacesOverride;
+    private readonly Fuse.Workspace.IResidentWorkspaceProvider _residentWorkspaces;
+    private readonly IIndexAccessProvider _indexAccess;
+    private readonly FuseMcpRuntime _runtime;
     private CompilerStateBudget? _compilerStateBudget;
     private int _disposed;
 
-    // The resident workspace this daemon checks against. In production the daemon process owns the process-wide
-    // provider, so reading the static is correct; the override lets an in-process test give the daemon its own
-    // provider distinct from a client's provider (both would otherwise share the one static).
-    private Fuse.Workspace.IResidentWorkspaceProvider ResidentWorkspaces =>
-        _residentWorkspacesOverride ?? Fuse.Cli.Mcp.FuseTools.ResidentWorkspaces;
+    private Fuse.Workspace.IResidentWorkspaceProvider ResidentWorkspaces => _residentWorkspaces;
 
     /// <summary>
     ///     Initializes a new instance of the <see cref="FuseHostService" /> class.
@@ -88,10 +84,10 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
     ///     root arguments are not validated (in-process tests and non-host callers).
     /// </param>
     /// <param name="residentWorkspaces">
-    ///     The resident workspace provider this daemon checks against. When null (production), the process-wide
-    ///     <see cref="Fuse.Cli.Mcp.FuseTools.ResidentWorkspaces" /> is read at call time. An in-process test passes
-    ///     its own provider so the daemon's resident is distinct from a client's provider on the shared static.
+    ///     The resident workspace provider this daemon checks against. Tests may supply a provider that is distinct
+    ///     from the host runtime's provider.
     /// </param>
+    /// <param name="runtime">The host-owned MCP runtime, supplied by dependency injection in production.</param>
     public FuseHostService(
         SemanticIndexer indexer,
         IChangeSource changeSource,
@@ -102,9 +98,9 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
         IWorkspaceIndexJobManager indexJobs,
         ILogger<FuseHostService> logger,
         string? servedRoot = null,
-        Fuse.Workspace.IResidentWorkspaceProvider? residentWorkspaces = null)
+        Fuse.Workspace.IResidentWorkspaceProvider? residentWorkspaces = null,
+        FuseMcpRuntime? runtime = null)
     {
-        _residentWorkspacesOverride = residentWorkspaces;
         _indexer = indexer;
         _indexCoordinator = indexCoordinator;
         _indexJobs = indexJobs;
@@ -113,13 +109,22 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
         _redactor = redactor;
         _generatedCodeDetector = generatedCodeDetector;
         _logger = logger;
+        _indexAccess = runtime?.IndexAccess ?? new LocalIndexAccessProvider(indexCoordinator, indexJobs);
+        _residentWorkspaces = residentWorkspaces
+            ?? runtime?.ResidentWorkspaces
+            ?? Fuse.Workspace.NullResidentWorkspaceProvider.Instance;
+        _runtime = runtime ?? new FuseMcpRuntime(
+            _indexAccess,
+            _residentWorkspaces,
+            indexCoordinator,
+            indexJobs,
+            new WarmSolutionCache(),
+            new PooledCheckWorker());
         _sessionToken = FuseHostSessionToken.Generate();
         _servedRoot = servedRoot is not null
             ? NormalizeRoot(servedRoot)
             : TryResolveServedRootFromCommandLine();
         _startTimestamp = Stopwatch.GetTimestamp();
-        _upgradeSupervisor = new SemanticUpgradeSupervisor(message => _logger.LogInformation("{Message}", message));
-        _backgroundSemanticUpgradeEnabled = BackgroundSemanticUpgradeEnabled();
     }
 
     /// <summary>
@@ -675,6 +680,7 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
         ValidateServedRoot(root);
         BudgetFor(root).ActivateCapture();
         var result = await FuseTools.TryOracleFromCaptureBundleAsync(
+            _runtime,
             Path.GetFullPath(root), relativeFilePath, newContent, new BuildCaptureClient(), CancellationToken.None);
         return result is { Verified: true }
             ? new CaptureCheckResultDto(true, null, result.Diagnostics.Select(ToCheckDiagnosticDto).ToList())
@@ -692,7 +698,11 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
         new(diagnostic.Id, diagnostic.Severity, diagnostic.Message, diagnostic.FilePath, diagnostic.Line);
 
     private CompilerStateBudget BudgetFor(string root) =>
-        _compilerStateBudget ??= new CompilerStateBudget(Path.GetFullPath(root));
+        _compilerStateBudget ??= new CompilerStateBudget(
+            Path.GetFullPath(root),
+            warmSolutions: _runtime.WarmSolutions,
+            pooledWorkers: _runtime.PooledCheckWorkers,
+            residentWorkspaces: _residentWorkspaces);
 
     // Confirms the caller's root matches the repository root this daemon was started to serve.
     private void ValidateServedRoot(string root)
@@ -749,27 +759,10 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
             return;
         DeleteTrackedPayloads();
         await _indexJobs.DisposeAsync();
-        await _upgradeSupervisor.DisposeAsync();
     }
 
     private Task<WorkspaceIndexStore> OpenIndexedForHostAsync(string root, CancellationToken cancellationToken) =>
-        _indexCoordinator.OpenIndexedAsync(
-            _indexer,
-            root,
-            _backgroundSemanticUpgradeEnabled,
-            _upgradeSupervisor,
-            ScheduleSemanticUpgrade,
-            residentRoot => Fuse.Cli.Mcp.FuseTools.ResidentWorkspaces.DescribeResident(residentRoot) is not null,
-            cancellationToken);
-
-    private void ScheduleSemanticUpgrade(SemanticIndexer indexer, string root) =>
-        _upgradeSupervisor.Schedule(root, cancellationToken =>
-            _indexCoordinator.RunBackgroundUpgradeAsync(indexer, root, cancellationToken));
-
-    private static bool BackgroundSemanticUpgradeEnabled()
-    {
-        return false;
-    }
+        _indexAccess.OpenIndexedAsync(_indexer, root, cancellationToken);
 
     private static IndexJobSnapshot MissingWorkspaceSnapshot(string root)
     {
@@ -798,7 +791,7 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
     private async Task<IndexResultDto> BuildIndexResultDtoAsync(
         string resolved, SemanticIndexResult pass, long elapsedMs)
     {
-        await using var store = await IndexCoordinator.Default.OpenForReadOnlyAsync(resolved, CancellationToken.None);
+        await using var store = await _indexCoordinator.OpenForReadOnlyAsync(resolved, CancellationToken.None);
         var state = await store.GetStateAsync(CancellationToken.None);
         var languages = (await store.GetLanguageCountsAsync(CancellationToken.None))
             .Select(l => new LanguageCountDto(l.Language, l.Count))

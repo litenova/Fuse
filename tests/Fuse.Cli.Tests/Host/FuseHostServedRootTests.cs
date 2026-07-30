@@ -14,7 +14,6 @@ namespace Fuse.Cli.Tests.Host;
 
 // Served-root binding (R7): every RPC that carries a root must match the daemon's served root. These tests
 // parameterize over each root-bound method so a gap on one entry point fails the suite.
-[Collection("FuseToolsResidentProvider")]
 public sealed class FuseHostServedRootTests : IDisposable
 {
     private readonly ServiceProvider _provider = new ServiceCollection().AddFuseForTests().BuildServiceProvider();
@@ -67,7 +66,6 @@ public sealed class FuseHostServedRootTests : IDisposable
     [MemberData(nameof(RootBoundMethods))]
     public async Task RootBoundMethod_RejectsMismatchedServedRoot(string method)
     {
-        Fuse.Cli.Mcp.FuseTools.ResidentWorkspaces = Fuse.Workspace.NullResidentWorkspaceProvider.Instance;
         var served = NewFixture();
         var other = NewFixture();
         try
@@ -91,7 +89,6 @@ public sealed class FuseHostServedRootTests : IDisposable
     [MemberData(nameof(RootBoundMethods))]
     public async Task RootBoundMethod_AcceptsMatchingServedRoot(string method)
     {
-        Fuse.Cli.Mcp.FuseTools.ResidentWorkspaces = Fuse.Workspace.NullResidentWorkspaceProvider.Instance;
         var served = NewFixture();
         try
         {
@@ -144,7 +141,6 @@ public sealed class FuseHostServedRootTests : IDisposable
 
     public void Dispose()
     {
-        Fuse.Cli.Mcp.FuseTools.ResidentWorkspaces = Fuse.Workspace.NullResidentWorkspaceProvider.Instance;
         _provider.Dispose();
     }
 }

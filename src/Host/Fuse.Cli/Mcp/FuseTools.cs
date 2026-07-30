@@ -34,6 +34,7 @@ public sealed partial class FuseTools
     /// <param name="detail">The detail to include: symbols, routes, or all.</param>
     /// <param name="maxRows">The maximum rows per section.</param>
     /// <param name="cancellationToken">A token to cancel the read.</param>
+    /// <param name="runtime">The host-owned index, compiler, and job services.</param>
     /// <returns>The workspace map.</returns>
     // Reached through fuse_workspace (action=map); kept as an internal helper the workspace tool calls.
     public static async Task<string> FuseMapAsync(
@@ -41,9 +42,11 @@ public sealed partial class FuseTools
         [Description("Absolute or relative path to the workspace directory.")] string path = ".",
         [Description("Detail to include: symbols, routes, or all. Default: all.")] string detail = "all",
         [Description("Maximum rows per section.")] int maxRows = 200,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        FuseMcpRuntime? runtime = null)
     {
-        await using var store = await OpenIndexedAsync(indexer, path, cancellationToken);
+        var toolRuntime = ResolveRuntime(runtime, indexer);
+        await using var store = await OpenIndexedAsync(toolRuntime, indexer, path, cancellationToken);
         var renderer = new WorkspaceMapRenderer(store);
         return await renderer.RenderAsync(ParseDetail(detail), maxRows, cancellationToken);
     }
@@ -67,6 +70,7 @@ public sealed partial class FuseTools
     /// <param name="expectedHash">For the apply action: the SHA-256 hash of the source content used to derive the edit.</param>
     /// <param name="refresh">For the doctor action: whether to force a live MSBuild diagnosis.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <param name="runtime">The host-owned index, compiler, and job services.</param>
     /// <returns>The action's result, or a descriptive error.</returns>
     [McpServerTool(Name = "fuse_workspace", ReadOnly = false)]
     [Description("Workspace status and lifecycle (the loop's first stop). action=status (default): index mode, verification grade, freshness, and active job. action=index: start or join the syntax index job. action=cancel: stop the active index job. action=map: symbols, routes, and counts. action=doctor: daemon, configuration, storage, compiler-target, and job diagnostics. action=apply: write a proposed single-file edit (file + content) to the working tree; it is a dry run unless write=true and refuses paths outside the workspace root.")]
@@ -82,11 +86,13 @@ public sealed partial class FuseTools
         [Description("For the apply action: actually write (otherwise a dry run reports the change without writing).")] bool write = false,
         [Description("For the apply action: the SHA-256 (hex) of the file content this edit was derived from. When set, apply refuses if the file changed since (a concurrent edit), rather than clobbering it.")] string expectedHash = "",
         [Description("For the doctor action: force a live MSBuild load diagnosis instead of reporting the diagnosis stamped in the warm index (R43). Default false reports from the index in sub-second time when it is present.")] bool refresh = false,
-        CancellationToken cancellationToken = default) =>
+        CancellationToken cancellationToken = default,
+        FuseMcpRuntime? runtime = null) =>
         ExecuteReadMcpAsync(() => FuseWorkspaceCoreAsync(
-            indexer, jobs, action, path, detail, maxRows, file, content, write, expectedHash, refresh, cancellationToken));
+            ResolveRuntime(runtime, indexer), indexer, jobs, action, path, detail, maxRows, file, content, write, expectedHash, refresh, cancellationToken));
 
     private static async Task<string> FuseWorkspaceCoreAsync(
+        FuseMcpRuntime runtime,
         SemanticIndexer indexer,
         IndexJobClient jobs,
         string action,
@@ -108,14 +114,14 @@ public sealed partial class FuseTools
             case "cancel":
                 return await CancelIndexJobAsync(jobs, root, cancellationToken);
             case "map":
-                return await FuseMapAsync(indexer, root, detail, maxRows, cancellationToken);
+                return await FuseMapAsync(indexer, root, detail, maxRows, cancellationToken, runtime);
             case "doctor":
-                return await WorkspaceDoctorAsync(indexer, jobs, root, refresh, cancellationToken);
+                return await WorkspaceDoctorAsync(runtime, indexer, jobs, root, refresh, cancellationToken);
             case "apply":
                 return await WorkspaceApplyAsync(root, file, content, write, expectedHash, cancellationToken);
             case "status":
             case "":
-                return await WorkspaceStatusAsync(jobs, root, cancellationToken);
+                return await WorkspaceStatusAsync(runtime, jobs, root, cancellationToken);
             default:
                 return FuseOperationalErrors.Format(
                     FuseOperationalErrors.ValidationErrorPrefix,
@@ -236,6 +242,7 @@ public sealed partial class FuseTools
     // Status never creates or refreshes the index. It is the lifecycle probe agents use before broad discovery,
     // so it must reveal a cold workspace and any active shared job without racing a daemon-owned writer.
     private static async Task<string> WorkspaceStatusAsync(
+        FuseMcpRuntime runtime,
         IndexJobClient jobs,
         string path,
         CancellationToken cancellationToken)
@@ -245,20 +252,20 @@ public sealed partial class FuseTools
         var databasePath = FuseStorePaths.ResolveDatabasePath(root);
         if (!File.Exists(databasePath))
             return AppendJobSnapshot(
-                await BuildFastStatusOutputAsync(root, store: null, state: null, cancellationToken),
+                await BuildFastStatusOutputAsync(root, store: null, state: null, runtime.ResidentWorkspaces, cancellationToken),
                 job.Snapshot,
                 job.UsesDaemon);
 
         await using var store = new WorkspaceIndexStore(databasePath);
         if (await store.OpenForReadAsync(cancellationToken) is not WorkspaceIndexReadOpenStatus.Ready)
             return AppendJobSnapshot(
-                await BuildFastStatusOutputAsync(root, store: null, state: null, cancellationToken),
+                await BuildFastStatusOutputAsync(root, store: null, state: null, runtime.ResidentWorkspaces, cancellationToken),
                 job.Snapshot,
                 job.UsesDaemon);
 
         var state = await store.GetStateAsync(cancellationToken);
         return AppendJobSnapshot(
-            await BuildFastStatusOutputAsync(root, store, state, cancellationToken),
+            await BuildFastStatusOutputAsync(root, store, state, runtime.ResidentWorkspaces, cancellationToken),
             job.Snapshot,
             job.UsesDaemon);
     }
@@ -268,6 +275,7 @@ public sealed partial class FuseTools
     // the diagnosis stamped in the warm index (sub-second, no MSBuild load); a live load runs only when refresh is
     // requested or no stamp is present.
     private static async Task<string> WorkspaceDoctorAsync(
+        FuseMcpRuntime runtime,
         SemanticIndexer indexer,
         IndexJobClient jobs,
         string path,
@@ -275,10 +283,9 @@ public sealed partial class FuseTools
         CancellationToken cancellationToken)
     {
         var root = WorkspacePathResolver.ResolveRepositoryRoot(path);
-        await using var warmStore = await OpenIndexedAsync(indexer, root, cancellationToken);
 
         var builder = new StringBuilder();
-        builder.AppendLine(await BuildFastDoctorSummaryHeaderAsync(root, cancellationToken));
+        builder.AppendLine(await BuildFastDoctorSummaryHeaderAsync(root, runtime.ResidentWorkspaces, cancellationToken));
 
         var persisted = refresh ? null : await TryReadPersistedDiagnosisAsync(root, cancellationToken);
         builder.AppendLine($"workspace: {root}");
@@ -408,10 +415,12 @@ public sealed partial class FuseTools
     ///     Exact lookup over the index: symbols by name, files by path, and chunks by full-text.
     /// </summary>
     /// <param name="indexer">The semantic indexer (used to build the index on first use).</param>
+    /// <param name="changeSource">The git change source for task localization and review-aware lookup.</param>
     /// <param name="query">The name, path fragment, or text to find.</param>
     /// <param name="path">The workspace directory.</param>
     /// <param name="kind">Restrict to one kind: symbol, path, text, or all.</param>
     /// <param name="cancellationToken">A token to cancel the read.</param>
+    /// <param name="runtime">The host-owned index, compiler, and job services.</param>
     /// <returns>The matches grouped by kind.</returns>
     [McpServerTool(Name = "fuse_find", ReadOnly = true)]
     [Description("The find union: locate what a task needs by kind. Exact lookup - kind=symbol (by name), path (by fragment), text (full-text), or all. Wiring - kind=service, request, route, or config resolves the query to its implementation/handler/action/options. kind=signatures returns the query symbol's exact signature. kind=neighbors returns the query symbol's callers and implementers. kind=task ranks candidate files for the query with the graded refuse-and-route contract. Use instead of broad grep when the name, wiring, or task is known.")]
@@ -421,11 +430,13 @@ public sealed partial class FuseTools
         [Description("The name, path fragment, text, wiring identifier, or task to find.")] string query,
         [Description("Absolute or relative path to the workspace directory.")] string path = ".",
         [Description("The kind: symbol, path, text, all (exact); service, request, route, config (wiring); signatures; neighbors; task.")] string kind = "all",
-        CancellationToken cancellationToken = default) =>
+        CancellationToken cancellationToken = default,
+        FuseMcpRuntime? runtime = null) =>
         ExecuteReadMcpAsync(() => FuseFindCoreAsync(
-            indexer, changeSource, query, path, kind, cancellationToken));
+            ResolveRuntime(runtime, indexer), indexer, changeSource, query, path, kind, cancellationToken));
 
     private static async Task<string> FuseFindCoreAsync(
+        FuseMcpRuntime runtime,
         SemanticIndexer indexer,
         IChangeSource changeSource,
         string query,
@@ -442,28 +453,28 @@ public sealed partial class FuseTools
         switch (normalizedKind)
         {
             case "service":
-                return await FuseResolveAsync(indexer, path, service: query, cancellationToken: cancellationToken);
+                return await FuseResolveAsync(indexer, path, service: query, cancellationToken: cancellationToken, runtime: runtime);
             case "request":
-                return await FuseResolveAsync(indexer, path, request: query, cancellationToken: cancellationToken);
+                return await FuseResolveAsync(indexer, path, request: query, cancellationToken: cancellationToken, runtime: runtime);
             case "route":
-                return await FuseResolveAsync(indexer, path, route: query, cancellationToken: cancellationToken);
+                return await FuseResolveAsync(indexer, path, route: query, cancellationToken: cancellationToken, runtime: runtime);
             case "config":
-                return await FuseResolveAsync(indexer, path, config: query, cancellationToken: cancellationToken);
+                return await FuseResolveAsync(indexer, path, config: query, cancellationToken: cancellationToken, runtime: runtime);
             case "signatures":
-                return await FuseSignaturesAsync(indexer, [query], path, cancellationToken: cancellationToken);
+                return await FuseSignaturesAsync(indexer, [query], path, cancellationToken: cancellationToken, runtime: runtime);
             case "neighbors":
-                return await FuseNeighborsAsync(indexer, path, symbol: query, cancellationToken: cancellationToken);
+                return await FuseNeighborsAsync(indexer, path, symbol: query, cancellationToken: cancellationToken, runtime: runtime);
             case "task":
                 {
                     var taskRoot = WorkspacePathResolver.ResolveRepositoryRoot(path);
-                    await using var taskStore = await OpenIndexedAsync(indexer, path, cancellationToken);
+                    await using var taskStore = await OpenIndexedAsync(runtime, indexer, path, cancellationToken);
                     if (!taskStore.FullTextSearchAvailable)
                     {
                         return AvailabilityHeaderHelpers.FormatTaskLocalizationFtsRefusal(
-                            await OracleAvailabilityHeaderAsync(taskStore, taskRoot, cancellationToken));
+                            await OracleAvailabilityHeaderAsync(taskStore, taskRoot, cancellationToken, residentWorkspaces: runtime.ResidentWorkspaces));
                     }
 
-                    return await FuseLocalizeAsync(indexer, changeSource, path, task: query, cancellationToken: cancellationToken);
+                    return await FuseLocalizeAsync(indexer, changeSource, path, task: query, cancellationToken: cancellationToken, runtime: runtime);
                 }
         }
 
@@ -474,7 +485,7 @@ public sealed partial class FuseTools
         WorkspaceIndexStore store;
         try
         {
-            store = await OpenIndexedAsync(indexer, path, cancellationToken);
+            store = await OpenIndexedAsync(runtime, indexer, path, cancellationToken);
         }
         catch (IndexBlockedReadException) when (LexicalFallback.IsEnabled())
         {
@@ -566,32 +577,25 @@ public sealed partial class FuseTools
             "provide either files (paths) or content to reduce."));
     }
 
-    // Opens the index store for a workspace without indexing (explicit write paths use ExecuteWriteAsync directly).
-    /// <summary>
-    ///     Whether a cold read serves the syntax tier first and upgrades to the semantic graph in the background.
-    ///     Enabled only by the long-lived <c>mcp serve</c> host (which owns the background task's lifetime); a
-    ///     short-lived in-process caller indexes synchronously so no background task outlives it.
-    /// </summary>
-    public static bool BackgroundSemanticUpgradeEnabled { get; set; }
-
-    /// <summary>
-    ///     Owns the background semantic-upgrade jobs' lifetime (N3, finding 5): deduped per root, failures logged,
-    ///     and cancelled and drained on host shutdown so none is orphaned. The serve host sets this to a
-    ///     supervisor with a stderr sink and disposes it on shutdown; the default keeps a plain instance so a
-    ///     short-lived in-process caller behaves and tests can drive it directly.
-    /// </summary>
-    public static SemanticUpgradeSupervisor UpgradeSupervisor { get; set; } = new();
-
     // Opens the store and builds the index on first use, so read tools work without an explicit index call.
-    // In the long-lived serve host, cold start serves the syntax tier in a few seconds, then upgrades to the
-    // semantic graph in the background so the first read does not block on the MSBuild load. In a short-lived
-    // in-process caller the index is built synchronously, so no background task outlives the call.
-    private static async Task<WorkspaceIndexStore> OpenIndexedAsync(SemanticIndexer indexer, string path, CancellationToken cancellationToken)
+    // The shared syntax job remains independent of this caller's wait. A semantic pass, when requested, continues
+    // after syntax is readable and does not block this open.
+    private static Task<WorkspaceIndexStore> OpenIndexedAsync(
+        SemanticIndexer indexer,
+        string path,
+        CancellationToken cancellationToken) =>
+        OpenIndexedAsync(ResolveRuntime(runtime: null, indexer), indexer, path, cancellationToken);
+
+    private static async Task<WorkspaceIndexStore> OpenIndexedAsync(
+        FuseMcpRuntime runtime,
+        SemanticIndexer indexer,
+        string path,
+        CancellationToken cancellationToken)
     {
         var root = WorkspacePathResolver.ResolveRepositoryRoot(path);
         try
         {
-            var store = await IndexAccess.OpenIndexedAsync(
+            var store = await runtime.IndexAccess.OpenIndexedAsync(
                 indexer,
                 root,
                 cancellationToken);
@@ -602,7 +606,7 @@ public sealed partial class FuseTools
         {
             // R27: the cold syntax build did not finish within the deadline; return a bounded building_syntax
             // header as the tool body while the build continues, instead of blocking the read for the whole build.
-            throw new IndexBlockedReadException(await FormatBuildingSyntaxHeaderAsync(root, cancellationToken));
+            throw new IndexBlockedReadException(await FormatBuildingSyntaxHeaderAsync(root, runtime.IndexJobs, cancellationToken));
         }
         catch (Exception ex) when (IsIndexContention(ex))
         {
@@ -647,40 +651,57 @@ public sealed partial class FuseTools
     // per-read reconcile, so the graph may lag the working tree). Store-backed oracle tools prepend it; the
     // compiler tools (fuse_check, fuse_refactor) carry their own explicit "cannot verify/rename" abstention,
     // which is the same signal at higher resolution.
-    /// <summary>
-    ///     The index access seam (R19): local coordinator by default; a remote provider when MCP delegates index
-    ///     writes to a shared daemon.
-    /// </summary>
-    public static IIndexAccessProvider IndexAccess { get; set; } = LocalIndexAccessProvider.Instance;
-
-    /// <summary>
-    ///     The resident-workspace seam (S1, Decision D8): the availability header consults this to say whether a
-    ///     read is served by a live resident workspace or by the store. The default reports no resident workspace,
-    ///     so a process without a wired resident engine answers store-backed exactly as before; the host that
-    ///     holds a resident workspace replaces it with a provider over its live state.
-    /// </summary>
-    public static Fuse.Workspace.IResidentWorkspaceProvider ResidentWorkspaces { get; set; } =
-        Fuse.Workspace.NullResidentWorkspaceProvider.Instance;
-
     internal static async Task<string> OracleAvailabilityHeaderAsync(
-        WorkspaceIndexStore store, string root, CancellationToken cancellationToken, string? indexStateOverride = null)
+        WorkspaceIndexStore store,
+        string root,
+        CancellationToken cancellationToken,
+        string? indexStateOverride = null,
+        Fuse.Workspace.IResidentWorkspaceProvider? residentWorkspaces = null)
     {
         var state = await store.GetStateAsync(cancellationToken);
         var indexState = indexStateOverride
             ?? await ComputeIndexStateAsync(store, state, root, cancellationToken);
-        return await FormatAvailabilityHeaderAsync(store, root, indexState, state.FileCount, cancellationToken);
+        return await FormatAvailabilityHeaderAsync(
+            store,
+            root,
+            indexState,
+            state.FileCount,
+            residentWorkspaces ?? Fuse.Workspace.NullResidentWorkspaceProvider.Instance,
+            cancellationToken);
     }
 
-    internal static Task<string> FormatNotIndexedAvailabilityHeaderAsync(string root, CancellationToken cancellationToken) =>
-        FormatAvailabilityHeaderAsync(store: null, root, "not_indexed", filesIndexed: 0, cancellationToken);
+    internal static Task<string> FormatNotIndexedAvailabilityHeaderAsync(
+        string root,
+        CancellationToken cancellationToken,
+        Fuse.Workspace.IResidentWorkspaceProvider? residentWorkspaces = null) =>
+        FormatAvailabilityHeaderAsync(
+            store: null,
+            root,
+            "not_indexed",
+            filesIndexed: 0,
+            residentWorkspaces ?? Fuse.Workspace.NullResidentWorkspaceProvider.Instance,
+            cancellationToken);
 
     // R27: the availability header for a cold read whose background syntax build is still running. Reports
     // building_syntax plus files_indexed so far, so the agent sees progress and retries rather than blocking.
-    internal static async Task<string> FormatBuildingSyntaxHeaderAsync(string root, CancellationToken cancellationToken)
+    internal static Task<string> FormatBuildingSyntaxHeaderAsync(string root, CancellationToken cancellationToken) =>
+        FormatBuildingSyntaxHeaderAsync(root, jobs: null, cancellationToken);
+
+    internal static async Task<string> FormatBuildingSyntaxHeaderAsync(
+        string root,
+        IWorkspaceIndexJobManager? jobs,
+        CancellationToken cancellationToken,
+        Fuse.Workspace.IResidentWorkspaceProvider? residentWorkspaces = null)
     {
         var databasePath = FuseStorePaths.ResolveDatabasePath(root);
         if (!File.Exists(databasePath))
-            return await FormatAvailabilityHeaderAsync(store: null, root, "building_syntax", filesIndexed: 0, cancellationToken);
+            return await FormatAvailabilityHeaderAsync(
+                store: null,
+                root,
+                "building_syntax",
+                filesIndexed: 0,
+                residentWorkspaces ?? Fuse.Workspace.NullResidentWorkspaceProvider.Instance,
+                cancellationToken);
 
         try
         {
@@ -690,31 +711,46 @@ public sealed partial class FuseTools
             if (await store.OpenForReadAsync(cancellationToken) is WorkspaceIndexReadOpenStatus.Ready)
             {
                 var state = await store.GetStateAsync(cancellationToken);
-                return await FormatAvailabilityHeaderAsync(store, root, "building_syntax", state.FileCount, cancellationToken)
-                    + ElapsedProgressSuffix(root);
+                return await FormatAvailabilityHeaderAsync(
+                        store,
+                        root,
+                        "building_syntax",
+                        state.FileCount,
+                        residentWorkspaces ?? Fuse.Workspace.NullResidentWorkspaceProvider.Instance,
+                        cancellationToken)
+                    + ElapsedProgressSuffix(root, jobs);
             }
         }
         catch (SqliteException)
         {
         }
 
-        return await FormatAvailabilityHeaderAsync(store: null, root, "building_syntax", filesIndexed: 0, cancellationToken)
-            + ElapsedProgressSuffix(root);
+        return await FormatAvailabilityHeaderAsync(
+                store: null,
+                root,
+                "building_syntax",
+                filesIndexed: 0,
+                residentWorkspaces ?? Fuse.Workspace.NullResidentWorkspaceProvider.Instance,
+                cancellationToken)
+            + ElapsedProgressSuffix(root, jobs);
     }
 
     // R37: a progress suffix naming how long the in-flight cold build has been running, so a building header is
     // visible progress rather than a bare state. Empty when no build elapsed is known.
-    private static string ElapsedProgressSuffix(string root)
+    private static string ElapsedProgressSuffix(string root, IWorkspaceIndexJobManager? jobs)
     {
-        var elapsed = ColdStartCoordinator.Default.ElapsedFor(root);
+        var elapsed = jobs?.GetStatus(root)?.Elapsed;
         return elapsed is null ? string.Empty : $"{Environment.NewLine}progress: building for ~{(int)elapsed.Value.TotalSeconds}s";
     }
 
-    internal static async Task<string> FormatBlockedReadHeaderAsync(string root, CancellationToken cancellationToken)
+    internal static async Task<string> FormatBlockedReadHeaderAsync(
+        string root,
+        CancellationToken cancellationToken,
+        Fuse.Workspace.IResidentWorkspaceProvider? residentWorkspaces = null)
     {
         var databasePath = FuseStorePaths.ResolveDatabasePath(root);
         if (!File.Exists(databasePath))
-            return await FormatNotIndexedAvailabilityHeaderAsync(root, cancellationToken);
+            return await FormatNotIndexedAvailabilityHeaderAsync(root, cancellationToken, residentWorkspaces);
 
         try
         {
@@ -724,14 +760,26 @@ public sealed partial class FuseTools
             if (await store.OpenForReadAsync(cancellationToken) is WorkspaceIndexReadOpenStatus.Ready)
             {
                 var state = await store.GetStateAsync(cancellationToken);
-                return await FormatAvailabilityHeaderAsync(store, root, "index_busy", state.FileCount, cancellationToken);
+                return await FormatAvailabilityHeaderAsync(
+                    store,
+                    root,
+                    "index_busy",
+                    state.FileCount,
+                    residentWorkspaces ?? Fuse.Workspace.NullResidentWorkspaceProvider.Instance,
+                    cancellationToken);
             }
         }
         catch (SqliteException)
         {
         }
 
-        return await FormatAvailabilityHeaderAsync(store: null, root, "index_busy", filesIndexed: -1, cancellationToken);
+        return await FormatAvailabilityHeaderAsync(
+            store: null,
+            root,
+            "index_busy",
+            filesIndexed: -1,
+            residentWorkspaces ?? Fuse.Workspace.NullResidentWorkspaceProvider.Instance,
+            cancellationToken);
     }
 
     private static async Task<string> FormatAvailabilityHeaderAsync(
@@ -739,6 +787,7 @@ public sealed partial class FuseTools
         string root,
         string indexState,
         int filesIndexed,
+        Fuse.Workspace.IResidentWorkspaceProvider residentWorkspaces,
         CancellationToken cancellationToken)
     {
         var builder = new StringBuilder();
@@ -754,7 +803,7 @@ public sealed partial class FuseTools
             builder.AppendLine("grade: deferred (not semantic-ready)");
             builder.AppendLine($"hint: {hint}");
         }
-        builder.Append(await BuildAvailabilityLineAsync(store, root, cancellationToken));
+        builder.Append(await BuildAvailabilityLineAsync(store, root, residentWorkspaces, cancellationToken));
         return builder.ToString().TrimEnd();
     }
 
@@ -770,10 +819,13 @@ public sealed partial class FuseTools
     };
 
     private static async Task<string> BuildAvailabilityLineAsync(
-        WorkspaceIndexStore? store, string root, CancellationToken cancellationToken)
+        WorkspaceIndexStore? store,
+        string root,
+        Fuse.Workspace.IResidentWorkspaceProvider residentWorkspaces,
+        CancellationToken cancellationToken)
     {
         if (store is null)
-            return BuildNotIndexedAvailabilityLine(root);
+            return BuildNotIndexedAvailabilityLine(root, residentWorkspaces);
 
         var mode = await store.GetMetaAsync("index_mode", cancellationToken) ?? "unknown";
         var staleRaw = await store.GetMetaAsync(SemanticIndexer.StaleAsOfMetaKey, cancellationToken);
@@ -791,7 +843,7 @@ public sealed partial class FuseTools
             ? "verify serves oracle-grade"
             : "verify serves build-grade (fuse_check runs a scoped dotnet build)";
         // Name which truth answered (S1/D8): a live resident workspace (current as of its stamp) or the store.
-        var resident = ResidentWorkspaces.DescribeResident(root);
+        var resident = residentWorkspaces.DescribeResident(root);
         var residentClause = resident is null
             ? "store-backed"
             : $"resident ({resident.ProjectCount} project(s), current as of {resident.AsOf})";
@@ -819,15 +871,6 @@ public sealed partial class FuseTools
         FuseMetrics.RecordIndexMode(root, mode);
     }
 
-    // Runs the semantic upgrade in the background on its own store handle (the foreground store is disposed when
-    // the tool returns), supervised by UpgradeSupervisor: deduped per root, cancellable, its failure logged not
-    // swallowed, and drained on host shutdown so no task is orphaned (N3, finding 5).
-    internal static void ScheduleSemanticUpgrade(SemanticIndexer indexer, string root)
-    {
-        UpgradeSupervisor.Schedule(root, cancellationToken =>
-            IndexCoordinator.Default.RunBackgroundUpgradeAsync(indexer, root, cancellationToken));
-    }
-
     private static MapDetail ParseDetail(string detail) => detail.Trim().ToLowerInvariant() switch
     {
         "symbols" => MapDetail.Symbols,
@@ -840,12 +883,13 @@ public sealed partial class FuseTools
         string root,
         WorkspaceIndexStore? store,
         WorkspaceIndexState? state,
+        Fuse.Workspace.IResidentWorkspaceProvider residentWorkspaces,
         CancellationToken cancellationToken)
     {
         var builder = new StringBuilder();
         if (store is null || state is null)
         {
-            builder.AppendLine(await FormatNotIndexedAvailabilityHeaderAsync(root, cancellationToken));
+            builder.AppendLine(await FormatNotIndexedAvailabilityHeaderAsync(root, cancellationToken, residentWorkspaces));
             builder.AppendLine($"workspace: {root}");
             builder.AppendLine("index mode: not_indexed");
             builder.AppendLine("files indexed: 0");
@@ -853,7 +897,7 @@ public sealed partial class FuseTools
         }
         else
         {
-            builder.AppendLine(await OracleAvailabilityHeaderAsync(store, root, cancellationToken));
+            builder.AppendLine(await OracleAvailabilityHeaderAsync(store, root, cancellationToken, residentWorkspaces: residentWorkspaces));
             builder.AppendLine($"workspace: {root}");
             builder.AppendLine($"index mode: {state.Mode ?? "unknown"}");
             builder.AppendLine($"files indexed: {state.FileCount}");
@@ -872,14 +916,17 @@ public sealed partial class FuseTools
     }
 
     // R16: the doctor summary header reads index_meta only; it does not wait for semantic upgrade.
-    private static async Task<string> BuildFastDoctorSummaryHeaderAsync(string root, CancellationToken cancellationToken)
+    private static async Task<string> BuildFastDoctorSummaryHeaderAsync(
+        string root,
+        Fuse.Workspace.IResidentWorkspaceProvider residentWorkspaces,
+        CancellationToken cancellationToken)
     {
         var databasePath = FuseStorePaths.ResolveDatabasePath(root);
         if (!File.Exists(databasePath))
-            return await FormatNotIndexedAvailabilityHeaderAsync(root, cancellationToken);
+            return await FormatNotIndexedAvailabilityHeaderAsync(root, cancellationToken, residentWorkspaces);
 
         await using var store = new WorkspaceIndexStore(databasePath);
-        return await OracleAvailabilityHeaderAsync(store, root, cancellationToken);
+        return await OracleAvailabilityHeaderAsync(store, root, cancellationToken, residentWorkspaces: residentWorkspaces);
     }
 
     internal static async Task<string> ComputeIndexStateAsync(
@@ -912,19 +959,24 @@ public sealed partial class FuseTools
         return "ready";
     }
 
-    private static string BuildNotIndexedAvailabilityLine(string root)
+    private static string BuildNotIndexedAvailabilityLine(
+        string root,
+        Fuse.Workspace.IResidentWorkspaceProvider residentWorkspaces)
     {
         var tier1Available = new BuildCaptureClient().IsAvailable;
         var tier1 = tier1Available ? "configured" : "not configured";
         var verifyGrade = tier1Available
             ? "verify serves oracle-grade"
             : "verify serves build-grade (fuse_check runs a scoped dotnet build)";
-        var resident = ResidentWorkspaces.DescribeResident(root);
+        var resident = residentWorkspaces.DescribeResident(root);
         var residentClause = resident is null
             ? "store-backed"
             : $"resident ({resident.ProjectCount} project(s), current as of {resident.AsOf})";
         return $"availability: index mode not_indexed; full-text search unavailable; tier-1 build capture {tier1}; {verifyGrade}; workspace {residentClause}; not indexed (run fuse_workspace action=index to build).";
     }
+
+    private static FuseMcpRuntime ResolveRuntime(FuseMcpRuntime? runtime, SemanticIndexer indexer) =>
+        runtime ?? FuseMcpRuntime.CreateIsolated(indexer);
 }
 
 /// <summary>

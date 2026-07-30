@@ -1,6 +1,7 @@
 using Fuse.Cli.Mcp;
 using Fuse.Cli.Services;
 using Fuse.Semantics;
+using Fuse.Workspace;
 
 namespace Fuse.Cli.Rpc;
 
@@ -22,11 +23,22 @@ internal sealed class CompilerStateBudget
     private readonly object _gate = new();
     private readonly LinkedList<State> _lru = new();
     private readonly Dictionary<State, LinkedListNode<State>> _lruIndex = new();
+    private readonly WarmSolutionCache _warmSolutions;
+    private readonly PooledCheckWorker _pooledWorkers;
+    private readonly IResidentWorkspaceProvider _residentWorkspaces;
 
-    public CompilerStateBudget(string root, int? cap = null)
+    public CompilerStateBudget(
+        string root,
+        int? cap = null,
+        WarmSolutionCache? warmSolutions = null,
+        PooledCheckWorker? pooledWorkers = null,
+        IResidentWorkspaceProvider? residentWorkspaces = null)
     {
         _root = Path.GetFullPath(root);
         _cap = cap ?? ReadCap();
+        _warmSolutions = warmSolutions ?? new WarmSolutionCache();
+        _pooledWorkers = pooledWorkers ?? new PooledCheckWorker();
+        _residentWorkspaces = residentWorkspaces ?? NullResidentWorkspaceProvider.Instance;
     }
 
     public void ActivateWarm() => Activate(State.Warm);
@@ -63,10 +75,10 @@ internal sealed class CompilerStateBudget
         switch (state)
         {
             case State.Warm:
-                WarmSolutionCache.Shared.EvictUnderRoot(_root);
+                _warmSolutions.EvictUnderRoot(_root);
                 break;
             case State.Capture:
-                PooledCheckWorker.Shared.EvictOwnedBy(_root);
+                _pooledWorkers.EvictOwnedBy(_root);
                 break;
             case State.Resident:
                 EvictResident();
@@ -76,7 +88,7 @@ internal sealed class CompilerStateBudget
 
     private void EvictResident()
     {
-        if (FuseTools.ResidentWorkspaces is ResidentWorkspaceRegistry registry)
+        if (_residentWorkspaces is ResidentWorkspaceRegistry registry)
             registry.Evict(_root);
     }
 }

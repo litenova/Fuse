@@ -138,7 +138,6 @@ public sealed class DaemonOneTruthTests
         // A first open below owns the full index synchronously. Do not also start the eager syntax pass, because
         // its background upgrade can hold the single writer while the two-client assertion is trying to read it.
         psi.Environment["FUSE_EAGER_INDEX"] = "0";
-        psi.Environment["FUSE_BG_UPGRADE"] = "0";
 
         Process? daemon = null;
         try

@@ -31,9 +31,9 @@ public sealed class ChangeSignatureRefactorer
     /// </summary>
     /// <param name="cache">
     ///     The warm-solution cache (R42) the change loads through; defaults to the process-wide
-    ///     <see cref="WarmSolutionCache.Shared" />.
+    ///     the supplied host-owned <see cref="WarmSolutionCache" />.
     /// </param>
-    public ChangeSignatureRefactorer(WarmSolutionCache? cache = null) => _cache = cache ?? WarmSolutionCache.Shared;
+    public ChangeSignatureRefactorer(WarmSolutionCache? cache = null) => _cache = cache ?? new WarmSolutionCache();
 
     /// <summary>
     ///     Adds a trailing parameter to a method (and its override/interface family) solution-wide, threading an

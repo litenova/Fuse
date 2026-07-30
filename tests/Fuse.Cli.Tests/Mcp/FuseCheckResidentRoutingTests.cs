@@ -12,17 +12,12 @@ namespace Fuse.Cli.Tests.Mcp;
 // With the default null provider the routing is a no-op and the existing worker/build-grade ladder is unchanged.
 // This test wires a stub resident provider and confirms fuse_check reports the resident diagnostics at oracle
 // grade.
-//
-// Shares a collection with the other tests that mutate the static FuseTools.ResidentWorkspaces, so xUnit
-// serializes them rather than racing the shared static across parallel classes.
-[Collection("FuseToolsResidentProvider")]
 public sealed class FuseCheckResidentRoutingTests : IDisposable
 {
     private readonly ServiceProvider _provider = new ServiceCollection().AddFuseForTests().BuildServiceProvider();
 
     public void Dispose()
     {
-        FuseTools.ResidentWorkspaces = NullResidentWorkspaceProvider.Instance;
         _provider.Dispose();
     }
 
@@ -47,14 +42,15 @@ public sealed class FuseCheckResidentRoutingTests : IDisposable
                 "namespace Sample; public sealed class Widget { public int Spin() => 42; }");
 
             var root = Path.GetFullPath(work);
-            FuseTools.ResidentWorkspaces = new StubCheckProvider(root, [
+            var runtime = FuseMcpRuntime.CreateIsolated(indexer, new StubCheckProvider(root, [
                 new CheckDiagnostic("CS1061", "Error", "'Widget' does not contain a definition for 'Nope'", "Widget.cs", 1),
-            ]);
+            ]));
 
             var output = await FuseTools.FuseCheckAsync(
                 indexer, work, "Widget.cs",
                 "namespace Sample; public sealed class Widget { public int Spin() => Nope; }",
-                cancellationToken: CancellationToken.None);
+                cancellationToken: CancellationToken.None,
+                runtime: runtime);
 
             Assert.Contains("verification grade: oracle", output);
             Assert.Contains("CS1061", output);
@@ -85,12 +81,13 @@ public sealed class FuseCheckResidentRoutingTests : IDisposable
                 "namespace Sample; public sealed class Widget { public int Spin() => 42; }");
 
             var root = Path.GetFullPath(work);
-            FuseTools.ResidentWorkspaces = new StubCheckProvider(root, []);
+            var runtime = FuseMcpRuntime.CreateIsolated(indexer, new StubCheckProvider(root, []));
 
             var output = await FuseTools.FuseCheckAsync(
                 indexer, work, "Widget.cs",
                 "namespace Sample; public sealed class Widget { public int Spin() => 7; }",
-                cancellationToken: CancellationToken.None);
+                cancellationToken: CancellationToken.None,
+                runtime: runtime);
 
             Assert.Contains("verification grade: oracle", output);
             Assert.Contains("clean", output);

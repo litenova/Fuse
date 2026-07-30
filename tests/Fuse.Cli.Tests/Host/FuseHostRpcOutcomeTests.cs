@@ -20,7 +20,6 @@ namespace Fuse.Cli.Tests.Host;
 // R12: host RPC outcome assertions (F-026). These pin client-visible outcomes and wire errors, not per-method
 // wiring smokes. Served-root rejection over the transport is one outcome test here; per-method coverage lives in
 // FuseHostServedRootTests (R7).
-[Collection("FuseToolsResidentProvider")]
 public sealed class FuseHostRpcOutcomeTests : IDisposable
 {
     private readonly ServiceProvider _provider = new ServiceCollection().AddFuseForTests().BuildServiceProvider();
@@ -68,7 +67,6 @@ public sealed class FuseHostRpcOutcomeTests : IDisposable
     [Fact]
     public async Task Served_root_mismatch_returns_invalid_params_over_the_wire()
     {
-        Fuse.Cli.Mcp.FuseTools.ResidentWorkspaces = Fuse.Workspace.NullResidentWorkspaceProvider.Instance;
         var served = UniqueRoot();
         var other = UniqueRoot();
         Directory.CreateDirectory(served);
@@ -160,7 +158,6 @@ public sealed class FuseHostRpcOutcomeTests : IDisposable
 
     public void Dispose()
     {
-        Fuse.Cli.Mcp.FuseTools.ResidentWorkspaces = Fuse.Workspace.NullResidentWorkspaceProvider.Instance;
         _provider.Dispose();
     }
 }

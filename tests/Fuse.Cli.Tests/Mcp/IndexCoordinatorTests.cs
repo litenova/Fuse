@@ -210,6 +210,7 @@ public sealed class IndexConcurrencyIntegrationTests : IAsyncLifetime, IDisposab
 {
     private readonly ServiceProvider _provider = new ServiceCollection().AddFuseForTests().BuildServiceProvider();
     private readonly string _root = Path.Combine(Path.GetTempPath(), "fuse-index-concurrency", Guid.NewGuid().ToString("N"));
+    private readonly IndexCoordinator _coordinator = new();
     private SemanticIndexer Indexer => _provider.GetRequiredService<SemanticIndexer>();
     private IChangeSource ChangeSource => _provider.GetRequiredService<IChangeSource>();
 
@@ -269,7 +270,7 @@ public sealed class IndexConcurrencyIntegrationTests : IAsyncLifetime, IDisposab
         }
 
         var writeReleased = new TaskCompletionSource();
-        var write = IndexCoordinator.Default.ExecuteWriteAsync(
+        var write = _coordinator.ExecuteWriteAsync(
             _root,
             async (_, ct) =>
             {
@@ -280,7 +281,7 @@ public sealed class IndexConcurrencyIntegrationTests : IAsyncLifetime, IDisposab
 
         await Task.Delay(50);
 
-        await using var store = await IndexCoordinator.Default.OpenForReadOnlyAsync(_root, CancellationToken.None);
+        await using var store = await _coordinator.OpenForReadOnlyAsync(_root, CancellationToken.None);
         var state = await store.GetStateAsync(CancellationToken.None);
         Assert.Equal(1, state.FileCount);
         Assert.Equal("syntax", state.Mode);
@@ -303,23 +304,15 @@ public sealed class IndexConcurrencyIntegrationTests : IAsyncLifetime, IDisposab
             await seed.UpsertFilesAsync(files, CancellationToken.None);
         }
 
-        FuseTools.BackgroundSemanticUpgradeEnabled = false;
-        try
-        {
-            var opens = Enumerable.Range(0, 24).Select(_ => FuseTools.FuseFindAsync(
-                Indexer,
-                ChangeSource,
-                "F1",
-                path: _root,
-                kind: "path")).ToArray();
-            var results = await Task.WhenAll(opens);
-            Assert.Equal(24, results.Length);
-            Assert.DoesNotContain(results, r => r.StartsWith(FuseOperationalErrors.InternalErrorPrefix));
-        }
-        finally
-        {
-            FuseTools.BackgroundSemanticUpgradeEnabled = false;
-        }
+        var opens = Enumerable.Range(0, 24).Select(_ => FuseTools.FuseFindAsync(
+            Indexer,
+            ChangeSource,
+            "F1",
+            path: _root,
+            kind: "path")).ToArray();
+        var results = await Task.WhenAll(opens);
+        Assert.Equal(24, results.Length);
+        Assert.DoesNotContain(results, r => r.StartsWith(FuseOperationalErrors.InternalErrorPrefix));
     }
 
     public Task DisposeAsync()

@@ -31,9 +31,9 @@ public sealed class CodeFixApplier
     /// </summary>
     /// <param name="cache">
     ///     The warm-solution cache (R42) the fix loads through; defaults to the process-wide
-    ///     <see cref="WarmSolutionCache.Shared" />.
+    ///     the supplied host-owned <see cref="WarmSolutionCache" />.
     /// </param>
-    public CodeFixApplier(WarmSolutionCache? cache = null) => _cache = cache ?? WarmSolutionCache.Shared;
+    public CodeFixApplier(WarmSolutionCache? cache = null) => _cache = cache ?? new WarmSolutionCache();
 
     /// <summary>
     ///     Loads the workspace, discovers the analyzers and code fix providers the project's analyzer references

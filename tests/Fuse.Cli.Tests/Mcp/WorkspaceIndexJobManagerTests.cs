@@ -78,6 +78,28 @@ public sealed class WorkspaceIndexJobManagerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Syntax_ready_wait_completes_while_semantic_stage_is_running()
+    {
+        var executor = new TwoStageExecutor();
+        await using var manager = new WorkspaceIndexJobManager(executor);
+
+        await manager.StartOrJoinAsync(Request(IndexDepth.Semantic), CancellationToken.None);
+        await executor.SyntaxStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        executor.ReleaseSyntax();
+        await executor.SemanticStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var syntaxReady = await manager.WaitForSyntaxReadyAsync(_root, CancellationToken.None);
+
+        Assert.NotNull(syntaxReady);
+        Assert.Equal(IndexJobState.Running, syntaxReady.State);
+        Assert.Equal([IndexDepth.Syntax, IndexDepth.Semantic], executor.Requests.Select(request => request.Depth));
+
+        executor.ReleaseSemantic();
+        var completed = await manager.WaitForCompletionAsync(_root, CancellationToken.None);
+        Assert.Equal(IndexJobState.Completed, completed!.State);
+    }
+
+    [Fact]
     public async Task Force_request_conflicts_with_active_job()
     {
         var executor = new BlockingExecutor();
@@ -173,5 +195,42 @@ public sealed class WorkspaceIndexJobManagerTests : IAsyncLifetime
         }
 
         public void Release() => _release.TrySetResult();
+    }
+
+    private sealed class TwoStageExecutor : IWorkspaceIndexJobExecutor
+    {
+        private readonly TaskCompletionSource _releaseSemantic = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseSyntax = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public List<IndexJobRequest> Requests { get; } = [];
+
+        public TaskCompletionSource SyntaxStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource SemanticStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<SemanticIndexResult> ExecuteAsync(
+            string jobId,
+            IndexJobRequest request,
+            IProgress<IndexJobProgress> progress,
+            CancellationToken cancellationToken)
+        {
+            Requests.Add(request);
+            if (request.Depth == IndexDepth.Syntax)
+            {
+                SyntaxStarted.TrySetResult();
+                await _releaseSyntax.Task.WaitAsync(cancellationToken);
+                progress.Report(new IndexJobProgress(IndexPhase.SyntaxPersistence, 1, 1, "syntax committed"));
+                return new SemanticIndexResult("syntax", 1, 0, 1, 1, 0, []);
+            }
+
+            SemanticStarted.TrySetResult();
+            await _releaseSemantic.Task.WaitAsync(cancellationToken);
+            progress.Report(new IndexJobProgress(IndexPhase.SemanticPersistence, 1, 1, "semantic committed"));
+            return new SemanticIndexResult("semantic", 1, 1, 1, 1, 0, []);
+        }
+
+        public void ReleaseSyntax() => _releaseSyntax.TrySetResult();
+
+        public void ReleaseSemantic() => _releaseSemantic.TrySetResult();
     }
 }

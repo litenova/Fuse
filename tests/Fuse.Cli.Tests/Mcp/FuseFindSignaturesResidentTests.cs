@@ -12,16 +12,12 @@ namespace Fuse.Cli.Tests.Mcp;
 // a qualified name (including a referenced package's API) from the compiler's real metadata, so the signature is
 // answered from the resident compilation rather than the store (which never indexed the package). With the default
 // null provider the routing is a no-op and the store-backed signature lookup is unchanged.
-//
-// Shares the collection that serializes the FuseTools.ResidentWorkspaces static mutation.
-[Collection("FuseToolsResidentProvider")]
 public sealed class FuseFindSignaturesResidentTests : IDisposable
 {
     private readonly ServiceProvider _provider = new ServiceCollection().AddFuseForTests().BuildServiceProvider();
 
     public void Dispose()
     {
-        FuseTools.ResidentWorkspaces = NullResidentWorkspaceProvider.Instance;
         _provider.Dispose();
     }
 
@@ -40,16 +36,17 @@ public sealed class FuseFindSignaturesResidentTests : IDisposable
                 "namespace Sample; public sealed class Widget { public int Spin() => 42; }");
 
             var root = Path.GetFullPath(work);
-            FuseTools.ResidentWorkspaces = new StubSignatureProvider(root,
+            var runtime = FuseMcpRuntime.CreateIsolated(indexer, new StubSignatureProvider(root,
             [
                 new ResidentSignature(
                     "public static string Serialize<TValue>(TValue value)", "Method",
                     "System.Text.Json.JsonSerializer", "System.Text.Json"),
-            ]);
+            ]));
 
             var output = await FuseTools.FuseFindAsync(
                 indexer, changeSource, "System.Text.Json.JsonSerializer.Serialize", work, kind: "signatures",
-                cancellationToken: CancellationToken.None);
+                cancellationToken: CancellationToken.None,
+                runtime: runtime);
 
             Assert.Contains("Serialize<TValue>", output);
             Assert.Contains("resident (metadata: System.Text.Json)", output);
@@ -72,9 +69,6 @@ public sealed class FuseFindSignaturesResidentTests : IDisposable
         {
             await File.WriteAllTextAsync(Path.Combine(work, "Widget.cs"),
                 "namespace Sample; public sealed class Widget { public int Spin() => 42; }");
-
-            // Default null provider: TryGetSignature returns null, so the store answers (Widget is indexed source).
-            FuseTools.ResidentWorkspaces = NullResidentWorkspaceProvider.Instance;
 
             var output = await FuseTools.FuseFindAsync(
                 indexer, changeSource, "Widget", work, kind: "signatures", cancellationToken: CancellationToken.None);

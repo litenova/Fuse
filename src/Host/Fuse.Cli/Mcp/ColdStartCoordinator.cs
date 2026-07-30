@@ -13,9 +13,6 @@ namespace Fuse.Cli.Mcp;
 /// </summary>
 internal sealed class ColdStartCoordinator
 {
-    /// <summary>The shared cold-start coordinator for MCP reads in this process.</summary>
-    public static ColdStartCoordinator Default { get; } = new();
-
     /// <summary>The default deadline a cold read waits for the background syntax build before returning a header.</summary>
     internal const int DefaultDeadlineMilliseconds = 2500;
 

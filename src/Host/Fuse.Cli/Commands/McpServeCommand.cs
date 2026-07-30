@@ -43,15 +43,22 @@ public sealed class McpServeCommand
     /// </remarks>
     public async Task RunAsync(CliContext context)
     {
-        // Syntax is the completed default index depth. Compiler work starts only from an explicit semantic request.
-        FuseTools.BackgroundSemanticUpgradeEnabled = BackgroundUpgradeOptIn();
-        // The resident host owns the background semantic-upgrade jobs' lifetime (N3): failures go to stderr (never
-        // the JSON-RPC stdout), and shutdown drains them so none is orphaned. Replaces the old fire-and-forget path.
-        FuseTools.UpgradeSupervisor = new Mcp.SemanticUpgradeSupervisor(Console.Error.WriteLine);
-
         // Tell the client (or auto-apply, when FUSE_AUTO_UPDATE is set) that a newer Fuse is available. Writes to
         // stderr so it never corrupts the JSON-RPC stream on stdout; cache-first, so it does not delay serving.
         FuseUpdatePrompt.Emit(Console.Error.WriteLine, allowAutoUpdate: true);
+
+        var hasWorkspaceIdentity = WorkspaceIdentityResolver.TryResolveRepositoryRoot(
+            Environment.CurrentDirectory,
+            out var daemonRoot);
+        if (!hasWorkspaceIdentity)
+        {
+            Console.Error.WriteLine(
+                $"Fuse serve: {Path.GetFullPath(Environment.CurrentDirectory)} is not inside a Git repository. "
+                + "Workspace-scoped MCP tools are disabled for this folder; fuse_reduce remains available.");
+        }
+
+        var daemonAttached = hasWorkspaceIdentity && IsDaemonEnabled()
+            && await EnsureDaemonAsync(daemonRoot, context.CancellationToken);
 
         var builder = Host.CreateApplicationBuilder();
 
@@ -64,6 +71,12 @@ public sealed class McpServeCommand
 
         builder.Services.AddSingleton<IConsoleUI, StderrConsoleUI>();
         builder.Services.AddFuse();
+        if (daemonAttached)
+        {
+            builder.Services.AddSingleton<IIndexAccessProvider>(serviceProvider =>
+                new RemoteIndexAccessProvider(localFallback: serviceProvider.GetRequiredService<LocalIndexAccessProvider>()));
+            builder.Services.AddSingleton<Fuse.Workspace.IResidentWorkspaceProvider>(_ => new RemoteResidentWorkspaceProvider());
+        }
 
         var mcpServer = builder.Services
             .AddMcpServer(options =>
@@ -107,7 +120,10 @@ public sealed class McpServeCommand
             // Register the playbook prompts (U3): selectable, anchored plans that teach the verified-edit loop.
             .WithPrompts<FusePrompts>();
 
-        var app = builder.Build();
+        using var app = builder.Build();
+        var indexJobs = app.Services.GetRequiredService<IWorkspaceIndexJobManager>();
+        using var indexJobShutdown = context.CancellationToken.Register(
+            () => _ = ShutdownIndexJobsAsync(indexJobs));
 
         // Resident workspace (S1) is opt-in for now (FUSE_RESIDENT truthy), default off so the shipped serve path
         // stays byte-identical until the latency gate promotes it. When on, warm the served root in the background
@@ -121,33 +137,20 @@ public sealed class McpServeCommand
         // resident-grade checks to it over the pipe, so one warm compilation serves every client. Set
         // FUSE_DAEMON=0 to hold an in-process workspace instead. Falls back to in-process when the daemon
         // cannot start.
-        var hasWorkspaceIdentity = WorkspaceIdentityResolver.TryResolveRepositoryRoot(
-            Environment.CurrentDirectory,
-            out var daemonRoot);
-        if (!hasWorkspaceIdentity)
-        {
-            Console.Error.WriteLine(
-                $"Fuse serve: {Path.GetFullPath(Environment.CurrentDirectory)} is not inside a Git repository. "
-                + "Workspace-scoped MCP tools are disabled for this folder; fuse_reduce remains available.");
-        }
-
-        using var daemonDelegation = hasWorkspaceIdentity && IsDaemonEnabled()
-            ? await TryAttachToDaemonAsync(daemonRoot, context.CancellationToken)
-            : null;
-
         // Own resident workspace (S1) when not delegating to a daemon and FUSE_RESIDENT is opt-in.
-        using var residentWatcher = hasWorkspaceIdentity && daemonDelegation is null && ResidentWorkspaceHosting.OptIn()
+        using var residentWatcher = hasWorkspaceIdentity && !daemonAttached && ResidentWorkspaceHosting.OptIn()
             ? new DebouncedFileWatcher(daemonRoot, recursive: true, cancellationToken: context.CancellationToken)
             : null;
         using var warmSolutionWatcher = residentWatcher is null
             ? null
-            : WarmSolutionCache.Shared.AttachWatcher(daemonRoot);
+            : app.Services.GetRequiredService<WarmSolutionCache>().AttachWatcher(daemonRoot);
         if (residentWatcher is not null)
         {
+            var warmSolutions = app.Services.GetRequiredService<WarmSolutionCache>();
             residentWatcher.BatchChanged += (batch, _) =>
             {
                 if (batch.Any(change => WarmSolutionCache.IsTrackedSourceFile(daemonRoot, change.FullPath)))
-                    WarmSolutionCache.Shared.InvalidateWatcherRoot(daemonRoot);
+                    warmSolutions.InvalidateWatcherRoot(daemonRoot);
                 return Task.CompletedTask;
             };
         }
@@ -155,35 +158,30 @@ public sealed class McpServeCommand
             ? null
             : ResidentWorkspaceHosting.Enable(
                 daemonRoot, residentWatcher,
-                app.Services.GetRequiredService<Fuse.Semantics.SemanticIndexer>(), Console.Error.WriteLine, context.CancellationToken);
+                app.Services.GetRequiredService<ResidentWorkspaceRegistry>(),
+                indexJobs,
+                Console.Error.WriteLine,
+                context.CancellationToken);
 
-        // R38: eager warm-on-start. When serving in-process (no daemon owns the index), kick off a background
-        // syntax-first index for the served root the moment we start, so the first tool call hits a warm or a
-        // bounded-building index (R27) rather than paying the full cold cost. Fire-and-forget and best-effort
-        // (EagerIndex swallows build failures), so it never blocks or breaks startup. The daemon path warms in
-        // fuse host instead. Opt out with FUSE_EAGER_INDEX=0.
-        if (hasWorkspaceIdentity && daemonDelegation is null)
+        // An in-process server starts the same visible syntax job as a daemon. The daemon starts it in its host.
+        if (hasWorkspaceIdentity && !daemonAttached)
         {
-            _ = Mcp.EagerIndex.Start(app.Services.GetRequiredService<Fuse.Semantics.SemanticIndexer>(), daemonRoot);
-
+            _ = app.Services.GetRequiredService<EagerIndex>().Start(daemonRoot, context.CancellationToken);
         }
 
-        try
-        {
-            await app.RunAsync(context.CancellationToken);
-        }
-        finally
-        {
-            // Cancel and drain in-flight background semantic upgrades so shutdown leaves no orphaned task.
-            await FuseTools.UpgradeSupervisor.DisposeAsync();
-        }
+        await app.RunAsync(context.CancellationToken);
     }
 
-    // Semantic upgrades are no longer scheduled automatically. Explicit index and compiler-backed tools request
-    // their own semantic work through the daemon-owned job manager.
-    private static bool BackgroundUpgradeOptIn()
+    private static async Task ShutdownIndexJobsAsync(IWorkspaceIndexJobManager jobs)
     {
-        return false;
+        try
+        {
+            await jobs.ShutdownAsync(CancellationToken.None);
+        }
+        catch (ObjectDisposedException)
+        {
+            // The host container reached disposal before its cancellation callback ran.
+        }
     }
 
     // The shared-daemon delegation (G5, R13 default-on; R19 index writes): serve ensures one shared `fuse host`
@@ -200,7 +198,7 @@ public sealed class McpServeCommand
                  || value.Equals("off", StringComparison.OrdinalIgnoreCase));
     }
 
-    private static async Task<RemoteDaemonDelegation?> TryAttachToDaemonAsync(string root, CancellationToken cancellationToken)
+    private static async Task<bool> EnsureDaemonAsync(string root, CancellationToken cancellationToken)
     {
         var supervisor = new DaemonSupervisor(
             ct => FuseHostClient.IsServingAsync(root, TimeSpan.FromMilliseconds(500), ct),
@@ -209,12 +207,11 @@ public sealed class McpServeCommand
         if (outcome == DaemonSupervisor.Outcome.FailedToStart)
         {
             Console.Error.WriteLine($"Fuse serve: could not start a daemon for {root}; serving in-process.");
-            return null;
+            return false;
         }
 
-        var delegation = new RemoteDaemonDelegation();
         Console.Error.WriteLine(
             $"Fuse serve: resident workspace and index writes delegated to the shared daemon for {root} ({outcome}).");
-        return delegation;
+        return true;
     }
 }

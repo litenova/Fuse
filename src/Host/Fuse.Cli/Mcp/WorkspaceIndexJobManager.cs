@@ -88,6 +88,17 @@ public sealed class WorkspaceIndexJobManager : IWorkspaceIndexJobManager, IDispo
     }
 
     /// <inheritdoc />
+    public async Task<IndexJobSnapshot?> WaitForSyntaxReadyAsync(string root, CancellationToken cancellationToken)
+    {
+        var normalizedRoot = NormalizeRoot(root);
+        if (!_jobs.TryGetValue(normalizedRoot, out var job))
+            return null;
+
+        await job.SyntaxReady.WaitAsync(cancellationToken);
+        return job.Snapshot(_timeProvider);
+    }
+
+    /// <inheritdoc />
     public async Task ShutdownAsync(CancellationToken cancellationToken)
     {
         _shutdown.Cancel();
@@ -140,6 +151,7 @@ public sealed class WorkspaceIndexJobManager : IWorkspaceIndexJobManager, IDispo
     {
         private readonly object _sync = new();
         private readonly CancellationTokenSource _cancellation = new();
+        private readonly TaskCompletionSource _syntaxReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly List<string> _warnings = [];
         private readonly string _jobId = Guid.NewGuid().ToString("N");
         private readonly DateTimeOffset _startedAt;
@@ -168,6 +180,8 @@ public sealed class WorkspaceIndexJobManager : IWorkspaceIndexJobManager, IDispo
         public IndexJobRequest Request { get; }
 
         public Task Completion => _completion;
+
+        public Task SyntaxReady => _syntaxReady.Task;
 
         public bool IsActive
         {
@@ -245,17 +259,27 @@ public sealed class WorkspaceIndexJobManager : IWorkspaceIndexJobManager, IDispo
                         progress,
                         linked.Token);
                     UpdateResult(result, timeProvider);
+                    _syntaxReady.TrySetResult();
 
-                    if (CurrentDepth() == IndexDepth.Semantic)
+                    // A semantic join can race the end of syntax extraction. Only mark the syntax job completed
+                    // while holding the same lock that TryJoin uses; otherwise a join could report success after
+                    // this worker already skipped the semantic stages.
+                    while (CurrentDepth() != IndexDepth.Semantic)
                     {
-                        progress.Report(new IndexJobProgress(IndexPhase.SemanticPreparation, CurrentItem: "semantic analysis requested"));
-                        result = await executor.ExecuteAsync(
-                            _jobId,
-                            Request with { Depth = IndexDepth.Semantic, Force = false },
-                            progress,
-                            linked.Token);
-                        UpdateResult(result, timeProvider);
+                        if (TryMarkSyntaxOnlyCompleted(timeProvider))
+                        {
+                            progress.Report(new IndexJobProgress(IndexPhase.Finalization, CompletedUnits: 1, TotalUnits: 1));
+                            return;
+                        }
                     }
+
+                    progress.Report(new IndexJobProgress(IndexPhase.SemanticPreparation, CurrentItem: "semantic analysis requested"));
+                    result = await executor.ExecuteAsync(
+                        _jobId,
+                        Request with { Depth = IndexDepth.Semantic, Force = false },
+                        progress,
+                        linked.Token);
+                    UpdateResult(result, timeProvider);
                 }
 
                 progress.Report(new IndexJobProgress(IndexPhase.Finalization, CompletedUnits: 1, TotalUnits: 1));
@@ -274,6 +298,7 @@ public sealed class WorkspaceIndexJobManager : IWorkspaceIndexJobManager, IDispo
                     _currentItem = null;
                     _storage = ReadStorage(Request.Root);
                 }
+                _syntaxReady.TrySetResult();
             }
             catch (IndexJobValidationException ex)
             {
@@ -285,6 +310,7 @@ public sealed class WorkspaceIndexJobManager : IWorkspaceIndexJobManager, IDispo
                     _errorMessage = ex.Message;
                     _storage = ReadStorage(Request.Root);
                 }
+                _syntaxReady.TrySetResult();
             }
             catch (Exception ex)
             {
@@ -296,9 +322,11 @@ public sealed class WorkspaceIndexJobManager : IWorkspaceIndexJobManager, IDispo
                     _errorMessage = ex.Message;
                     _storage = ReadStorage(Request.Root);
                 }
+                _syntaxReady.TrySetResult();
             }
             finally
             {
+                _syntaxReady.TrySetResult();
                 _cancellation.Dispose();
             }
         }
@@ -352,6 +380,20 @@ public sealed class WorkspaceIndexJobManager : IWorkspaceIndexJobManager, IDispo
         {
             lock (_sync)
                 return _targetDepth;
+        }
+
+        private bool TryMarkSyntaxOnlyCompleted(TimeProvider timeProvider)
+        {
+            lock (_sync)
+            {
+                if (_targetDepth != IndexDepth.Syntax)
+                    return false;
+
+                _state = IndexJobState.Completed;
+                _currentItem = null;
+                _storage = ReadStorage(Request.Root);
+                return true;
+            }
         }
 
         private IndexJobSnapshot SnapshotCore(TimeProvider timeProvider)

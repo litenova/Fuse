@@ -22,16 +22,19 @@ public sealed class RemoteIndexAccessProviderTests
         Directory.CreateDirectory(Path.Combine(root, ".git"));
         await File.WriteAllTextAsync(Path.Combine(root, "A.cs"), "namespace T; public class A { }");
 
-        var before = IndexCoordinator.ProcessWriteLockAcquireCount;
+        var coordinator = _provider.GetRequiredService<IndexCoordinator>();
+        var fallback = _provider.GetRequiredService<LocalIndexAccessProvider>();
+        var before = coordinator.ProcessWriteLockAcquireCount;
         var provider = new RemoteIndexAccessProvider(
-            (_, _, _) => Task.FromResult<OpenIndexedResultDto?>(null));
+            (_, _, _) => Task.FromResult<OpenIndexedResultDto?>(null),
+            localFallback: fallback);
 
         try
         {
             await using var store = await provider.OpenIndexedAsync(indexer, root, CancellationToken.None);
             var state = await store.GetStateAsync(CancellationToken.None);
             Assert.True(state.FileCount > 0);
-            Assert.True(IndexCoordinator.ProcessWriteLockAcquireCount > before);
+            Assert.True(coordinator.ProcessWriteLockAcquireCount > before);
         }
         finally
         {

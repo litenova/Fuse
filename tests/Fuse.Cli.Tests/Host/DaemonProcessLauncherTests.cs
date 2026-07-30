@@ -18,7 +18,6 @@ public sealed class DaemonProcessLauncherTests
         Assert.Equal("/repo", psi.WorkingDirectory);
         Assert.Equal("0", psi.Environment["FUSE_RESIDENT"]);
         Assert.Equal("0", psi.Environment["FUSE_EAGER_INDEX"]);
-        Assert.Equal("0", psi.Environment["FUSE_BG_UPGRADE"]);
         Assert.Equal("30", psi.Environment["FUSE_DAEMON_IDLE_MINUTES"]);
     }
 

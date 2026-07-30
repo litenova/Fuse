@@ -22,28 +22,38 @@ public sealed class FindCommand
     internal const int Limit = 50;
     private readonly IConsoleUI _consoleUI;
     private readonly IChangeSource? _changeSource;
+    private readonly IndexCoordinator _indexCoordinator;
 
     /// <summary>
     ///     Initializes a new instance of the <see cref="FindCommand" /> class for CLI option binding only.
     /// </summary>
     /// <remarks>Used by DotMake.CommandLine to bind options; dependencies are null, so this instance must not run.</remarks>
-    public FindCommand() : this(null!, null)
+    public FindCommand() : this(null!, null, new IndexCoordinator())
     {
     }
 
     /// <summary>Initializes a find command without task-change support.</summary>
     /// <param name="consoleUI">The console output service.</param>
-    public FindCommand(IConsoleUI consoleUI) : this(consoleUI, null)
+    public FindCommand(IConsoleUI consoleUI) : this(consoleUI, null, new IndexCoordinator())
     {
     }
 
     /// <summary>Initializes a find command.</summary>
     /// <param name="consoleUI">The console output service.</param>
     /// <param name="changeSource">The Git change source used by task localization.</param>
-    public FindCommand(IConsoleUI consoleUI, IChangeSource? changeSource)
+    public FindCommand(IConsoleUI consoleUI, IChangeSource? changeSource) : this(consoleUI, changeSource, new IndexCoordinator())
+    {
+    }
+
+    /// <summary>Initializes a find command with its host-owned index coordinator.</summary>
+    /// <param name="consoleUI">The console output service.</param>
+    /// <param name="changeSource">The Git change source used by task localization.</param>
+    /// <param name="indexCoordinator">The host-owned coordinator used to open the committed index.</param>
+    public FindCommand(IConsoleUI consoleUI, IChangeSource? changeSource, IndexCoordinator indexCoordinator)
     {
         _consoleUI = consoleUI;
         _changeSource = changeSource;
+        _indexCoordinator = indexCoordinator;
     }
 
     /// <summary>The name, path fragment, text, wiring identifier, or task to find.</summary>
@@ -99,7 +109,7 @@ public sealed class FindCommand
                 return;
             }
 
-            await using var store = await IndexCoordinator.Default.OpenForReadOnlyAsync(root, context.CancellationToken);
+            await using var store = await _indexCoordinator.OpenForReadOnlyAsync(root, context.CancellationToken);
             var result = await FindAsync(store, root, context.CancellationToken);
             _consoleUI.WriteResult(result);
         }

@@ -24,10 +24,10 @@ public sealed class RenameRefactorer
     /// </summary>
     /// <param name="cache">
     ///     The warm-solution cache (R42) the rename loads through; defaults to the process-wide
-    ///     <see cref="WarmSolutionCache.Shared" />, so a second refactor in the same session reuses the held
+    ///     the supplied host-owned <see cref="WarmSolutionCache" />, so a second refactor in the same session reuses the held
     ///     solution instead of re-opening MSBuild.
     /// </param>
-    public RenameRefactorer(WarmSolutionCache? cache = null) => _cache = cache ?? WarmSolutionCache.Shared;
+    public RenameRefactorer(WarmSolutionCache? cache = null) => _cache = cache ?? new WarmSolutionCache();
 
     /// <summary>
     ///     Renames a symbol solution-wide and returns the staged diffs.

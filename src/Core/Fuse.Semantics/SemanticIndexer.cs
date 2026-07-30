@@ -28,10 +28,9 @@ public sealed class SemanticIndexer
     private readonly FileHashService _hashService;
     private readonly SemanticAnalysisRunner _analysisRunner;
     private readonly LanguageSyntaxProviderRegistry _syntaxProviders;
-    private readonly BuildCaptureClient _buildCaptureClient = new();
-    // R42: the warm-solution cache doctor's live diagnosis reuses, so a second doctor in a session skips the full
-    // MSBuild load. Shared with the refactorers, so a warm solution loaded by either serves the other.
-    private readonly WarmSolutionCache _warmSolutions = WarmSolutionCache.Shared;
+    private readonly BuildCaptureClient _buildCaptureClient;
+    // R42: the host-owned warm-solution cache lets a second doctor in a session skip the full MSBuild load.
+    private readonly WarmSolutionCache _warmSolutions;
 
     // N4/C3 tier-1 build capture is default-ON: the oracle is the product. Opt out with FUSE_BUILD_CAPTURE=0
     // (or false/no/off); any other value, or unset, enables it. It still no-ops when no worker is discoverable
@@ -90,6 +89,8 @@ public sealed class SemanticIndexer
     /// <param name="routeExtractor">The syntax route extractor.</param>
     /// <param name="hashService">The content hash service, used for project hashes.</param>
     /// <param name="analysisRunner">The semantic analyzer runner producing graph edges (semantic mode only).</param>
+    /// <param name="warmSolutions">The host-owned cache for live MSBuild diagnostic loads.</param>
+    /// <param name="buildCaptureClient">The host-owned build-capture process client.</param>
     public SemanticIndexer(
         DotNetWorkspaceDiscoverer discoverer,
         RoslynWorkspaceLoader loader,
@@ -98,7 +99,9 @@ public sealed class SemanticIndexer
         SyntaxSymbolExtractor syntaxSymbols,
         SyntaxRouteExtractor routeExtractor,
         FileHashService hashService,
-        SemanticAnalysisRunner analysisRunner)
+        SemanticAnalysisRunner analysisRunner,
+        WarmSolutionCache? warmSolutions = null,
+        BuildCaptureClient? buildCaptureClient = null)
     {
         _discoverer = discoverer;
         _loader = loader;
@@ -108,6 +111,8 @@ public sealed class SemanticIndexer
         _routeExtractor = routeExtractor;
         _hashService = hashService;
         _analysisRunner = analysisRunner;
+        _warmSolutions = warmSolutions ?? new WarmSolutionCache();
+        _buildCaptureClient = buildCaptureClient ?? new BuildCaptureClient();
         // The syntax tier is provider-driven: C# behind the seam (unchanged behavior), plus a second-language
         // syntax spike. Built internally so the existing constructor and its callers are unaffected; a later
         // change can make the provider set injectable for an external language plugin.

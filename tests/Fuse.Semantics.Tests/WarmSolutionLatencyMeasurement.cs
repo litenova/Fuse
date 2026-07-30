@@ -49,17 +49,17 @@ public sealed class WarmSolutionLatencyMeasurement(ITestOutputHelper output)
         warmRefactor.Stop();
         output.WriteLine($"refactor cold={coldRefactor.ElapsedMilliseconds}ms warm={warmRefactor.ElapsedMilliseconds}ms loads={cache.LoadCount}");
 
-        // Doctor: cold (first DiagnoseLoad loads MSBuild) vs warm (shared cache reuse). Fresh Shared cache so the
-        // first call is genuinely cold.
-        WarmSolutionCache.Shared = new WarmSolutionCache(cap: 3);
-        var indexer = CreateIndexer();
+        // Doctor: cold (first DiagnoseLoad loads MSBuild) versus warm (host-owned cache reuse). The fresh cache
+        // makes the first call genuinely cold.
+        using var doctorCache = new WarmSolutionCache(cap: 3);
+        var indexer = CreateIndexer(doctorCache);
         var coldDoctor = Stopwatch.StartNew();
         await indexer.DiagnoseLoadAsync(root!, CancellationToken.None);
         coldDoctor.Stop();
         var warmDoctor = Stopwatch.StartNew();
         await indexer.DiagnoseLoadAsync(root!, CancellationToken.None);
         warmDoctor.Stop();
-        output.WriteLine($"doctor cold={coldDoctor.ElapsedMilliseconds}ms warm={warmDoctor.ElapsedMilliseconds}ms loads={WarmSolutionCache.Shared.LoadCount}");
+        output.WriteLine($"doctor cold={coldDoctor.ElapsedMilliseconds}ms warm={warmDoctor.ElapsedMilliseconds}ms loads={doctorCache.LoadCount}");
 
         // R44: the MSBuild toolchain warmup at startup does exactly this - discover the target and prime the cache
         // via OpenAsync - off the critical path. After it completes, the first refactor of the session hits the
@@ -77,7 +77,7 @@ public sealed class WarmSolutionLatencyMeasurement(ITestOutputHelper output)
         output.WriteLine($"process RSS after holding solutions: {rss} MB (cap {3})");
     }
 
-    private static SemanticIndexer CreateIndexer()
+    private static SemanticIndexer CreateIndexer(WarmSolutionCache warmSolutions)
     {
         var fileSystem = new PhysicalFileSystem();
         var pipeline = new FileCollectionPipeline(
@@ -92,6 +92,7 @@ public sealed class WarmSolutionLatencyMeasurement(ITestOutputHelper output)
             new SyntaxSymbolExtractor(),
             new SyntaxRouteExtractor(),
             new FileHashService(),
-            SemanticAnalysisRunner.CreateDefault());
+            SemanticAnalysisRunner.CreateDefault(),
+            warmSolutions);
     }
 }

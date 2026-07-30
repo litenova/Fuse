@@ -21,12 +21,10 @@ public sealed class IndexStateAvailabilityHeaderTests : IDisposable
     private IChangeSource ChangeSource => _provider.GetRequiredService<IChangeSource>();
 
     // Isolate the header root's store to {_root}/.fuse so root-derived lookups never read the shared machine-wide
-    // ~/.fuse, and pin the process-global resident provider to null: the golden encodes the store-backed (no
-    // resident) header, so a provider left set by another test in this collection would flip "store-backed".
+    // ~/.fuse. The golden encodes the store-backed header.
     public IndexStateAvailabilityHeaderTests()
     {
         _root.AsIsolatedRepo();
-        FuseTools.ResidentWorkspaces = Fuse.Workspace.NullResidentWorkspaceProvider.Instance;
     }
 
     public static TheoryData<string, Action<WorkspaceIndexStore>, int?> IndexStateCases => new()
@@ -179,7 +177,6 @@ public sealed class IndexStateAvailabilityHeaderTests : IDisposable
 
     public void Dispose()
     {
-        FuseTools.ResidentWorkspaces = Fuse.Workspace.NullResidentWorkspaceProvider.Instance;
         _provider.Dispose();
     }
 

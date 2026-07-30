@@ -21,9 +21,9 @@ public sealed class TypeRefactorer
     /// </summary>
     /// <param name="cache">
     ///     The warm-solution cache (R42) the refactor loads through; defaults to the process-wide
-    ///     <see cref="WarmSolutionCache.Shared" />.
+    ///     the supplied host-owned <see cref="WarmSolutionCache" />.
     /// </param>
-    public TypeRefactorer(WarmSolutionCache? cache = null) => _cache = cache ?? WarmSolutionCache.Shared;
+    public TypeRefactorer(WarmSolutionCache? cache = null) => _cache = cache ?? new WarmSolutionCache();
 
     /// <summary>
     ///     Extracts an interface with the class's public instance methods and properties, adds it to the class's

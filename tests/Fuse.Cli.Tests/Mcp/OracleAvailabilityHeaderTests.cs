@@ -10,9 +10,6 @@ namespace Fuse.Cli.Tests.Mcp;
 // cannot mistake a syntax-tier or stale answer for an oracle-grade one. These tests pin the header wording
 // against the three facts it reports: index mode, tier-1 build-capture availability, and the N6 freshness stamp.
 //
-// Shares a collection with the other tests that mutate the static FuseTools.ResidentWorkspaces, so xUnit
-// serializes them rather than racing the shared static across parallel classes.
-[Collection("FuseToolsResidentProvider")]
 public sealed class OracleAvailabilityHeaderTests : IAsyncLifetime
 {
     private readonly string _databasePath =
@@ -75,16 +72,14 @@ public sealed class OracleAvailabilityHeaderTests : IAsyncLifetime
         Assert.Contains("workspace store-backed", storeBacked);
 
         // With a resident workspace wired for this root, the header names it resident with its stamp.
-        FuseTools.ResidentWorkspaces = new StubResidentProvider(_root, new Fuse.Workspace.ResidentStatus(3, "2026-07-08T00:00:00Z"));
-        try
-        {
-            var resident = await FuseTools.OracleAvailabilityHeaderAsync(_store, _root, CancellationToken.None);
-            Assert.Contains("workspace resident (3 project(s), current as of 2026-07-08T00:00:00Z)", resident);
-        }
-        finally
-        {
-            FuseTools.ResidentWorkspaces = Fuse.Workspace.NullResidentWorkspaceProvider.Instance;
-        }
+        var resident = await FuseTools.OracleAvailabilityHeaderAsync(
+            _store,
+            _root,
+            CancellationToken.None,
+            residentWorkspaces: new StubResidentProvider(
+                _root,
+                new Fuse.Workspace.ResidentStatus(3, "2026-07-08T00:00:00Z")));
+        Assert.Contains("workspace resident (3 project(s), current as of 2026-07-08T00:00:00Z)", resident);
     }
 
     private sealed class StubResidentProvider(string root, Fuse.Workspace.ResidentStatus status)

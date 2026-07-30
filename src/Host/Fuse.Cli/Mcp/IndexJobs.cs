@@ -216,6 +216,19 @@ public interface IWorkspaceIndexJobManager : IAsyncDisposable
     /// <returns>The terminal job snapshot, or null when no job exists.</returns>
     Task<IndexJobSnapshot?> WaitForCompletionAsync(string root, CancellationToken cancellationToken);
 
+    /// <summary>
+    ///     Waits until a source job has committed its syntax tier. A semantic job completes this wait before its
+    ///     compiler stages finish, allowing read tools to use the syntax index while compiler analysis continues.
+    /// </summary>
+    /// <param name="root">The repository root.</param>
+    /// <param name="cancellationToken">Cancels only this caller's wait.</param>
+    /// <returns>
+    ///     The current snapshot after syntax becomes readable, or the terminal snapshot when the job stops before
+    ///     committing syntax. Returns null when no job exists.
+    /// </returns>
+    Task<IndexJobSnapshot?> WaitForSyntaxReadyAsync(string root, CancellationToken cancellationToken) =>
+        WaitForCompletionAsync(root, cancellationToken);
+
     /// <summary>Cancels jobs during host shutdown and waits for their workers to stop.</summary>
     /// <param name="cancellationToken">Bounds the shutdown wait.</param>
     /// <returns>A task that completes after active workers stop or the wait is cancelled.</returns>

@@ -14,14 +14,12 @@ namespace Fuse.Cli.Tests.Mcp;
 // R18: compiler-tier fuse_check must not block on a mandatory index open. Repair-packet enrichment is best-effort.
 // fuse_test covering selection is indexed-tier, so it requires a validated warm index and returns a bounded
 // availability header when that index is contended.
-[Collection("FuseToolsResidentProvider")]
 public sealed class FuseCompilerToolsStoreDecouplingTests : IDisposable
 {
     private readonly ServiceProvider _provider = new ServiceCollection().AddFuseForTests().BuildServiceProvider();
 
     public void Dispose()
     {
-        FuseTools.ResidentWorkspaces = NullResidentWorkspaceProvider.Instance;
         _provider.Dispose();
     }
 
@@ -30,7 +28,6 @@ public sealed class FuseCompilerToolsStoreDecouplingTests : IDisposable
     {
         var indexer = _provider.GetRequiredService<SemanticIndexer>();
         var work = CreateBuildableWorkspace();
-        FuseTools.ResidentWorkspaces = NullResidentWorkspaceProvider.Instance;
 
         try
         {
@@ -57,7 +54,6 @@ public sealed class FuseCompilerToolsStoreDecouplingTests : IDisposable
     {
         var indexer = _provider.GetRequiredService<SemanticIndexer>();
         var work = CreateBuildableWorkspace();
-        FuseTools.ResidentWorkspaces = NullResidentWorkspaceProvider.Instance;
 
         try
         {

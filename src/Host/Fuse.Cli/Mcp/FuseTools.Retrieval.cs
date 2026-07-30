@@ -36,6 +36,7 @@ public sealed partial class FuseTools
     /// <param name="strict">When true, an insufficient request is refused and only a navigation map is returned; off by default (best-effort).</param>
     /// <param name="expand">When true, the selected candidates are enriched with their typed-graph neighbors for discovery; off by default.</param>
     /// <param name="cancellationToken">A token to cancel the read.</param>
+    /// <param name="runtime">The host-owned index, compiler, and job services.</param>
     /// <returns>Ranked candidates with reasons and token costs, or a navigation map when the request is not confident.</returns>
     // Folded into fuse_find (kind=task) in U1; kept as an internal helper the find union calls.
     public static async Task<string> FuseLocalizeAsync(
@@ -52,10 +53,12 @@ public sealed partial class FuseTools
         [Description("Maximum candidates to return.")] int maxCandidates = 50,
         [Description("Strict signal-sufficiency: when an insufficient request has no clear anchor, refuse and return only a navigation map instead of a low-confidence guess. Off by default (best-effort).")] bool strict = false,
         [Description("Expand the selected candidates with their typed-graph neighbors (implementers, callers, config) for discovery. Off by default; widens recall but pressures precision.")] bool expand = false,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        FuseMcpRuntime? runtime = null)
     {
+        var toolRuntime = ResolveRuntime(runtime, indexer);
         var root = WorkspacePathResolver.ResolveRepositoryRoot(path);
-        await using var store = await OpenIndexedAsync(indexer, path, cancellationToken);
+        await using var store = await OpenIndexedAsync(toolRuntime, indexer, path, cancellationToken);
         var engine = new SemanticRetrievalEngine(store, changeSource);
         var requestModel = new LocalizationRequest(
             root, Query: task, ChangedSince: changedSince, Route: route, Focus: symbol, Service: service,
@@ -75,6 +78,7 @@ public sealed partial class FuseTools
     /// <param name="path">The workspace directory.</param>
     /// <param name="limitPerName">The maximum matches to return per requested name.</param>
     /// <param name="cancellationToken">A token to cancel the read.</param>
+    /// <param name="runtime">The host-owned index, compiler, and job services.</param>
     /// <returns>The signatures grouped by requested name, with a note for any name that did not match.</returns>
     // Folded into fuse_find (kind=signatures) in U1; kept as an internal helper the find union calls.
     public static async Task<string> FuseSignaturesAsync(
@@ -82,17 +86,20 @@ public sealed partial class FuseTools
         [Description("Symbol names to look up (simple name or fully qualified).")] string[] names,
         [Description("Absolute or relative path to the workspace directory.")] string path = ".",
         [Description("Maximum matches to return per requested name.")] int limitPerName = 5,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        FuseMcpRuntime? runtime = null)
     {
         if (names is null || names.Length == 0)
             return "Error: provide one or more symbol names in 'names'.";
 
+        var toolRuntime = ResolveRuntime(runtime, indexer);
         var root = WorkspacePathResolver.ResolveRepositoryRoot(path);
-        await using var store = await OpenIndexedAsync(indexer, path, cancellationToken);
+        await using var store = await OpenIndexedAsync(toolRuntime, indexer, path, cancellationToken);
         var matches = await store.GetSignaturesByNamesAsync(names, limitPerName, cancellationToken);
 
         var builder = new StringBuilder();
-        builder.AppendLine(await OracleAvailabilityHeaderAsync(store, root, cancellationToken));
+        builder.AppendLine(await OracleAvailabilityHeaderAsync(
+            store, root, cancellationToken, residentWorkspaces: toolRuntime.ResidentWorkspaces));
         foreach (var requested in names.Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => n.Trim()).Distinct(StringComparer.Ordinal))
         {
             builder.AppendLine($"# {requested}");
@@ -101,7 +108,7 @@ public sealed partial class FuseTools
             // (including a referenced package's API) from the compiler's real metadata, so a package signature is
             // answered from the compiler rather than the store (which never indexed the package). Fall through to
             // the store when no resident workspace serves the root, or it did not resolve this name.
-            var residentSignatures = ResidentWorkspaces.TryGetSignature(root, requested, limitPerName, cancellationToken);
+            var residentSignatures = toolRuntime.ResidentWorkspaces.TryGetSignature(root, requested, limitPerName, cancellationToken);
             if (residentSignatures is { Count: > 0 })
             {
                 foreach (var s in residentSignatures)
@@ -150,6 +157,7 @@ public sealed partial class FuseTools
     /// <param name="centralIn">An area (folder prefix, or empty for the whole workspace) whose central files to return.</param>
     /// <param name="limit">The maximum results to return.</param>
     /// <param name="cancellationToken">A token to cancel the read.</param>
+    /// <param name="runtime">The host-owned index, compiler, and job services.</param>
     /// <returns>The ranked exploration items with provenance and no bodies.</returns>
     // Folded into fuse_find (kind=neighbors) in U1; kept as an internal helper the find union calls.
     public static async Task<string> FuseNeighborsAsync(
@@ -159,9 +167,11 @@ public sealed partial class FuseTools
         [Description("A symbol whose callers and implementers to return.")] string? symbol = null,
         [Description("An area (folder prefix, or empty for the whole workspace) whose central files to return.")] string? centralIn = null,
         [Description("Maximum results to return.")] int limit = 20,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        FuseMcpRuntime? runtime = null)
     {
-        await using var store = await OpenIndexedAsync(indexer, path, cancellationToken);
+        var toolRuntime = ResolveRuntime(runtime, indexer);
+        await using var store = await OpenIndexedAsync(toolRuntime, indexer, path, cancellationToken);
         var explorer = new GraphNeighborhoodExplorer(store);
 
         string mode;
@@ -207,7 +217,12 @@ public sealed partial class FuseTools
     /// <param name="symbol">The symbol whose blast radius to compute.</param>
     /// <param name="path">The workspace directory.</param>
     /// <param name="limit">The maximum impacted items to return.</param>
+    /// <param name="package">The optional NuGet package id for package-upgrade analysis.</param>
+    /// <param name="fromVersion">The installed NuGet package version for package-upgrade analysis.</param>
+    /// <param name="toVersion">The target NuGet package version for package-upgrade analysis.</param>
+    /// <param name="session">The optional claim-ledger session id.</param>
     /// <param name="cancellationToken">A token to cancel the read.</param>
+    /// <param name="runtime">The host-owned index, compiler, and job services.</param>
     /// <returns>The impacted files and symbols with the edge that connects them, plus an availability note.</returns>
     [McpServerTool(Name = "fuse_impact", ReadOnly = true)]
     [Description("Blast radius for a symbol before you edit it: the callers, implementers, consumers, and referencing types a change would touch, from the persisted semantic graph. No bodies. The exact signature-change break set (which call sites would no longer bind) needs an oracle-grade (tier-1) load and is reported unavailable otherwise, rather than guessed. Package-upgrade mode (F3): pass package + fromVersion + toVersion to get the public-API break set between two cached NuGet package versions (removed/changed public members), so a bump's risk is knowable before the lockfile changes; it abstains when a version is not in the local cache and names its blind spots.")]
@@ -220,11 +235,13 @@ public sealed partial class FuseTools
         [Description("Package-upgrade mode: the currently referenced version.")] string fromVersion = "",
         [Description("Package-upgrade mode: the target (upgrade) version.")] string toVersion = "",
         [Description("Optional session id: when set, this call's graded claims are appended to the session's claim ledger (U2).")] string session = "",
-        CancellationToken cancellationToken = default) =>
+        CancellationToken cancellationToken = default,
+        FuseMcpRuntime? runtime = null) =>
         FuseOperationalErrors.ExecuteMcpAsync(() => FuseImpactCoreAsync(
-            indexer, symbol, path, limit, package, fromVersion, toVersion, session, cancellationToken));
+            ResolveRuntime(runtime, indexer), indexer, symbol, path, limit, package, fromVersion, toVersion, session, cancellationToken));
 
     private static async Task<string> FuseImpactCoreAsync(
+        FuseMcpRuntime runtime,
         SemanticIndexer indexer,
         string symbol,
         string path,
@@ -250,13 +267,14 @@ public sealed partial class FuseTools
         if (string.IsNullOrWhiteSpace(symbol))
             return "Error: provide a symbol name (or package + fromVersion + toVersion for a package-upgrade analysis).";
 
-        await using var store = await OpenIndexedAsync(indexer, root, cancellationToken);
+        await using var store = await OpenIndexedAsync(runtime, indexer, root, cancellationToken);
         var mode = await store.GetMetaAsync("index_mode", cancellationToken) ?? "unknown";
         var explorer = new GraphNeighborhoodExplorer(store);
         var impact = await explorer.CallersAndImplementersAsync(symbol, limit, cancellationToken);
 
         var builder = new StringBuilder();
-        builder.AppendLine(await OracleAvailabilityHeaderAsync(store, root, cancellationToken));
+        builder.AppendLine(await OracleAvailabilityHeaderAsync(
+            store, root, cancellationToken, residentWorkspaces: runtime.ResidentWorkspaces));
         builder.AppendLine($"impact of {symbol}: {impact.Count} impacted (index mode {mode})");
         foreach (var item in impact)
         {
@@ -320,6 +338,7 @@ public sealed partial class FuseTools
     /// <param name="maxCandidates">The bound on the number of candidates a race accepts (default four).</param>
     /// <param name="analyzers">Whether a race also runs the repo's configured analyzers against each overlay.</param>
     /// <param name="cancellationToken">A token to cancel the run.</param>
+    /// <param name="runtime">The host-owned index, compiler, and job services.</param>
     /// <returns>The per-test verdicts plus the grade, or the selection-only floor when nothing covers the symbol.</returns>
     [McpServerTool(Name = "fuse_test", ReadOnly = true)]
     [Description("Run the covering tests for a symbol: the tests that reach it through the persisted tests edges, run at build grade (dotnet test scoped by filter to just those test types, the whole suite never run), with per-test verdicts. Selection-only when no tests edge reaches the symbol. Build-grade runs the real build; the emit fast path is future work. Candidate racing (F2): pass candidates (a JSON array of {id?, file, content} single-file edits, bounded k) to speculatively typecheck all of them over the live resident compilation and get per-candidate diagnostics plus a winner by strict dominance (a lone clean candidate beats any with errors; ties reported); each candidate reuses the shared held compilation (only its own changed file rebinds), racing needs a resident workspace (FUSE_RESIDENT=1) and never applies a candidate.")]
@@ -331,11 +350,13 @@ public sealed partial class FuseTools
         [Description("Candidate racing (F2): a JSON array of single-file edits to race, each {id?, file, content}. When set, races them through the speculative typecheck instead of running the covering tests.")] string candidates = "",
         [Description("Candidate racing: the maximum number of candidates accepted (the bound on k; default 4).")] int maxCandidates = 4,
         [Description("Candidate racing: also run the repo's configured analyzers against each candidate overlay (CI parity). Default on.")] bool analyzers = true,
-        CancellationToken cancellationToken = default) =>
+        CancellationToken cancellationToken = default,
+        FuseMcpRuntime? runtime = null) =>
         ExecuteReadMcpAsync(() => FuseTestCoreAsync(
-            indexer, symbol, path, limit, candidates, maxCandidates, analyzers, cancellationToken));
+            ResolveRuntime(runtime, indexer), indexer, symbol, path, limit, candidates, maxCandidates, analyzers, cancellationToken));
 
     private static async Task<string> FuseTestCoreAsync(
+        FuseMcpRuntime runtime,
         SemanticIndexer indexer,
         string symbol,
         string path,
@@ -349,7 +370,7 @@ public sealed partial class FuseTools
         // the shared resident compilation and return per-candidate diagnostics plus a strict-dominance winner. This
         // is a distinct verb from the symbol-covering-test run below (no symbol needed).
         if (!string.IsNullOrWhiteSpace(candidates))
-            return await FuseTestRaceAsync(WorkspacePathResolver.ResolveRepositoryRoot(path), candidates, maxCandidates, analyzers, cancellationToken);
+            return await FuseTestRaceAsync(runtime, WorkspacePathResolver.ResolveRepositoryRoot(path), candidates, maxCandidates, analyzers, cancellationToken);
 
         if (string.IsNullOrWhiteSpace(symbol))
             return "Error: provide a symbol name whose covering tests to run (or candidates to race).";
@@ -357,7 +378,7 @@ public sealed partial class FuseTools
         var root = WorkspacePathResolver.ResolveRepositoryRoot(path);
         // Covering selection is indexed-tier (R5 tests edges). Validate or warm the complete repository index
         // before selecting tests, using the same bounded cold-start and contention behavior as other indexed reads.
-        await using var store = await OpenIndexedAsync(indexer, root, cancellationToken);
+        await using var store = await OpenIndexedAsync(runtime, indexer, root, cancellationToken);
         var covering = await new GraphNeighborhoodExplorer(store).CoveringTestsAsync(symbol, limit, cancellationToken);
         if (covering.Count == 0)
             return $"covering tests for {symbol}: none (no tests edge reaches it, so there is nothing to run). This is the selection-only floor; a test reached only by reflection has no edge and is not selected.";
@@ -432,7 +453,12 @@ public sealed partial class FuseTools
     // descoped follow-up), so a race reports diagnostics, not test verdicts. Abstains when no resident workspace
     // serves the root (a build per candidate would not be a race), naming the requirement.
     private static async Task<string> FuseTestRaceAsync(
-        string root, string candidatesJson, int maxCandidates, bool analyzers, CancellationToken cancellationToken)
+        FuseMcpRuntime runtime,
+        string root,
+        string candidatesJson,
+        int maxCandidates,
+        bool analyzers,
+        CancellationToken cancellationToken)
     {
         RaceCandidateInput[]? parsed;
         try
@@ -472,7 +498,7 @@ public sealed partial class FuseTools
         // null result means no held compilation covers the file, surfaced as not-applicable. When no resident
         // workspace serves the root every candidate is not-applicable, so abstain rather than pretend a race ran.
         var report = await Fuse.Workspace.CandidateRacer.RaceAsync(
-            (candidate, ct) => ResidentWorkspaces.TryCheckOverlayAsync(root, candidate.File, candidate.Content, analyzers, ct),
+            (candidate, ct) => runtime.ResidentWorkspaces.TryCheckOverlayAsync(root, candidate.File, candidate.Content, analyzers, ct),
             candidates,
             cancellationToken);
 
@@ -754,7 +780,12 @@ public sealed partial class FuseTools
     /// <param name="path">The workspace directory.</param>
     /// <param name="file">The repo-relative path of the file being changed.</param>
     /// <param name="content">The proposed full new content of that file.</param>
+    /// <param name="session">The optional resident-diagnostics session id.</param>
+    /// <param name="full">Whether resident diagnostics should return the full set instead of a delta.</param>
+    /// <param name="markGreen">Whether to reset a resident-diagnostics session baseline.</param>
+    /// <param name="analyzers">Whether the resident check should include configured analyzers.</param>
     /// <param name="cancellationToken">A token to cancel the check.</param>
+    /// <param name="runtime">The host-owned index, compiler, and job services.</param>
     /// <returns>The diagnostics for the changed document, a clean verdict, or an explicit abstention.</returns>
     [McpServerTool(Name = "fuse_check", ReadOnly = true)]
     [Description("Speculatively typecheck a proposed single-file edit: the compiler errors and warnings it would produce, without writing the file. Verification never shrugs (D11): oracle-grade (sub-second, no build) when the repo is captured at tier-1; otherwise build-grade, running dotnet build scoped to the owning project (tens of seconds) and parsing the same diagnostics; abstains only when even the toolchain cannot run, naming the reason. Every answer is stamped with its grade. Delta mode (S2): pass a session id with no content to get the diagnostics your on-disk edits introduced or resolved since the session baseline (needs a resident workspace; does not run a build); full:true returns the whole current set; markGreen:true resets the baseline to now. Analyzer parity (S4): when a resident workspace serves the root, analyzers:true (the default) also runs the repo's configured analyzers and nullable warnings at their editorconfig severities, so a green check matches CI.")]
@@ -767,11 +798,13 @@ public sealed partial class FuseTools
         [Description("Delta mode: return the whole current diagnostic set instead of the delta since the baseline.")] bool full = false,
         [Description("Delta mode: reset the session baseline to the current diagnostics (mark green), so later deltas are measured from here.")] bool markGreen = false,
         [Description("Also run the repo's configured analyzers and nullable warnings at their editorconfig severities (CI parity), when a resident workspace serves the root. Default on.")] bool analyzers = true,
-        CancellationToken cancellationToken = default) =>
+        CancellationToken cancellationToken = default,
+        FuseMcpRuntime? runtime = null) =>
         FuseOperationalErrors.ExecuteMcpAsync(() => FuseCheckCoreAsync(
-            indexer, path, file, content, session, full, markGreen, analyzers, cancellationToken));
+            ResolveRuntime(runtime, indexer), indexer, path, file, content, session, full, markGreen, analyzers, cancellationToken));
 
     private static async Task<string> FuseCheckCoreAsync(
+        FuseMcpRuntime runtime,
         SemanticIndexer indexer,
         string path,
         string file,
@@ -787,7 +820,7 @@ public sealed partial class FuseTools
         // Delta mode (S2): a session with no proposed content asks "what did my last on-disk edit change", diffed
         // against the persisted session baseline. The content path below is unchanged when content is supplied.
         if (string.IsNullOrEmpty(content) && !string.IsNullOrWhiteSpace(session))
-            return await FuseCheckDeltaAsync(indexer, path, root, session, full, markGreen, cancellationToken);
+            return await FuseCheckDeltaAsync(runtime, path, root, session, full, markGreen, cancellationToken);
 
         if (string.IsNullOrWhiteSpace(file) || string.IsNullOrEmpty(content))
             return "Error: provide the changed file path and its proposed new content (or a session id for delta mode).";
@@ -803,7 +836,7 @@ public sealed partial class FuseTools
         // block a build-grade answer when dotnet build could verify. Repair-packet enrichment is indexed-tier and
         // best-effort afterward.
         var (result, buildElapsedMs) = await RunFuseCheckVerificationAsync(
-            root, discovery, file, content, analyzers, cancellationToken);
+            runtime, root, discovery, file, content, analyzers, cancellationToken);
 
         if (!result.Verified)
             return $"cannot verify ({result.Grade}): {result.Reason}";
@@ -821,7 +854,7 @@ public sealed partial class FuseTools
         foreach (var d in result.Diagnostics)
             builder.AppendLine($"  {d.Severity} {d.Id} at line {d.Line}: {d.Message}");
 
-        AppendRepairPackets(builder, await BuildRepairPacketsAsync(root, result.Diagnostics, cancellationToken));
+        AppendRepairPackets(builder, await BuildRepairPacketsAsync(runtime, root, result.Diagnostics, cancellationToken));
 
         return builder.ToString().TrimEnd();
     }
@@ -831,16 +864,22 @@ public sealed partial class FuseTools
     // is persisted so a restarted process resumes it. On session start (no baseline) the current set is recorded as
     // the baseline; markGreen resets it to current; full returns the whole current set.
     private static async Task<string> FuseCheckDeltaAsync(
-        SemanticIndexer indexer, string path, string root, string session, bool full, bool markGreen, CancellationToken cancellationToken)
+        FuseMcpRuntime runtime,
+        string path,
+        string root,
+        string session,
+        bool full,
+        bool markGreen,
+        CancellationToken cancellationToken)
     {
-        var current = ResidentWorkspaces.TryGetCurrentDiagnostics(root);
+        var current = runtime.ResidentWorkspaces.TryGetCurrentDiagnostics(root);
         if (current is null)
         {
             return "cannot compute delta (abstain): no resident workspace serves this root, and delta mode does not run a build. "
                 + "Start the server with FUSE_RESIDENT=1 for delta mode, or pass file and content for a speculative single-file check.";
         }
 
-        await using var store = await OpenStoreForSessionBaselineAsync(root, cancellationToken);
+        await using var store = await OpenStoreForSessionBaselineAsync(runtime, root, cancellationToken);
         if (store is null)
         {
             return "cannot compute delta (abstain): index unavailable for the session baseline (locked or not built). "
@@ -895,7 +934,7 @@ public sealed partial class FuseTools
 
         AppendRepairPackets(
             builder,
-            await BuildRepairPacketsAsync(root, delta.Introduced, cancellationToken, store));
+            await BuildRepairPacketsAsync(runtime, root, delta.Introduced, cancellationToken, store));
 
         return builder.ToString().TrimEnd();
     }
@@ -911,6 +950,7 @@ public sealed partial class FuseTools
     /// <param name="config">A config section to resolve to its options type.</param>
     /// <param name="symbol">A symbol to resolve to its declaration.</param>
     /// <param name="cancellationToken">A token to cancel the read.</param>
+    /// <param name="runtime">The host-owned index, compiler, and job services.</param>
     /// <returns>The resolved target(s) with paths and evidence.</returns>
     // Folded into fuse_find (kind=service/request/route/config) in U1; kept as an internal helper the find union calls.
     public static async Task<string> FuseResolveAsync(
@@ -921,9 +961,11 @@ public sealed partial class FuseTools
         [Description("A route to resolve, for example \"POST /api/orders/{id}\".")] string? route = null,
         [Description("A config section to resolve to its options type.")] string? config = null,
         [Description("A symbol name to resolve to its declaration.")] string? symbol = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        FuseMcpRuntime? runtime = null)
     {
-        await using var store = await OpenIndexedAsync(indexer, path, cancellationToken);
+        var toolRuntime = ResolveRuntime(runtime, indexer);
+        await using var store = await OpenIndexedAsync(toolRuntime, indexer, path, cancellationToken);
         var resolver = new SemanticResolver(store);
 
         ResolveResult? result = null;
@@ -1195,13 +1237,20 @@ public sealed partial class FuseTools
     // check session it is reported not-gated rather than assumed green.
     // Internal (not private): the CLI review command (U3 parity) calls this directly for `fuse review --handoff`.
     internal static async Task<string> BuildHandoffAsync(
-        SemanticIndexer indexer, IChangeSource changeSource, string root, string changedSince, string checkSession, CancellationToken cancellationToken)
+        SemanticIndexer indexer,
+        IChangeSource changeSource,
+        string root,
+        string changedSince,
+        string checkSession,
+        CancellationToken cancellationToken,
+        FuseMcpRuntime? runtime = null)
     {
         // A tool never crashes the server: any failure below (a git spawn error, an unreadable base ref) returns a
         // graceful abstention string, not an exception. Cancellation propagates.
         try
         {
-            return await BuildHandoffCoreAsync(indexer, changeSource, root, changedSince, checkSession, cancellationToken);
+            return await BuildHandoffCoreAsync(
+                ResolveRuntime(runtime, indexer), indexer, changeSource, root, changedSince, checkSession, cancellationToken);
         }
         catch (Exception e) when (e is not OperationCanceledException)
         {
@@ -1210,13 +1259,19 @@ public sealed partial class FuseTools
     }
 
     private static async Task<string> BuildHandoffCoreAsync(
-        SemanticIndexer indexer, IChangeSource changeSource, string root, string changedSince, string checkSession, CancellationToken cancellationToken)
+        FuseMcpRuntime runtime,
+        SemanticIndexer indexer,
+        IChangeSource changeSource,
+        string root,
+        string changedSince,
+        string checkSession,
+        CancellationToken cancellationToken)
     {
         var gateLine = "compiler status: not gated (no resident check session; run fuse_check --delta or re-check before merge).";
-        var current = ResidentWorkspaces.TryGetCurrentDiagnostics(root);
+        var current = runtime.ResidentWorkspaces.TryGetCurrentDiagnostics(root);
         if (!string.IsNullOrWhiteSpace(checkSession) && current is not null)
         {
-            await using var gateStore = await OpenIndexedAsync(indexer, root, cancellationToken);
+            await using var gateStore = await OpenIndexedAsync(runtime, indexer, root, cancellationToken);
             var baseline = await gateStore.GetCheckSessionBaselineAsync(checkSession, cancellationToken);
             if (baseline is not null)
             {
@@ -1323,7 +1378,9 @@ public sealed partial class FuseTools
     // R18: warm read-only store open for optional enrichment or covering selection. Returns null when the index is
     // missing or contended; never triggers a syntax-first build or reconcile.
     private static async Task<WorkspaceIndexStore?> TryOpenStoreForEnrichmentAsync(
-        string root, CancellationToken cancellationToken)
+        FuseMcpRuntime runtime,
+        string root,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -1331,7 +1388,7 @@ public sealed partial class FuseTools
             if (!File.Exists(databasePath))
                 return null;
 
-            return await IndexCoordinator.Default.OpenForReadOnlyAsync(root, cancellationToken);
+            return await runtime.IndexCoordinator.OpenForReadOnlyAsync(root, cancellationToken);
         }
         catch (Exception ex) when (IsStoreContention(ex))
         {
@@ -1340,7 +1397,9 @@ public sealed partial class FuseTools
     }
 
     private static async Task<WorkspaceIndexStore?> OpenStoreForSessionBaselineAsync(
-        string root, CancellationToken cancellationToken)
+        FuseMcpRuntime runtime,
+        string root,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -1350,11 +1409,11 @@ public sealed partial class FuseTools
             var databasePath = FuseStorePaths.ResolveDatabasePath(root);
             if (!File.Exists(databasePath))
             {
-                await IndexCoordinator.Default.OpenForWriteAsync(
+                await runtime.IndexCoordinator.OpenForWriteAsync(
                     root, static (_, _) => Task.FromResult(0), cancellationToken);
             }
 
-            return await IndexCoordinator.Default.OpenForReadOnlyAsync(root, cancellationToken);
+            return await runtime.IndexCoordinator.OpenForReadOnlyAsync(root, cancellationToken);
         }
         catch (Exception ex) when (IsStoreContention(ex))
         {
@@ -1370,6 +1429,7 @@ public sealed partial class FuseTools
     // The verification-grade ladder (T0, D11): oracle first, build-grade fallback, abstain only when neither runs.
     // Compiler-tier: no mandatory index open (R18).
     private static async Task<(Fuse.Indexing.CheckResult Result, long BuildElapsedMs)> RunFuseCheckVerificationAsync(
+        FuseMcpRuntime runtime,
         string root,
         WorkspaceDiscoveryResult discovery,
         string file,
@@ -1378,7 +1438,7 @@ public sealed partial class FuseTools
         CancellationToken cancellationToken)
     {
         Fuse.Indexing.CheckResult? oracle = null;
-        var residentDiagnostics = await ResidentWorkspaces.TryCheckOverlayAsync(root, file, content, analyzers, cancellationToken);
+        var residentDiagnostics = await runtime.ResidentWorkspaces.TryCheckOverlayAsync(root, file, content, analyzers, cancellationToken);
         if (residentDiagnostics is not null)
             oracle = Fuse.Indexing.CheckResult.Ok(residentDiagnostics);
 
@@ -1396,7 +1456,7 @@ public sealed partial class FuseTools
         }
 
         if (oracle is null)
-            oracle = await TryOracleFromCaptureBundleAsync(root, file, content, client, cancellationToken);
+            oracle = await TryOracleFromCaptureBundleAsync(runtime, root, file, content, client, cancellationToken);
 
         var oracleTarget = discovery.SolutionPath ?? discovery.ProjectPaths.FirstOrDefault();
         if (oracle is null && client.IsAvailable && oracleTarget is not null)
@@ -1419,6 +1479,7 @@ public sealed partial class FuseTools
     }
 
     internal static async Task<Fuse.Indexing.CheckResult?> TryOracleFromCaptureBundleAsync(
+        FuseMcpRuntime runtime,
         string root,
         string file,
         string content,
@@ -1428,7 +1489,7 @@ public sealed partial class FuseTools
         if (!client.IsAvailable)
             return null;
 
-        await using var store = await TryOpenStoreForEnrichmentAsync(root, cancellationToken);
+        await using var store = await TryOpenStoreForEnrichmentAsync(runtime, root, cancellationToken);
         if (store is null)
             return null;
 
@@ -1444,7 +1505,7 @@ public sealed partial class FuseTools
             // R48: try the pooled, kept-alive worker first (rehydrate once, reuse across checks in a session); on a
             // cold/absent/failed pooled worker it returns null and we fall back to the spawn-per-call path, so the
             // verdict and honesty are unchanged and it is never worse than today.
-            var pooled = await Fuse.Semantics.PooledCheckWorker.Shared.TryCheckAsync(
+            var pooled = await runtime.PooledCheckWorkers.TryCheckAsync(
                 log, file, content, cancellationToken, ownerRoot: root);
             var candidate = pooled ?? await client.CheckFromComplogAsync(log, file, content, TimeSpan.FromMinutes(2), cancellationToken);
             if (candidate.Verified)
@@ -1455,13 +1516,14 @@ public sealed partial class FuseTools
     }
 
     private static async Task<(IReadOnlyList<RepairPacket> Packets, string? OmittedNote)> BuildRepairPacketsAsync(
+        FuseMcpRuntime runtime,
         string root,
         IReadOnlyList<CheckDiagnostic> diagnostics,
         CancellationToken cancellationToken,
         WorkspaceIndexStore? store = null)
     {
         var ownedStore = store is null;
-        store ??= await TryOpenStoreForEnrichmentAsync(root, cancellationToken);
+        store ??= await TryOpenStoreForEnrichmentAsync(runtime, root, cancellationToken);
         if (store is null)
             return ([], RepairPacketsOmittedNote);
 

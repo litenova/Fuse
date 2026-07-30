@@ -109,14 +109,15 @@ public sealed class HostRpcOutcomeTests : IDisposable
         try
         {
             await ready.Task.WaitAsync(TimeSpan.FromSeconds(10), cts.Token);
-            FuseTools.ResidentWorkspaces = new RemoteResidentWorkspaceProvider();
+            var runtime = FuseMcpRuntime.CreateIsolated(indexer, new RemoteResidentWorkspaceProvider());
 
             var output = await FuseTools.FuseCheckAsync(
                 indexer,
                 work,
                 "Widget.cs",
                 "namespace Sample; public sealed class Widget { public int Spin() => Nope; }",
-                cancellationToken: CancellationToken.None);
+                cancellationToken: CancellationToken.None,
+                runtime: runtime);
 
             Assert.Contains("verification grade: oracle", output);
             Assert.Contains("CS1061", output);
@@ -125,7 +126,6 @@ public sealed class HostRpcOutcomeTests : IDisposable
         {
             await cts.CancelAsync();
             try { await serverTask; } catch (OperationCanceledException) { }
-            FuseTools.ResidentWorkspaces = NullResidentWorkspaceProvider.Instance;
             try { Directory.Delete(work, recursive: true); } catch (IOException) { }
         }
     }
@@ -212,7 +212,6 @@ public sealed class HostRpcOutcomeTests : IDisposable
 
     public void Dispose()
     {
-        FuseTools.ResidentWorkspaces = NullResidentWorkspaceProvider.Instance;
         _provider.Dispose();
     }
 }

@@ -9,7 +9,7 @@ namespace Fuse.Cli.Services;
 ///     The concrete <see cref="IResidentWorkspaceProvider" /> backing a live resident workspace for one repository
 ///     root (S1): it answers the availability description and resident-grade overlay checks the read tools consult,
 ///     and it applies watcher batches to keep the held compilations current. This is the provider the serve/host
-///     registers on <c>FuseTools.ResidentWorkspaces</c>; constructing the workspace and subscribing it to the file
+///     places this service in the host-owned MCP runtime; constructing the workspace and subscribing it to the file
 ///     watcher is the serve wiring that uses this service.
 /// </summary>
 /// <remarks>

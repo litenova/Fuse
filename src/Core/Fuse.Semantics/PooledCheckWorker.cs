@@ -53,9 +53,6 @@ public sealed class PooledCheckWorker : IDisposable
         _workerDllPath = channelFactory is null ? BuildCaptureClient.ResolveWorkerPath() : "injected";
     }
 
-    /// <summary>The process-wide shared pool the check path uses by default.</summary>
-    public static PooledCheckWorker Shared { get; set; } = new();
-
     /// <summary>Whether a worker can be started (a worker dll is configured, or a channel factory is injected).</summary>
     public bool IsAvailable => _channelFactory is not null || (!string.IsNullOrWhiteSpace(_workerDllPath) && File.Exists(_workerDllPath));
 

@@ -31,7 +31,6 @@ public static class DaemonProcessLauncher
         // Index jobs are syntax-first. A daemon starts no compiler state or eager index work until a caller asks.
         psi.Environment["FUSE_RESIDENT"] = "0";
         psi.Environment["FUSE_EAGER_INDEX"] = "0";
-        psi.Environment["FUSE_BG_UPGRADE"] = "0";
         psi.Environment["FUSE_DAEMON_IDLE_MINUTES"] = idleMinutes.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
         var runningUnderDotnet = Path.GetFileNameWithoutExtension(processPath)

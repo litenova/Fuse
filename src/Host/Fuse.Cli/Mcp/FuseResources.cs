@@ -29,6 +29,7 @@ public sealed class FuseResources
     /// <param name="indexer">The semantic indexer (builds the index on first use).</param>
     /// <param name="path">Relative path to the workspace directory.</param>
     /// <param name="cancellationToken">Token used to cancel the read.</param>
+    /// <param name="runtime">The host-owned index, compiler, and job services.</param>
     /// <returns>The workspace map, or a descriptive error message when the directory is missing.</returns>
     [McpServerResource(
         UriTemplate = "fuse://map/{path}",
@@ -38,11 +39,12 @@ public sealed class FuseResources
     public static async Task<string> ReadMapResourceAsync(
         SemanticIndexer indexer,
         [Description("Relative path to the workspace directory.")] string path,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        FuseMcpRuntime? runtime = null)
     {
         if (!TryResolveRoot(path, out var root, out var error))
             return error;
-        await using var store = await OpenIndexedAsync(indexer, root, cancellationToken);
+        await using var store = await OpenIndexedAsync(ResolveRuntime(runtime, indexer), indexer, root, cancellationToken);
         var renderer = new WorkspaceMapRenderer(store);
         return await renderer.RenderAsync(MapDetail.All, maxRows: 200, cancellationToken);
     }
@@ -55,6 +57,7 @@ public sealed class FuseResources
     /// <param name="path">Relative path to the workspace directory.</param>
     /// <param name="session">The session id whose ledger to read.</param>
     /// <param name="cancellationToken">Token used to cancel the read.</param>
+    /// <param name="runtime">The host-owned index, compiler, and job services.</param>
     /// <returns>The rendered claims ledger, or a note when the session has no accumulated claims.</returns>
     [McpServerResource(
         UriTemplate = "fuse://ledger/{path}/{session}",
@@ -65,11 +68,12 @@ public sealed class FuseResources
         SemanticIndexer indexer,
         [Description("Relative path to the workspace directory.")] string path,
         [Description("The session id whose claim ledger to read.")] string session,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        FuseMcpRuntime? runtime = null)
     {
         if (!TryResolveRoot(path, out var root, out var error))
             return error;
-        await using var store = await OpenIndexedAsync(indexer, root, cancellationToken);
+        await using var store = await OpenIndexedAsync(ResolveRuntime(runtime, indexer), indexer, root, cancellationToken);
         var claims = await SessionClaimLedger.LoadAsync(store, session, cancellationToken);
         if (claims.Count == 0)
             return $"session '{session}': no accumulated claims yet. Claim-emitting tools (for example fuse_impact with a session) add to the ledger.";
@@ -83,6 +87,7 @@ public sealed class FuseResources
     /// <param name="indexer">The semantic indexer (builds the index on first use).</param>
     /// <param name="path">Relative path to the workspace directory.</param>
     /// <param name="cancellationToken">Token used to cancel the read.</param>
+    /// <param name="runtime">The host-owned index, compiler, and job services.</param>
     /// <returns>The rendered status, or a descriptive error message when the directory is missing.</returns>
     [McpServerResource(
         UriTemplate = "fuse://status/{path}",
@@ -92,14 +97,17 @@ public sealed class FuseResources
     public static async Task<string> ReadStatusResourceAsync(
         SemanticIndexer indexer,
         [Description("Relative path to the workspace directory.")] string path,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        FuseMcpRuntime? runtime = null)
     {
         if (!TryResolveRoot(path, out var root, out var error))
             return error;
-        await using var store = await OpenIndexedAsync(indexer, root, cancellationToken);
+        var toolRuntime = ResolveRuntime(runtime, indexer);
+        await using var store = await OpenIndexedAsync(toolRuntime, indexer, root, cancellationToken);
         var mode = await store.GetMetaAsync("index_mode", cancellationToken) ?? "unknown";
         var builder = new StringBuilder();
-        builder.AppendLine(await FuseTools.OracleAvailabilityHeaderAsync(store, root, cancellationToken));
+        builder.AppendLine(await FuseTools.OracleAvailabilityHeaderAsync(
+            store, root, cancellationToken, residentWorkspaces: toolRuntime.ResidentWorkspaces));
         builder.AppendLine($"workspace: {root}");
         builder.AppendLine($"index mode: {mode}");
         return builder.ToString().TrimEnd();
@@ -114,6 +122,7 @@ public sealed class FuseResources
     /// <param name="path">Relative path to the workspace directory.</param>
     /// <param name="session">The session id whose diff to read.</param>
     /// <param name="cancellationToken">Token used to cancel the read.</param>
+    /// <param name="runtime">The host-owned index, compiler, and job services.</param>
     /// <returns>The rendered diff, or a note when no resident workspace serves the root or the session has no baseline.</returns>
     [McpServerResource(
         UriTemplate = "fuse://diff/{path}/{session}",
@@ -124,16 +133,18 @@ public sealed class FuseResources
         SemanticIndexer indexer,
         [Description("Relative path to the workspace directory.")] string path,
         [Description("The session id whose diagnostics diff to read.")] string session,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        FuseMcpRuntime? runtime = null)
     {
         if (!TryResolveRoot(path, out var root, out var error))
             return error;
 
-        var current = FuseTools.ResidentWorkspaces.TryGetCurrentDiagnostics(root);
+        var toolRuntime = ResolveRuntime(runtime, indexer);
+        var current = toolRuntime.ResidentWorkspaces.TryGetCurrentDiagnostics(root);
         if (current is null)
             return "no diff: no resident workspace serves this root (start the server with FUSE_RESIDENT=1); the diff never runs a build.";
 
-        await using var store = await OpenIndexedAsync(indexer, root, cancellationToken);
+        await using var store = await OpenIndexedAsync(toolRuntime, indexer, root, cancellationToken);
         var baseline = await store.GetCheckSessionBaselineAsync(session, cancellationToken);
         if (baseline is null)
             return $"session '{session}': no baseline recorded yet. Call fuse_check with this session to establish one, then read the diff.";
@@ -172,6 +183,7 @@ public sealed class FuseResources
     /// <param name="path">Relative path to the workspace directory.</param>
     /// <param name="session">The session id whose diagnostics to read.</param>
     /// <param name="cancellationToken">Token used to cancel the read.</param>
+    /// <param name="runtime">The host-owned index, compiler, and job services.</param>
     /// <returns>The rendered diagnostics, or a note when neither a resident workspace nor a recorded baseline exists.</returns>
     [McpServerResource(
         UriTemplate = "fuse://diagnostics/{path}/{session}",
@@ -182,12 +194,14 @@ public sealed class FuseResources
         SemanticIndexer indexer,
         [Description("Relative path to the workspace directory.")] string path,
         [Description("The session id whose diagnostics to read.")] string session,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        FuseMcpRuntime? runtime = null)
     {
         if (!TryResolveRoot(path, out var root, out var error))
             return error;
 
-        var current = FuseTools.ResidentWorkspaces.TryGetCurrentDiagnostics(root);
+        var toolRuntime = ResolveRuntime(runtime, indexer);
+        var current = toolRuntime.ResidentWorkspaces.TryGetCurrentDiagnostics(root);
         var builder = new StringBuilder();
         if (current is not null)
         {
@@ -197,7 +211,7 @@ public sealed class FuseResources
             return builder.ToString().TrimEnd();
         }
 
-        await using var store = await OpenIndexedAsync(indexer, root, cancellationToken);
+        await using var store = await OpenIndexedAsync(toolRuntime, indexer, root, cancellationToken);
         var baseline = await store.GetCheckSessionBaselineAsync(session, cancellationToken);
         if (baseline is null)
             return $"session '{session}': no live resident workspace and no recorded baseline. Start the server with FUSE_RESIDENT=1, or call fuse_check with this session first.";
@@ -216,6 +230,7 @@ public sealed class FuseResources
     /// <param name="path">Relative path to the workspace directory.</param>
     /// <param name="query">The task or query to localize.</param>
     /// <param name="cancellationToken">Token used to cancel the read.</param>
+    /// <param name="runtime">The host-owned index, compiler, and job services.</param>
     /// <returns>The ranked candidates, or a descriptive error message when the directory is missing.</returns>
     [McpServerResource(
         UriTemplate = "fuse://localize/{path}/{query}",
@@ -227,11 +242,12 @@ public sealed class FuseResources
         IChangeSource changeSource,
         [Description("Relative path to the workspace directory.")] string path,
         [Description("The task or query to localize.")] string query,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        FuseMcpRuntime? runtime = null)
     {
         if (!TryResolveRoot(path, out var root, out var error))
             return error;
-        await using var store = await OpenIndexedAsync(indexer, root, cancellationToken);
+        await using var store = await OpenIndexedAsync(ResolveRuntime(runtime, indexer), indexer, root, cancellationToken);
         var engine = new SemanticRetrievalEngine(store, changeSource);
         var result = await engine.LocalizeAsync(new LocalizationRequest(root, Query: query), cancellationToken);
         if (result.Candidates.Count == 0)
@@ -249,6 +265,7 @@ public sealed class FuseResources
     /// <param name="path">Relative path to the workspace directory.</param>
     /// <param name="seed">A symbol, service, request, or config-section seed.</param>
     /// <param name="cancellationToken">Token used to cancel the read.</param>
+    /// <param name="runtime">The host-owned index, compiler, and job services.</param>
     /// <returns>The emitted context payload, or a descriptive error message when the directory is missing.</returns>
     [McpServerResource(
         UriTemplate = "fuse://context/{path}/{seed}",
@@ -260,11 +277,12 @@ public sealed class FuseResources
         ContentReductionPipeline reductionPipeline,
         [Description("Relative path to the workspace directory.")] string path,
         [Description("A symbol, service, request, or config-section seed.")] string seed,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        FuseMcpRuntime? runtime = null)
     {
         if (!TryResolveRoot(path, out var root, out var error))
             return error;
-        await using var store = await OpenIndexedAsync(indexer, root, cancellationToken);
+        await using var store = await OpenIndexedAsync(ResolveRuntime(runtime, indexer), indexer, root, cancellationToken);
         var engine = new SemanticRetrievalEngine(store);
         var plan = await engine.PlanContextAsync(
             new ContextRequest(root, [new ContextSeed(ContextSeedKind.Symbol, seed)]), cancellationToken);
@@ -282,6 +300,7 @@ public sealed class FuseResources
     /// <param name="path">Relative path to the workspace directory.</param>
     /// <param name="since">Git ref (branch, commit, or <c>HEAD~N</c>) to diff against.</param>
     /// <param name="cancellationToken">Token used to cancel the read.</param>
+    /// <param name="runtime">The host-owned index, compiler, and job services.</param>
     /// <returns>The review payload, or a descriptive error message when the directory is missing.</returns>
     [McpServerResource(
         UriTemplate = "fuse://review/{path}/{since}",
@@ -294,11 +313,12 @@ public sealed class FuseResources
         IChangeSource changeSource,
         [Description("Relative path to the workspace directory.")] string path,
         [Description("Git ref to diff against (branch, commit, HEAD~N).")] string since,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        FuseMcpRuntime? runtime = null)
     {
         if (!TryResolveRoot(path, out var root, out var error))
             return error;
-        await using var store = await OpenIndexedAsync(indexer, root, cancellationToken);
+        await using var store = await OpenIndexedAsync(ResolveRuntime(runtime, indexer), indexer, root, cancellationToken);
         var engine = new SemanticRetrievalEngine(store, changeSource);
         var plan = await engine.ReviewAsync(new ReviewRequest(root, since), cancellationToken);
         var renderer = new SemanticContextRenderer(reductionPipeline, new SourceContentProvider(new PhysicalFileSystem()));
@@ -306,8 +326,15 @@ public sealed class FuseResources
         return SemanticContextEmitter.Emit(plan, rendered, ContextOutputFormat.Xml, root, since);
     }
 
-    private static Task<WorkspaceIndexStore> OpenIndexedAsync(SemanticIndexer indexer, string path, CancellationToken cancellationToken) =>
-        FuseTools.IndexAccess.OpenIndexedAsync(indexer, path, cancellationToken);
+    private static Task<WorkspaceIndexStore> OpenIndexedAsync(
+        FuseMcpRuntime runtime,
+        SemanticIndexer indexer,
+        string path,
+        CancellationToken cancellationToken) =>
+        runtime.IndexAccess.OpenIndexedAsync(indexer, path, cancellationToken);
+
+    private static FuseMcpRuntime ResolveRuntime(FuseMcpRuntime? runtime, SemanticIndexer indexer) =>
+        runtime ?? FuseMcpRuntime.CreateIsolated(indexer);
 
     private static bool TryResolveRoot(string path, out string root, out string error)
     {

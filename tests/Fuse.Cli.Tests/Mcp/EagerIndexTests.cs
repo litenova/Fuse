@@ -13,7 +13,7 @@ namespace Fuse.Cli.Tests.Mcp;
 public sealed class EagerIndexTests : IDisposable
 {
     private readonly ServiceProvider _provider = new ServiceCollection().AddFuseForTests().BuildServiceProvider();
-    private SemanticIndexer Indexer => _provider.GetRequiredService<SemanticIndexer>();
+    private EagerIndex Eager => _provider.GetRequiredService<EagerIndex>();
 
     [Fact]
     public void IsEnabled_DefaultsOn_AndOptsOut()
@@ -43,7 +43,7 @@ public sealed class EagerIndexTests : IDisposable
         try
         {
             Environment.SetEnvironmentVariable(EagerIndex.EnvVar, "0");
-            Assert.Null(EagerIndex.Start(Indexer, NewRoot()));
+            Assert.Null(Eager.Start(NewRoot()));
         }
         finally
         {
@@ -61,7 +61,7 @@ public sealed class EagerIndexTests : IDisposable
         Directory.CreateDirectory(src);
         await File.WriteAllTextAsync(Path.Combine(src, "Widget.cs"), "namespace Shop; public class Widget { public int Id { get; set; } }");
 
-        await EagerIndex.WarmAsync(Indexer, root, CancellationToken.None);
+        await Eager.WarmAsync(root, CancellationToken.None);
 
         // The store is warm before any tool call: it has indexed files.
         var databasePath = FuseStorePaths.ResolveDatabasePath(root);
@@ -82,7 +82,7 @@ public sealed class EagerIndexTests : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(databasePath)!);
         await File.WriteAllTextAsync(databasePath, "not a sqlite database");
 
-        await EagerIndex.WarmAsync(Indexer, root, CancellationToken.None);
+        await Eager.WarmAsync(root, CancellationToken.None);
 
         await using var store = new WorkspaceIndexStore(databasePath);
         Assert.Equal(WorkspaceIndexReadOpenStatus.Ready, await store.OpenForReadAsync(CancellationToken.None));

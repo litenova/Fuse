@@ -17,6 +17,7 @@ public sealed class RemoteIndexAccessProvider : IIndexAccessProvider
     private readonly Func<string, IndexDepth, bool, string?, TimeSpan, CancellationToken, Task<IndexJobStartResult?>> _indexStart;
     private readonly Func<string, TimeSpan, CancellationToken, Task<IndexJobSnapshot?>> _indexStatus;
     private readonly TimeSpan _connectTimeout;
+    private readonly IIndexAccessProvider? _localFallback;
 
     /// <summary>
     ///     Initializes a new instance of the <see cref="RemoteIndexAccessProvider" /> class.
@@ -30,16 +31,19 @@ public sealed class RemoteIndexAccessProvider : IIndexAccessProvider
     /// </param>
     /// <param name="indexStatus">The index-status RPC call used while an explicit caller waits for completion.</param>
     /// <param name="connectTimeout">How long to wait for a daemon connection.</param>
+    /// <param name="localFallback">The host-owned local path to use when the daemon cannot answer.</param>
     public RemoteIndexAccessProvider(
         Func<string, TimeSpan, CancellationToken, Task<OpenIndexedResultDto?>>? openIndexed = null,
         Func<string, IndexDepth, bool, string?, TimeSpan, CancellationToken, Task<IndexJobStartResult?>>? indexStart = null,
         Func<string, TimeSpan, CancellationToken, Task<IndexJobSnapshot?>>? indexStatus = null,
-        TimeSpan? connectTimeout = null)
+        TimeSpan? connectTimeout = null,
+        IIndexAccessProvider? localFallback = null)
     {
         _openIndexed = openIndexed ?? FuseHostClient.TryOpenIndexedAsync;
         _indexStart = indexStart ?? FuseHostClient.TryIndexStartAsync;
         _indexStatus = indexStatus ?? FuseHostClient.TryIndexStatusAsync;
         _connectTimeout = connectTimeout ?? TimeSpan.FromSeconds(5);
+        _localFallback = localFallback;
     }
 
     /// <inheritdoc />
@@ -49,7 +53,7 @@ public sealed class RemoteIndexAccessProvider : IIndexAccessProvider
         var root = WorkspacePathResolver.ResolveRepositoryRoot(path);
         var remote = await _openIndexed(root, _connectTimeout, cancellationToken);
         if (remote is null)
-            return await LocalIndexAccessProvider.Instance.OpenIndexedAsync(indexer, path, cancellationToken);
+            return await LocalFallback(indexer).OpenIndexedAsync(indexer, path, cancellationToken);
 
         switch (remote.Status)
         {
@@ -71,7 +75,7 @@ public sealed class RemoteIndexAccessProvider : IIndexAccessProvider
         var root = WorkspacePathResolver.ResolveRepositoryRoot(path);
         var started = await _indexStart(root, IndexDepth.Syntax, false, null, _connectTimeout, cancellationToken);
         if (started is null)
-            return await LocalIndexAccessProvider.Instance.IndexAsync(indexer, path, cancellationToken);
+            return await LocalFallback(indexer).IndexAsync(indexer, path, cancellationToken);
         if (started.Conflict)
             throw new InvalidOperationException(started.Snapshot.ErrorMessage ?? "index_job_conflict");
 
@@ -108,5 +112,15 @@ public sealed class RemoteIndexAccessProvider : IIndexAccessProvider
 
         await store.DisposeAsync();
         throw new IndexRebuildingException("daemon reported a readable index that could not be opened locally");
+    }
+
+    private IIndexAccessProvider LocalFallback(SemanticIndexer indexer)
+    {
+        if (_localFallback is not null)
+            return _localFallback;
+
+        // Direct unit calls that do not construct a host get an isolated manager. Production always supplies the
+        // host-owned fallback through dependency injection, so jobs remain deduplicated for the process lifetime.
+        return FuseMcpRuntime.CreateIsolated(indexer).IndexAccess;
     }
 }

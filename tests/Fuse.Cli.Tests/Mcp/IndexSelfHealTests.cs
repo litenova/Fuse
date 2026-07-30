@@ -10,6 +10,7 @@ public sealed class IndexSelfHealTests : IDisposable
 {
     private readonly string _root;
     private readonly string _databasePath;
+    private readonly IndexCoordinator _coordinator = new();
 
     public IndexSelfHealTests()
     {
@@ -40,7 +41,7 @@ public sealed class IndexSelfHealTests : IDisposable
         await SeedPopulatedAsync(stampedExtractionVersion: "0");
 
         var ex = await Assert.ThrowsAsync<IndexRebuildingException>(() =>
-            IndexCoordinator.Default.OpenForReadOnlyAsync(_root, CancellationToken.None));
+            _coordinator.OpenForReadOnlyAsync(_root, CancellationToken.None));
 
         var message = FuseOperationalErrors.FromException(ex);
         Assert.StartsWith(FuseOperationalErrors.IndexRebuildingPrefix, message);
@@ -54,7 +55,7 @@ public sealed class IndexSelfHealTests : IDisposable
         // reuse the good index, not discard it. Auto-update is default-on, so this is the common upgrade path.
         await SeedPopulatedAsync(stampedVersion: "999999.0.0");
 
-        await using var store = await IndexCoordinator.Default.OpenForReadOnlyAsync(_root, CancellationToken.None);
+        await using var store = await _coordinator.OpenForReadOnlyAsync(_root, CancellationToken.None);
         var marker = await store.GetMetaAsync("marker", CancellationToken.None);
         Assert.Equal("keep", marker); // the pre-existing data survived: no rebuild.
     }

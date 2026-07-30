@@ -3,10 +3,9 @@ namespace Fuse.Cli.Services;
 /// <summary>
 ///     Keeps the index live (R39): on a debounced file-system change (from <see cref="DebouncedFileWatcher" />,
 ///     which also fires on <c>.git/HEAD</c> and <c>.git/index</c> so branch switches and pulls are caught), it
-///     reconciles the changed files into the index through the single-writer coordinator, so reads are fresh
-///     with no per-read reconcile cost. Default-on when the daemon is active; opt out with <c>FUSE_WATCH=0</c>.
-///     A periodic safety reconcile catches events a watcher dropped (network drives), and on-read reconcile
-///     remains the backstop, so freshness never depends on the watcher being perfect.
+///     requests a syntax refresh through the repository job manager. The manager deduplicates source changes with
+///     explicit index requests, so the watcher never opens the SQLite writer directly. Default-on when the daemon
+///     is active; opt out with <c>FUSE_WATCH=0</c>. A periodic safety request catches events a watcher dropped.
 /// </summary>
 public sealed class LiveIndexWatcher : IDisposable
 {
@@ -22,7 +21,7 @@ public sealed class LiveIndexWatcher : IDisposable
     /// <summary>
     ///     Initializes a new instance of the <see cref="LiveIndexWatcher" /> class.
     /// </summary>
-    /// <param name="reconcile">The reconcile action (runs under the single-writer coordinator).</param>
+    /// <param name="reconcile">The refresh request action.</param>
     /// <param name="safetyInterval">The periodic safety-reconcile interval, or null to disable it.</param>
     /// <param name="cancellationToken">A token to stop the watcher.</param>
     public LiveIndexWatcher(Func<CancellationToken, Task> reconcile, TimeSpan? safetyInterval, CancellationToken cancellationToken)
@@ -46,11 +45,11 @@ public sealed class LiveIndexWatcher : IDisposable
     }
 
     /// <summary>
-    ///     Reconciles the changed files now, best-effort and overlap-guarded (a reconcile already in flight makes
-    ///     this a no-op; the in-flight pass will pick up the latest state). Wired to a watcher's change event.
+    ///     Requests a refresh now, best-effort and overlap-guarded. A request already in flight makes this a no-op;
+    ///     the repository job manager still coalesces any request from another caller. Wired to a watcher's change event.
     /// </summary>
-    /// <param name="cancellationToken">A token to cancel the reconcile.</param>
-    /// <returns>A task that completes when the reconcile finishes (or is skipped).</returns>
+    /// <param name="cancellationToken">A token to cancel the refresh request.</param>
+    /// <returns>A task that completes when the refresh request finishes (or is skipped).</returns>
     public async Task HandleChangeAsync(CancellationToken cancellationToken)
     {
         if (_disposed)
@@ -67,8 +66,8 @@ public sealed class LiveIndexWatcher : IDisposable
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // Best-effort: a reconcile failure (contention, transient IO) must not tear down the daemon. On-read
-            // reconcile remains the backstop, so freshness is preserved even if a watcher-driven pass fails.
+            // Best-effort: a refresh request failure (contention, transient IO) must not tear down the daemon.
+            // The next explicit read or watcher event can start the repository job again.
         }
         finally
         {
@@ -77,13 +76,13 @@ public sealed class LiveIndexWatcher : IDisposable
     }
 
     /// <summary>
-    ///     Attaches a live watcher to a debounced file watcher, so each settled change drives a reconcile. Returns
+    ///     Attaches a live watcher to a debounced file watcher, so each settled change requests a refresh. Returns
     ///     null when the live watcher is disabled (<c>FUSE_WATCH=0</c>), leaving on-read reconcile as the only
     ///     freshness path.
     /// </summary>
     /// <param name="watcher">The debounced file watcher over the served root.</param>
-    /// <param name="reconcile">The reconcile action.</param>
-    /// <param name="safetyInterval">The periodic safety-reconcile interval.</param>
+    /// <param name="reconcile">The refresh request action.</param>
+    /// <param name="safetyInterval">The periodic safety-refresh interval.</param>
     /// <param name="cancellationToken">A token to stop the watcher.</param>
     /// <returns>The attached watcher, or null when disabled.</returns>
     public static LiveIndexWatcher? Attach(
