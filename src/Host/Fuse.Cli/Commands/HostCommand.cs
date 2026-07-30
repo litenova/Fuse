@@ -44,6 +44,15 @@ public sealed class HostCommand
     /// <returns>A task that completes when the host stops serving.</returns>
     public async Task RunAsync(CliContext context)
     {
+        // A spawned daemon's standard streams are pipes its launcher abandoned. Writing into them would fill the
+        // buffer and block the daemon, so a detached host reports only through its rolling file log.
+        var detached = Environment.GetEnvironmentVariable(DaemonProcessLauncher.DetachedEnvironmentVariable) == "1";
+        if (detached)
+        {
+            Console.SetOut(TextWriter.Null);
+            Console.SetError(TextWriter.Null);
+        }
+
         if (!WorkspaceIdentityResolver.TryResolveRepositoryRoot(Directory, out var root))
         {
             await Console.Error.WriteLineAsync(
@@ -65,7 +74,8 @@ public sealed class HostCommand
 
         var builder = Host.CreateApplicationBuilder();
         builder.Logging.ClearProviders();
-        builder.Logging.AddConsole(options => options.LogToStandardErrorThreshold = LogLevel.Trace);
+        if (!detached)
+            builder.Logging.AddConsole(options => options.LogToStandardErrorThreshold = LogLevel.Trace);
         builder.Logging.SetMinimumLevel(LogLevel.Information);
         builder.Services.AddSingleton<IConsoleUI, StderrConsoleUI>();
         builder.Services.AddFuse();

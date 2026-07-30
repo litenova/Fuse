@@ -78,6 +78,33 @@ public sealed class WorkspaceConfigurationTests : IDisposable
         Assert.Contains("src/App.slnf", template, StringComparison.Ordinal);
     }
 
+    // fuse.json is committed, so a workspace path written on Windows has to resolve on Linux and macOS, where a
+    // backslash is an ordinary filename character rather than a separator.
+    [Fact]
+    public void TemplateWritesThePortableSeparator()
+    {
+        var template = WorkspaceConfiguration.CreateTemplate(Path.Combine("src", "App", "App.csproj"));
+
+        Assert.Contains("src/App/App.csproj", template, StringComparison.Ordinal);
+        Assert.DoesNotContain('\\', template);
+    }
+
+    [Fact]
+    public void LoadNormalizesTheWorkspaceSeparator()
+    {
+        var projectDirectory = Path.Combine(_root, "src", "App");
+        Directory.CreateDirectory(projectDirectory);
+        File.WriteAllText(Path.Combine(projectDirectory, "App.csproj"), "<Project />");
+        File.WriteAllText(
+            Path.Combine(_root, WorkspaceConfiguration.FileName),
+            """{ "workspace": "src/App/App.csproj" }""");
+
+        var result = WorkspaceConfiguration.Load(_root);
+
+        Assert.Null(result.Error);
+        Assert.Equal("src/App/App.csproj", result.Options.Workspace);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_root))

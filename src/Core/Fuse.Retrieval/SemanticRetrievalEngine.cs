@@ -368,14 +368,55 @@ public sealed class SemanticRetrievalEngine
 
     private async Task AddNamedSeedAsync(List<CandidateNode> candidates, string value, CancellationToken cancellationToken)
     {
-        var nodes = await _store.FindNodesByDisplayNameAsync(SimpleName(value), cancellationToken);
-        foreach (var node in nodes)
+        var simpleName = SimpleName(value);
+        var nodes = await _store.FindNodesByDisplayNameAsync(simpleName, cancellationToken);
+        if (nodes.Count > 0)
+        {
+            foreach (var node in nodes)
+            {
+                candidates.Add(new CandidateNode(
+                    node.NodeId, node.FilePath ?? string.Empty, node.Kind, 1.0,
+                    CandidateSource.SymbolExact, [$"seed: {value}"], 0));
+            }
+
+            return;
+        }
+
+        // The typed graph exists only after compiler analysis. A syntax-tier index still knows which file declares
+        // the name, so a named seed resolves to its declaring file rather than silently planning nothing; graph
+        // expansion from that seed is what the syntax tier cannot offer.
+        await AddDeclaringFileSeedAsync(candidates, value, simpleName, cancellationToken);
+    }
+
+    private async Task AddDeclaringFileSeedAsync(
+        List<CandidateNode> candidates,
+        string value,
+        string simpleName,
+        CancellationToken cancellationToken)
+    {
+        var symbols = await _store.FindSymbolsByNameAsync(simpleName, SyntaxSeedMatchLimit, cancellationToken);
+        var declaringFiles = symbols
+            .Where(symbol => Matches(symbol, value, simpleName))
+            .Select(symbol => symbol.FilePath)
+            .Where(path => !string.IsNullOrEmpty(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var filePath in declaringFiles)
         {
             candidates.Add(new CandidateNode(
-                node.NodeId, node.FilePath ?? string.Empty, node.Kind, 1.0,
-                CandidateSource.SymbolExact, [$"seed: {value}"], 0));
+                string.Empty, filePath.Replace('\\', '/'), "file", 1.0,
+                CandidateSource.SymbolExact, [$"seed: {value} (declaring file; syntax tier has no typed graph)"], 0));
         }
     }
+
+    private static bool Matches(SymbolListItem symbol, string value, string simpleName) =>
+        string.Equals(symbol.Name, simpleName, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(symbol.FullyQualifiedName, value, StringComparison.OrdinalIgnoreCase)
+        || symbol.FullyQualifiedName.EndsWith("." + value, StringComparison.OrdinalIgnoreCase);
+
+    // A named seed is an exact anchor, so a handful of same-named declarations is the useful ceiling; beyond that
+    // the caller wants fuse_find, not a context payload seeded from every match.
+    private const int SyntaxSeedMatchLimit = 20;
 
     private async Task AddRouteSeedAsync(List<CandidateNode> candidates, string route, CancellationToken cancellationToken)
     {

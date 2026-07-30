@@ -65,7 +65,7 @@ public static class WorkspaceConfiguration
                 if (resolved is null)
                     return Invalid(path, "workspace: must name an existing .sln, .slnx, .slnf, or .csproj below the repository root");
 
-                options = options with { Workspace = Path.GetRelativePath(root, resolved) };
+                options = options with { Workspace = ToRepositoryRelative(root, resolved) };
             }
 
             return new WorkspaceConfigurationLoadResult(options, path, warnings, null);
@@ -127,12 +127,25 @@ public static class WorkspaceConfiguration
     /// </summary>
     /// <param name="workspace">An optional repository-relative workspace path.</param>
     /// <returns>Indented JSON followed by the platform newline.</returns>
+    /// <remarks>
+    ///     The workspace path is written with forward slashes. <c>fuse.json</c> is committed, so a file written on
+    ///     Windows must resolve on Linux and macOS, where a backslash is an ordinary filename character rather than
+    ///     a separator.
+    /// </remarks>
     public static string CreateTemplate(string? workspace)
     {
-        var options = new FuseWorkspaceOptions(SchemaUrl, workspace, []);
+        var options = new FuseWorkspaceOptions(SchemaUrl, NormalizeSeparators(workspace), []);
         return JsonSerializer.Serialize(options, WorkspaceConfigurationJsonContext.Default.FuseWorkspaceOptions)
             + Environment.NewLine;
     }
+
+    // A committed configuration file must be portable, so a relative workspace path is always stored with forward
+    // slashes; Path.Combine accepts them on every supported platform when the value is read back.
+    private static string ToRepositoryRelative(string root, string absolutePath) =>
+        NormalizeSeparators(Path.GetRelativePath(root, absolutePath))!;
+
+    private static string? NormalizeSeparators(string? path) =>
+        path is null ? null : path.Replace('\\', '/');
 
     private static WorkspaceConfigurationLoadResult Invalid(string path, string error) =>
         new(FuseWorkspaceOptions.Empty, path, [], $"{path}: {error}");

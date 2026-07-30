@@ -17,6 +17,12 @@ internal interface IDetachedUpdateProcessLauncher
 internal sealed class DetachedUpdateProcessLauncher : IDetachedUpdateProcessLauncher
 {
     /// <inheritdoc />
+    /// <remarks>
+    ///     The updater outlives the command that starts it, so it must not hold the caller's standard streams: an
+    ///     inherited stdout keeps a piped or redirected <c>fuse update</c> open until the update finishes. Windows
+    ///     uses <c>ShellExecuteEx</c>, which does not inherit handles; the POSIX path redirects instead, so the
+    ///     child receives its own pipes.
+    /// </remarks>
     public void Launch(string scriptPath, bool isWindows)
     {
         var startInfo = isWindows
@@ -29,8 +35,13 @@ internal sealed class DetachedUpdateProcessLauncher : IDetachedUpdateProcessLaun
             : new ProcessStartInfo("/bin/sh", $"\"{scriptPath}\"")
             {
                 UseShellExecute = false,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
             };
 
-        Process.Start(startInfo);
+        using var process = Process.Start(startInfo);
+        if (!isWindows)
+            process?.StandardInput.Close();
     }
 }
