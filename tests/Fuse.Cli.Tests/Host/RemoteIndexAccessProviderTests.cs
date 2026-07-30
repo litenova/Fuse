@@ -23,7 +23,10 @@ public sealed class RemoteIndexAccessProviderTests
         await File.WriteAllTextAsync(Path.Combine(root, "A.cs"), "namespace T; public class A { }");
 
         var coordinator = _provider.GetRequiredService<IndexCoordinator>();
-        var fallback = _provider.GetRequiredService<LocalIndexAccessProvider>();
+        var fallback = new LocalIndexAccessProvider(
+            coordinator,
+            _provider.GetRequiredService<IWorkspaceIndexJobManager>(),
+            TimeSpan.FromSeconds(15));
         var before = coordinator.ProcessWriteLockAcquireCount;
         var provider = new RemoteIndexAccessProvider(
             (_, _, _) => Task.FromResult<OpenIndexedResultDto?>(null),

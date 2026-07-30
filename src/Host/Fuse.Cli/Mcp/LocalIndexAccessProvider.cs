@@ -12,16 +12,29 @@ public sealed class LocalIndexAccessProvider : IIndexAccessProvider
 {
     private readonly IndexCoordinator _coordinator;
     private readonly IWorkspaceIndexJobManager _jobs;
+    private readonly TimeSpan? _coldReadDeadline;
 
     /// <summary>
     ///     Initializes a new instance of the <see cref="LocalIndexAccessProvider" /> class.
     /// </summary>
     /// <param name="coordinator">The process-owned store coordinator used only to open the committed store.</param>
     /// <param name="jobs">The process-owned repository job manager.</param>
-    public LocalIndexAccessProvider(IndexCoordinator coordinator, IWorkspaceIndexJobManager jobs)
+    /// <param name="coldReadDeadline">
+    ///     An optional local-read deadline. Production uses <see cref="ColdReadDeadline" />; tests can supply a
+    ///     longer bounded wait when they need to assert the completed fallback rather than the normal cold-read
+    ///     deferral contract.
+    /// </param>
+    public LocalIndexAccessProvider(
+        IndexCoordinator coordinator,
+        IWorkspaceIndexJobManager jobs,
+        TimeSpan? coldReadDeadline = null)
     {
+        if (coldReadDeadline is { } deadline && deadline <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(coldReadDeadline), "The cold-read deadline must be positive.");
+
         _coordinator = coordinator;
         _jobs = jobs;
+        _coldReadDeadline = coldReadDeadline;
     }
 
     /// <inheritdoc />
@@ -37,7 +50,7 @@ public sealed class LocalIndexAccessProvider : IIndexAccessProvider
 
         var syntaxReady = _jobs.WaitForSyntaxReadyAsync(root, cancellationToken);
         var deadline = Task.Delay(
-            TimeSpan.FromMilliseconds(ColdReadDeadline.DeadlineMilliseconds()),
+            _coldReadDeadline ?? TimeSpan.FromMilliseconds(ColdReadDeadline.DeadlineMilliseconds()),
             cancellationToken);
         if (await Task.WhenAny(syntaxReady, deadline) != syntaxReady)
         {
