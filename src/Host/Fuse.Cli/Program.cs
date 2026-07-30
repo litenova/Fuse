@@ -25,6 +25,13 @@ Cli.Ext.ConfigureServices(services =>
     services.AddTransient<InitCommand>();
     services.AddTransient<McpCommand>();
     services.AddTransient<InstallCommand>();
+    services.AddSingleton<IMcpClientInstaller, ClaudeMcpClientInstaller>();
+    services.AddSingleton<IMcpClientInstaller, CursorMcpClientInstaller>();
+    services.AddSingleton<IMcpClientInstaller, CopilotMcpClientInstaller>();
+    services.AddSingleton<IMcpClientInstaller, OpenCodeMcpClientInstaller>();
+    services.AddSingleton<IMcpClientInstaller, KiloMcpClientInstaller>();
+    services.AddSingleton<IMcpClientInstaller, CodexMcpClientInstaller>();
+    services.AddSingleton<IMcpClientInstaller, GrokMcpClientInstaller>();
     services.AddSingleton<McpInstallService>();
     services.AddSingleton<McpDoctorService>();
     services.AddTransient<McpDoctorCommand>();

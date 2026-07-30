@@ -13,6 +13,14 @@ namespace Fuse.Cli.Tests;
 public sealed class McpInstallTests
 {
     [Fact]
+    public void ClientInstallerCatalog_has_one_installer_for_every_supported_client()
+    {
+        var installers = McpClientInstallerCatalog.CreateDefault();
+
+        Assert.Equal(Enum.GetValues<McpInstallClient>().Order(), installers.Select(installer => installer.Client).Order());
+    }
+
+    [Fact]
     public async Task InstallAsync_ProjectScope_WritesClaudeCursorAndCopilotConfigs()
     {
         var root = CreateTempDirectory();

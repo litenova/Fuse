@@ -24,6 +24,24 @@ public sealed class McpInstallService
     // The client launches `fuse mcp serve` with no environment block. The shared daemon and syntax-first index
     // behavior ship in the binary; compiler analysis starts only from an explicit semantic request.
     private static readonly string[] ServeArguments = ["mcp", "serve"];
+    private readonly IReadOnlyDictionary<McpInstallClient, IMcpClientInstaller> _installers;
+
+    /// <summary>
+    ///     Initializes an installation coordinator with the built-in client installers.
+    /// </summary>
+    public McpInstallService() : this(McpClientInstallerCatalog.CreateDefault())
+    {
+    }
+
+    /// <summary>
+    ///     Initializes an installation coordinator with one installer per supported client.
+    /// </summary>
+    /// <param name="installers">The client-specific registration writers.</param>
+    public McpInstallService(IEnumerable<IMcpClientInstaller> installers)
+    {
+        ArgumentNullException.ThrowIfNull(installers);
+        _installers = installers.ToDictionary(installer => installer.Client);
+    }
 
     /// <summary>
     ///     Registers Fuse with the requested MCP clients at the given scope.
@@ -81,19 +99,14 @@ public sealed class McpInstallService
         var configuredClients = new List<McpInstallClient>(clients.Count);
         foreach (var client in clients)
         {
-            var success = client switch
+            if (!_installers.TryGetValue(client, out var installer))
             {
-                McpInstallClient.Claude => scope == McpInstallScope.User
-                    ? await RegisterClaudeUserAsync(command, consoleUI, cancellationToken)
-                    : WriteClaudeProjectConfig(projectRoot, command, consoleUI),
-                McpInstallClient.Cursor => WriteCursorConfig(scope, projectRoot, command, consoleUI),
-                McpInstallClient.Copilot => WriteCopilotConfig(scope, projectRoot, command, consoleUI),
-                McpInstallClient.OpenCode => WriteLocalArrayConfig(client, scope, projectRoot, command, consoleUI),
-                McpInstallClient.Kilo => WriteLocalArrayConfig(client, scope, projectRoot, command, consoleUI),
-                McpInstallClient.Codex => WriteTomlConfig(client, scope, projectRoot, command, consoleUI),
-                McpInstallClient.Grok => WriteTomlConfig(client, scope, projectRoot, command, consoleUI),
-                _ => false,
-            };
+                consoleUI.WriteError($"No installer is registered for {DescribeClient(client)}.");
+                continue;
+            }
+
+            var success = await installer.InstallAsync(
+                new McpClientInstallRequest(scope, projectRoot, command, consoleUI, cancellationToken));
 
             if (success)
                 configuredClients.Add(client);
@@ -161,7 +174,7 @@ public sealed class McpInstallService
         return true;
     }
 
-    private static bool WriteClaudeProjectConfig(string projectRoot, string fuseCommand, IConsoleUI consoleUI)
+    internal static bool WriteClaudeProjectConfig(string projectRoot, string fuseCommand, IConsoleUI consoleUI)
     {
         var path = GetConfigPath(McpInstallClient.Claude, McpInstallScope.Project, projectRoot);
         var config = LoadOrCreateClaude(path);
@@ -172,7 +185,7 @@ public sealed class McpInstallService
         return true;
     }
 
-    private static bool WriteCursorConfig(
+    internal static bool WriteCursorConfig(
         McpInstallScope scope,
         string projectRoot,
         string fuseCommand,
@@ -188,7 +201,7 @@ public sealed class McpInstallService
         return true;
     }
 
-    private static bool WriteCopilotConfig(
+    internal static bool WriteCopilotConfig(
         McpInstallScope scope,
         string projectRoot,
         string fuseCommand,
@@ -204,7 +217,7 @@ public sealed class McpInstallService
         return true;
     }
 
-    private static bool WriteLocalArrayConfig(
+    internal static bool WriteLocalArrayConfig(
         McpInstallClient client,
         McpInstallScope scope,
         string projectRoot,
@@ -226,7 +239,7 @@ public sealed class McpInstallService
         return true;
     }
 
-    private static bool WriteTomlConfig(
+    internal static bool WriteTomlConfig(
         McpInstallClient client,
         McpInstallScope scope,
         string projectRoot,
@@ -240,7 +253,7 @@ public sealed class McpInstallService
         return true;
     }
 
-    private static async Task<bool> RegisterClaudeUserAsync(
+    internal static async Task<bool> RegisterClaudeUserAsync(
         string fuseCommand,
         IConsoleUI consoleUI,
         CancellationToken cancellationToken)
@@ -537,7 +550,7 @@ public sealed class McpInstallService
         && content.Contains(RuleBeginMarker, StringComparison.Ordinal)
         && content.Contains(RuleEndMarker, StringComparison.Ordinal);
 
-    private static string DescribeScope(McpInstallScope scope) =>
+    internal static string DescribeScope(McpInstallScope scope) =>
         scope == McpInstallScope.User ? "user scope, all projects" : "project";
 
     private static string GetOpenCodeConfigPath(McpInstallScope scope, string projectRoot)
