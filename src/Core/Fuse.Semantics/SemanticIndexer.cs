@@ -26,6 +26,7 @@ public sealed class SemanticIndexer
     private readonly IndexFinalizer _finalizer = new();
     private readonly WorkspaceInventoryPlanner _inventory;
     private readonly SyntaxIndexStage _syntaxStage;
+    private readonly DirtyFileReconciler _dirtyFileReconciler;
     // R42: the host-owned warm-solution cache lets a second doctor in a session skip the full MSBuild load.
     private readonly WarmSolutionCache _warmSolutions;
 
@@ -109,6 +110,7 @@ public sealed class SemanticIndexer
         _syntaxProviders = new LanguageSyntaxProviderRegistry([new CSharpSyntaxProvider(syntaxSymbols), new PythonSyntaxProvider(), new JavaScriptSyntaxProvider()]);
         _inventory = new WorkspaceInventoryPlanner(scanner, _syntaxProviders);
         _syntaxStage = new SyntaxIndexStage(_syntaxProviders, syntaxSymbols, routeExtractor);
+        _dirtyFileReconciler = new DirtyFileReconciler(_inventory, _syntaxStage, _finalizer);
     }
 
     /// <summary>
@@ -438,27 +440,11 @@ public sealed class SemanticIndexer
         string normalizedPath,
         IWorkspaceIndexStore store,
         CancellationToken cancellationToken)
-    {
-        var root = Path.GetFullPath(rootDirectory);
-        var scan = await ScanFilesAsync(root, cancellationToken);
-        var file = scan.Files.FirstOrDefault(candidate =>
-            string.Equals(candidate.NormalizedPath, normalizedPath, StringComparison.Ordinal));
-        if (file is null)
-        {
-            await store.DeleteFileAsync(normalizedPath, cancellationToken);
-            return 0;
-        }
-
-        return await _syntaxStage.ReindexFileAsync(root, file, store, cancellationToken);
-    }
+        => await _dirtyFileReconciler.ReindexFileAsync(
+            Path.GetFullPath(rootDirectory), normalizedPath, store, cancellationToken);
 
     /// <summary>The metadata key recording the dirty-file count when a freshness reconcile degraded to a stamp.</summary>
     public const string StaleAsOfMetaKey = "stale_dirty_count";
-
-    // Storm protection: above this many dirty files (a bulk change such as a branch switch or a large pull), skip
-    // the per-file reconcile that would otherwise thrash the index one file at a time and instead stamp the result
-    // stale, so a caller re-runs a full index rather than paying a reconcile storm on every read.
-    private const int MaxReconcileFiles = 300;
 
     /// <summary>
     ///     Reconciles the index against the current complete on-disk file inventory: the N6 freshness contract.
@@ -477,63 +463,8 @@ public sealed class SemanticIndexer
     /// </remarks>
     public async Task<FreshnessResult> ReconcileDirtyFilesAsync(
         string rootDirectory, IWorkspaceIndexStore store, CancellationToken cancellationToken)
-    {
-        var root = Path.GetFullPath(rootDirectory);
-        var stored = await store.GetAllFileHashesAsync(cancellationToken);
-        var scan = await ScanFilesAsync(root, cancellationToken);
-        var current = scan.Files.ToDictionary(file => file.NormalizedPath, StringComparer.Ordinal);
-
-        var changed = new List<IndexedFileRecord>();
-        foreach (var (normalizedPath, file) in current)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!stored.TryGetValue(normalizedPath, out var storedHash)
-                || !string.Equals(file.ContentHash, storedHash, StringComparison.Ordinal))
-                changed.Add(file);
-        }
-
-        // A stored-only path is either deleted or no longer part of the scannable inventory. Delete its row even
-        // when the file still exists under an excluded directory such as bin/ or obj/. ReindexFileAsync cannot
-        // make that distinction because its single-file contract only checks physical existence.
-        var removedOrExcluded = stored.Keys.Where(path => !current.ContainsKey(path)).ToArray();
-        var dirtyCount = changed.Count + removedOrExcluded.Length;
-
-        if (dirtyCount == 0)
-        {
-            await store.SetMetaAsync(StaleAsOfMetaKey, "0", cancellationToken);
-            await _finalizer.StampSkippedFilesAsync(store, scan.Skipped, cancellationToken);
-            await _finalizer.StampDetailLimitedFilesAsync(store, scan.DetailLimited, cancellationToken);
-            await WorkspaceIndexManifest.CompleteAsync(root, store, scan.Files, cancellationToken);
-            return new FreshnessResult(current.Count, 0, 0, Stamped: false);
-        }
-
-        if (dirtyCount > MaxReconcileFiles)
-        {
-            // Storm: do not reconcile one-by-one. Stamp the count so the availability header (and fuse doctor)
-            // reports the answer as stale-as-of and the caller runs a full index.
-            await store.SetMetaAsync(StaleAsOfMetaKey, dirtyCount.ToString(System.Globalization.CultureInfo.InvariantCulture), cancellationToken);
-            return new FreshnessResult(current.Count, 0, dirtyCount, Stamped: true);
-        }
-
-        var reconciled = 0;
-        foreach (var file in changed)
-        {
-            await _syntaxStage.ReindexFileAsync(root, file, store, cancellationToken);
-            reconciled++;
-        }
-
-        foreach (var path in removedOrExcluded)
-        {
-            await store.DeleteFileAsync(path, cancellationToken);
-            reconciled++;
-        }
-
-        await store.SetMetaAsync(StaleAsOfMetaKey, "0", cancellationToken);
-        await _finalizer.StampSkippedFilesAsync(store, scan.Skipped, cancellationToken);
-        await _finalizer.StampDetailLimitedFilesAsync(store, scan.DetailLimited, cancellationToken);
-        await WorkspaceIndexManifest.CompleteAsync(root, store, scan.Files, cancellationToken);
-        return new FreshnessResult(current.Count, reconciled, 0, Stamped: false);
-    }
+        => await _dirtyFileReconciler.ReconcileAsync(
+            Path.GetFullPath(rootDirectory), store, StaleAsOfMetaKey, cancellationToken);
 
     private async Task<SemanticIndexResult> IndexSemanticAsync(
         string root,
