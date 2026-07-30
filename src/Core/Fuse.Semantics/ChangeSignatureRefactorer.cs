@@ -25,6 +25,7 @@ namespace Fuse.Semantics;
 public sealed class ChangeSignatureRefactorer
 {
     private readonly WarmSolutionCache _cache;
+    private readonly ChangeSignatureValidator _validator = new();
     private readonly ChangeSignatureVerifier _verifier = new();
 
     /// <summary>
@@ -111,7 +112,7 @@ public sealed class ChangeSignatureRefactorer
         CancellationToken cancellationToken)
     {
         // Resolve the target method unambiguously across the loaded solution.
-        var resolution = await ResolveMethodAsync(solution, methodName, containingTypeName, cancellationToken);
+        var resolution = await _validator.ResolveMethodAsync(solution, methodName, containingTypeName, cancellationToken);
         if (resolution.Method is null)
             return ChangeSignatureResult.Abstain(resolution.Reason!);
         var method = resolution.Method;
@@ -122,7 +123,7 @@ public sealed class ChangeSignatureRefactorer
 
         // The whole family that must change together, or the override/interface contract breaks: the base-most
         // definition, every override, and every interface implementation.
-        var family = await CollectMethodFamilyAsync(solution, method, cancellationToken);
+        var family = await _validator.CollectMethodFamilyAsync(solution, method, cancellationToken);
 
         // Baseline compile-error signatures, so the verify gate can tell an INTRODUCED error from a pre-existing one.
         var baseline = await _verifier.CollectErrorSignaturesAsync(solution, cancellationToken);
@@ -165,14 +166,14 @@ public sealed class ChangeSignatureRefactorer
         string parameterName,
         CancellationToken cancellationToken)
     {
-        var resolution = await ResolveMethodAsync(solution, methodName, containingTypeName, cancellationToken);
+        var resolution = await _validator.ResolveMethodAsync(solution, methodName, containingTypeName, cancellationToken);
         if (resolution.Method is null)
             return ChangeSignatureResult.Abstain(resolution.Reason!);
         var method = resolution.Method;
         if (method.Parameters.Any(p => p.IsParams))
             return ChangeSignatureResult.Abstain($"'{method.Name}' has a params parameter; threading abstains (params interaction)");
 
-        var family = await CollectMethodFamilyAsync(solution, method, cancellationToken);
+        var family = await _validator.CollectMethodFamilyAsync(solution, method, cancellationToken);
         var baseline = await _verifier.CollectErrorSignaturesAsync(solution, cancellationToken);
         return await RewriteVerifyAndStageAsync(
             solution, method, family, "CancellationToken", parameterName, baseline,
@@ -212,7 +213,7 @@ public sealed class ChangeSignatureRefactorer
         string parameterName,
         CancellationToken cancellationToken)
     {
-        var resolution = await ResolveMethodAsync(solution, methodName, containingTypeName, cancellationToken);
+        var resolution = await _validator.ResolveMethodAsync(solution, methodName, containingTypeName, cancellationToken);
         if (resolution.Method is null)
             return ChangeSignatureResult.Abstain(resolution.Reason!);
         var method = resolution.Method;
@@ -226,11 +227,11 @@ public sealed class ChangeSignatureRefactorer
         if (method.Parameters[index].IsParams)
             return ChangeSignatureResult.Abstain($"'{parameterName}' is a params parameter; remove-parameter abstains (params interaction)");
 
-        var family = await CollectMethodFamilyAsync(solution, method, cancellationToken);
+        var family = await _validator.CollectMethodFamilyAsync(solution, method, cancellationToken);
 
         // Safety pre-check the compile gate cannot see: the parameter must be unused in every family member's body
         // (removing a used parameter would not even compile, but naming the site is clearer than a raw diagnostic).
-        var usedIn = await ParameterUsedInAnyBodyAsync(solution, family, index, cancellationToken);
+        var usedIn = await _validator.FindParameterUsageAsync(solution, family, index, cancellationToken);
         if (usedIn is not null)
             return ChangeSignatureResult.Abstain($"'{parameterName}' is used in the body of {usedIn}; remove-parameter abstains (it is not a dead parameter)");
 
@@ -248,24 +249,6 @@ public sealed class ChangeSignatureRefactorer
             return ChangeSignatureResult.Abstain("the rewrite produced no change (the method or its call sites were not found in source)");
 
         return ChangeSignatureResult.Ok(method.ToDisplayString(), $"removed {parameterName}", diffs);
-    }
-
-    // Returns the display name of the first family member whose body uses the parameter at the given index, or
-    // null when the parameter is dead in every body. A dropped-but-used parameter is refused.
-    private static async Task<string?> ParameterUsedInAnyBodyAsync(
-        Solution solution, IReadOnlyCollection<IMethodSymbol> family, int index, CancellationToken cancellationToken)
-    {
-        foreach (var member in family)
-        {
-            if (index >= member.Parameters.Length)
-                continue;
-            var parameter = member.Parameters[index];
-            foreach (var referenced in await SymbolFinder.FindReferencesAsync(parameter, solution, cancellationToken))
-                if (referenced.Locations.Any())
-                    return member.ToDisplayString();
-        }
-
-        return null;
     }
 
     // Removes the parameter at the given index from every family declaration and the matching argument at every
@@ -401,7 +384,7 @@ public sealed class ChangeSignatureRefactorer
         IReadOnlyList<string> newOrder,
         CancellationToken cancellationToken)
     {
-        var resolution = await ResolveMethodAsync(solution, methodName, containingTypeName, cancellationToken);
+        var resolution = await _validator.ResolveMethodAsync(solution, methodName, containingTypeName, cancellationToken);
         if (resolution.Method is null)
             return ChangeSignatureResult.Abstain(resolution.Reason!);
         var method = resolution.Method;
@@ -413,11 +396,11 @@ public sealed class ChangeSignatureRefactorer
         if (permutation.SequenceEqual(Enumerable.Range(0, current.Count)))
             return ChangeSignatureResult.Abstain("the requested order is the current order; nothing to do");
 
-        var family = await CollectMethodFamilyAsync(solution, method, cancellationToken);
+        var family = await _validator.CollectMethodFamilyAsync(solution, method, cancellationToken);
 
         // Safety: a positional call site silently rebinds after a reorder, so require every call site to name its
         // arguments (a positional reorder with same types is the item's stated kill risk).
-        var positionalSite = await FirstPositionalCallSiteAsync(solution, family, cancellationToken);
+        var positionalSite = await _validator.FindFirstPositionalCallSiteAsync(solution, family, cancellationToken);
         if (positionalSite is not null)
             return ChangeSignatureResult.Abstain($"call site at {positionalSite} uses positional arguments; reorder abstains (only named-argument call sites are safe to reorder)");
 
@@ -435,30 +418,6 @@ public sealed class ChangeSignatureRefactorer
             return ChangeSignatureResult.Abstain("the rewrite produced no change");
 
         return ChangeSignatureResult.Ok(method.ToDisplayString(), $"reordered to ({string.Join(", ", newOrder)})", diffs);
-    }
-
-    // The first call site that passes a positional argument to a family member, or null when every call site names
-    // all its arguments. A method called with no arguments (all defaulted) is not a reorder hazard.
-    private static async Task<string?> FirstPositionalCallSiteAsync(
-        Solution solution, IReadOnlyCollection<IMethodSymbol> family, CancellationToken cancellationToken)
-    {
-        foreach (var member in family)
-        {
-            foreach (var referenced in await SymbolFinder.FindReferencesAsync(member, solution, cancellationToken))
-            {
-                foreach (var location in referenced.Locations)
-                {
-                    var doc = location.Document;
-                    var root = await doc.GetSyntaxRootAsync(cancellationToken);
-                    var token = root?.FindToken(location.Location.SourceSpan.Start);
-                    var invocation = token?.Parent?.AncestorsAndSelf().OfType<InvocationExpressionSyntax>().FirstOrDefault();
-                    if (invocation is not null && invocation.ArgumentList.Arguments.Any(a => a.NameColon is null))
-                        return HumanNode(invocation);
-                }
-            }
-        }
-
-        return null;
     }
 
     // Reorders each family declaration's parameter list per the permutation (all call sites are named, so they
@@ -540,82 +499,6 @@ public sealed class ChangeSignatureRefactorer
             return ChangeSignatureResult.Abstain("the rewrite produced no change (the method or its call sites were not found in source)");
 
         return ChangeSignatureResult.Ok(method.ToDisplayString(), $"{parameterType} {parameterName}", diffs, rewrite.FollowUps);
-    }
-
-    // Resolves exactly one source method by name (optionally within a named type). Zero matches or more than one
-    // distinct method (an overload set or a name shared across types) abstains, because changing the wrong one, or
-    // several at once, is worse than refusing.
-    private static async Task<(IMethodSymbol? Method, string? Reason)> ResolveMethodAsync(
-        Solution solution, string methodName, string? containingTypeName, CancellationToken cancellationToken)
-    {
-        var matches = new List<IMethodSymbol>(SymbolEqualityComparerCapacity);
-        var seen = new HashSet<IMethodSymbol>(SymbolEqualityComparer.Default);
-        foreach (var project in solution.Projects)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var compilation = await project.GetCompilationAsync(cancellationToken);
-            if (compilation is null)
-                return (null, $"project '{project.Name}' produced no compilation; the change would be incomplete");
-
-            foreach (var type in EnumerateSourceTypes(compilation.Assembly.GlobalNamespace))
-            {
-                if (containingTypeName is not null && type.Name != containingTypeName)
-                    continue;
-                foreach (var member in type.GetMembers(methodName).OfType<IMethodSymbol>())
-                {
-                    if (member.MethodKind != MethodKind.Ordinary || member.IsImplicitlyDeclared)
-                        continue;
-                    if (seen.Add(member))
-                        matches.Add(member);
-                }
-            }
-        }
-
-        return matches.Count switch
-        {
-            0 => (null, $"method '{methodName}' was not found in the loaded solution's source"),
-            1 => (matches[0], null),
-            _ => (null, $"'{methodName}' is ambiguous ({matches.Count} methods match); pass a containing type or disambiguate (overload sets are not yet supported)"),
-        };
-    }
-
-    private const int SymbolEqualityComparerCapacity = 4;
-
-    // The set of method symbols that must change together: the resolved method, the base-most definition it
-    // overrides, every override of that definition, and every interface member it implements plus their
-    // implementations. Deduplicated by symbol identity.
-    private static async Task<IReadOnlyCollection<IMethodSymbol>> CollectMethodFamilyAsync(
-        Solution solution, IMethodSymbol method, CancellationToken cancellationToken)
-    {
-        var family = new HashSet<IMethodSymbol>(SymbolEqualityComparer.Default) { method };
-
-        // Walk to the base-most definition and include the whole override chain below it.
-        var root = method;
-        while (root.OverriddenMethod is { } overridden)
-            root = overridden;
-        family.Add(root);
-        foreach (var over in await SymbolFinder.FindOverridesAsync(root, solution, cancellationToken: cancellationToken))
-            if (over is IMethodSymbol m)
-                family.Add(m);
-
-        // Include the interface members this method implements, and every implementation of those interface members.
-        foreach (var iface in method.ContainingType.AllInterfaces)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            foreach (var ifaceMember in iface.GetMembers(method.Name).OfType<IMethodSymbol>())
-            {
-                var impl = method.ContainingType.FindImplementationForInterfaceMember(ifaceMember);
-                if (impl is not null && SymbolEqualityComparer.Default.Equals(impl, method))
-                {
-                    family.Add(ifaceMember);
-                    foreach (var found in await SymbolFinder.FindImplementationsAsync(ifaceMember, solution, cancellationToken: cancellationToken))
-                        if (found is IMethodSymbol fm)
-                            family.Add(fm);
-                }
-            }
-        }
-
-        return family;
     }
 
     // Applies the parameter to every family declaration and an argument to every invocation call site, grouped by
@@ -756,29 +639,6 @@ public sealed class ChangeSignatureRefactorer
         return true;
     }
 
-    private static IEnumerable<INamedTypeSymbol> EnumerateSourceTypes(INamespaceSymbol ns)
-    {
-        foreach (var type in ns.GetTypeMembers())
-        {
-            yield return type;
-            foreach (var nested in EnumerateNestedTypes(type))
-                yield return nested;
-        }
-
-        foreach (var child in ns.GetNamespaceMembers())
-            foreach (var nested in EnumerateSourceTypes(child))
-                yield return nested;
-    }
-
-    private static IEnumerable<INamedTypeSymbol> EnumerateNestedTypes(INamedTypeSymbol type)
-    {
-        foreach (var nested in type.GetTypeMembers())
-        {
-            yield return nested;
-            foreach (var deeper in EnumerateNestedTypes(nested))
-                yield return deeper;
-        }
-    }
 }
 
 /// <summary>One file's staged change-signature edit.</summary>
