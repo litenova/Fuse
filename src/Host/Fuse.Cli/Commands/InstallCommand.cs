@@ -125,7 +125,9 @@ public sealed class InstallCommand
             $"Registered {configured} MCP client{(configured == 1 ? string.Empty : "s")} at {Scope.ToLowerInvariant()} scope. " +
             "The client can launch 'fuse mcp serve' when MCP is enabled.");
         _consoleUI.WriteStep(
-            "Registration writes client configuration only. It does not install the Fuse binary, start a permanent service, create an index, or install an agent skill.");
+            NoRules
+                ? "Registration wrote client configuration only. It did not write managed guidance, install the Fuse binary, start a permanent service, create an index, or install an agent skill."
+                : "Registration wrote client configuration and versioned managed guidance. It did not install the Fuse binary, start a permanent service, create an index, or install an agent skill.");
         _consoleUI.WriteStep(
             "Workspace-scoped tools activate only when the requested folder resolves to a Git repository. Nested folders share the repository-root index; fuse_reduce remains available outside Git repositories.");
 
