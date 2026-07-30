@@ -166,7 +166,7 @@ fuse gate ./src
 
 ## fuse test
 
-Run the covering tests for a symbol (the tests that reach it via persisted `tests` edges) at build grade, scoped by filter. Run `fuse index` first.
+Run the covering tests for a symbol (the tests that reach it via persisted `tests` edges) at build grade, scoped by filter. Fuse groups the selected tests by owning project, including linked test source files, and runs each project filter in sequence. Run `fuse index` first.
 
 ```text
 fuse test OrderService --path ./src

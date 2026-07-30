@@ -110,7 +110,7 @@ indexing for that project and reports the mode.
 - When a signature must change, `fuse_refactor` stages the refactor as a diff and
   returns it only when the compiler reports no new diagnostic.
 - After an edit, `fuse_test` selects and runs the test types that reach the changed
-  symbol instead of starting with the whole suite.
+  symbol, grouped by owning project, instead of starting with the whole suite.
 
 Every answer names how it was produced. Fuse calls this the **verification grade**:
 oracle grade checks against the compilation captured from the real build, build grade

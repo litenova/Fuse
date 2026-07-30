@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Text;
 using Fuse.Cli.Rpc;
+using Fuse.Cli.Services;
 using Fuse.Collection.FileSystem;
 using Fuse.Context;
 using Fuse.Indexing;
@@ -383,65 +384,64 @@ public sealed partial class FuseTools
         if (covering.Count == 0)
             return $"covering tests for {symbol}: none (no tests edge reaches it, so there is nothing to run). This is the selection-only floor; a test reached only by reflection has no edge and is not selected.";
 
-        var discovery = await new Fuse.Semantics.DotNetWorkspaceDiscoverer().DiscoverAsync(root, cancellationToken);
-        var target = discovery.SolutionPath ?? discovery.ProjectPaths.FirstOrDefault();
-        if (target is null)
-            return $"covering tests for {symbol}: {covering.Count} test type(s) selected, but no solution or project was found to run them (selection-only).";
-
-        var filter = Fuse.Workspace.TestFilterBuilder.BuildContains(covering.Select(c => c.Symbol));
-        var scratch = Path.Combine(Path.GetTempPath(), "fuse-test", Guid.NewGuid().ToString("N"));
-        try
+        var scopedRun = await new ProjectScopedCoveringTestRunner().RunAsync(
+            root,
+            covering
+                .Where(item => !string.IsNullOrWhiteSpace(item.Symbol))
+                .Select(item => new CoveredTestSelection(item.Path, item.Symbol!))
+                .ToList(),
+            TimeSpan.FromMinutes(10),
+            cancellationToken);
+        if (scopedRun.ProjectRuns.Count == 0)
         {
-            var result = await Fuse.Workspace.BuildGradeTestRunner.RunAsync(
-                target, filter, scratch, TimeSpan.FromMinutes(10), cancellationToken);
-
-            var builder = new StringBuilder();
-            builder.AppendLine("verification grade: build (ran dotnet test scoped to the covering tests; the emit fast path is future work)");
-            if (result.TimedOut)
-            {
-                builder.AppendLine($"covering tests for {symbol}: timed out and the test host was killed. Narrow the change or raise the budget.");
-                return builder.ToString().TrimEnd();
-            }
-
-            if (result.Diagnostics is not null)
-            {
-                builder.AppendLine($"covering tests for {symbol}: {result.Diagnostics}");
-                return builder.ToString().TrimEnd();
-            }
-
-            var passed = result.Verdicts.Count(v => v.Outcome == "passed");
-            var failed = result.Verdicts.Count(v => v.Outcome == "failed");
-            var notRun = result.Verdicts.Count(v => v.Outcome == "not-run");
-            builder.AppendLine($"covering tests for {symbol}: {covering.Count} test type(s), {result.Verdicts.Count} test(s) run - {passed} passed, {failed} failed, {notRun} not-run");
-            foreach (var verdict in result.Verdicts.OrderBy(v => v.Outcome == "failed" ? 0 : 1).ThenBy(v => v.Name, StringComparer.Ordinal))
-                builder.AppendLine($"  {verdict.Outcome} {verdict.Name}");
-
-            // Covering types that produced no verdict are reported not-runnable by name, never counted green.
-            var notRunnable = Fuse.Workspace.CoveringRunAnalysis.NotRunnableTypes(
-                covering.Select(c => c.Symbol).ToList(), result.Verdicts);
-            if (notRunnable.Count > 0)
-            {
-                builder.AppendLine($"not-runnable ({notRunnable.Count}; selected but produced no result - a collection error or no runnable test):");
-                foreach (var type in notRunnable)
-                    builder.AppendLine($"  {type}");
-            }
-
-            // The graded claims block (U2): a test verdict is compiler/test-grade truth (the real dotnet test ran),
-            // so this claim is verified - the strongest grade, distinct from the graph-grade impact claims.
-            builder.AppendLine();
-            builder.AppendLine(ClaimLedger.Render(
-            [
-                Claim.FromCompiler(
-                    $"{passed} of {result.Verdicts.Count} covering test(s) passed ({failed} failed) for {symbol}",
-                    "test: build-grade dotnet test run over the covering set"),
-            ]));
-
-            return builder.ToString().TrimEnd();
+            var unowned = scopedRun.UnownedTestFiles.Count == 0
+                ? "no selected test type had an owning project"
+                : $"{scopedRun.UnownedTestFiles.Count} selected test file(s) had no owning project: {string.Join(", ", scopedRun.UnownedTestFiles)}";
+            return $"covering tests for {symbol}: {scopedRun.SelectedTestTypes.Count} test type(s) selected, but {unowned} (selection-only).";
         }
-        finally
+
+        var results = scopedRun.ProjectRuns.SelectMany(run => run.Result.Verdicts).ToList();
+        var passed = results.Count(verdict => verdict.Outcome == "passed");
+        var failed = results.Count(verdict => verdict.Outcome == "failed");
+        var notRun = results.Count(verdict => verdict.Outcome == "not-run");
+        var builder = new StringBuilder();
+        builder.AppendLine($"verification grade: build (ran dotnet test scoped to the covering tests in {scopedRun.ProjectRuns.Count} owning project(s); the emit fast path is future work)");
+        foreach (var run in scopedRun.ProjectRuns)
         {
-            try { Directory.Delete(scratch, recursive: true); } catch (IOException) { }
+            var project = Path.GetRelativePath(root, run.ProjectPath).Replace('\\', '/');
+            if (run.Result.TimedOut)
+                builder.AppendLine($"  {project}: timed out and the test host was killed. Narrow the change or raise the budget.");
+            else if (run.Result.Diagnostics is not null)
+                builder.AppendLine($"  {project}: {run.Result.Diagnostics}");
         }
+
+        if (scopedRun.UnownedTestFiles.Count > 0)
+            builder.AppendLine($"selection-only: {scopedRun.UnownedTestFiles.Count} selected test file(s) had no owning project: {string.Join(", ", scopedRun.UnownedTestFiles)}");
+
+        builder.AppendLine($"covering tests for {symbol}: {scopedRun.SelectedTestTypes.Count} test type(s), {results.Count} test(s) run - {passed} passed, {failed} failed, {notRun} not-run");
+        foreach (var verdict in results.OrderBy(verdict => verdict.Outcome == "failed" ? 0 : 1).ThenBy(verdict => verdict.Name, StringComparer.Ordinal))
+            builder.AppendLine($"  {verdict.Outcome} {verdict.Name}");
+
+        // Covering types that produced no verdict are reported not-runnable by name, never counted green.
+        var notRunnable = Fuse.Workspace.CoveringRunAnalysis.NotRunnableTypes(scopedRun.SelectedTestTypes, results);
+        if (notRunnable.Count > 0)
+        {
+            builder.AppendLine($"not-runnable ({notRunnable.Count}; selected but produced no result - a collection error or no runnable test):");
+            foreach (var type in notRunnable)
+                builder.AppendLine($"  {type}");
+        }
+
+        // The graded claims block (U2): a test verdict is compiler/test-grade truth (the real dotnet test ran),
+        // so this claim is verified - the strongest grade, distinct from the graph-grade impact claims.
+        builder.AppendLine();
+        builder.AppendLine(ClaimLedger.Render(
+        [
+            Claim.FromCompiler(
+                $"{passed} of {results.Count} covering test(s) passed ({failed} failed) for {symbol}",
+                "test: build-grade dotnet test run over the covering set"),
+        ]));
+
+        return builder.ToString().TrimEnd();
     }
 
     // Candidate racing (F2): parse the candidates argument, verify their speculative typechecks over the live
