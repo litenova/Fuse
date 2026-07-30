@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fuse.codes/schema/v4.4/fuse.schema.json",
+  "title": "Fuse workspace configuration",
+  "description": "The root-only fuse.json contract read by Fuse 4.4. Fuse reads configuration only from the repository root and accepts no other keys.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "The schema identifier. Informational; it lets editors validate this file."
+    },
+    "workspace": {
+      "type": "string",
+      "description": "An in-repository .sln, .slnx, .slnf, or .csproj used by explicit semantic indexing and compiler-backed requests. Relative paths resolve from the repository root and must not escape it.",
+      "pattern": "\\.(sln|slnx|slnf|csproj)$"
+    },
+    "ignore": {
+      "type": "array",
+      "description": "Extra directory names or paths excluded from inventory, combined with .fuseignore and the built-in exclusions.",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

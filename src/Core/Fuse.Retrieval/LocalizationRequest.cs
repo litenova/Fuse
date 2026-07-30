@@ -34,12 +34,6 @@ namespace Fuse.Retrieval;
 ///     Whether to apply the dependency-centrality prior. On by default; the ranking suite (N1) sets it false to
 ///     score the ranking channels in isolation and to re-adjudicate the priors as default-on features.
 /// </param>
-/// <param name="EnableCoChangePrior">
-///     Whether to apply the git co-change prior. OFF by default (Decision D6, discharged): the semantic-mode
-///     corpus-v2 ranking re-adjudication recorded it as net-negative (default-with-prior MRR 0.434 versus 0.489
-///     without, recall@10 -1.9 percent), so the prior is dropped from the shipping default. The ranking suite
-///     still toggles it to keep the effect measured and guarded.
-/// </param>
 public sealed record LocalizationRequest(
     string RootDirectory,
     string? Query = null,
@@ -58,8 +52,7 @@ public sealed record LocalizationRequest(
     bool IncludeConfig = true,
     bool Strict = false,
     bool ExpandGraph = false,
-    bool EnableCentralityPrior = true,
-    bool EnableCoChangePrior = false);
+    bool EnableCentralityPrior = true);
 
 /// <summary>
 ///     A candidate file or symbol produced by a candidate generator, before scoring and graph expansion.
@@ -115,9 +108,6 @@ public enum CandidateSource
     /// <summary>A full-text match on a body or comment field.</summary>
     FtsBody,
 
-    /// <summary>A git co-change neighbor.</summary>
-    Cochange,
-
     /// <summary>A neighbor pulled in by expanding a seed through the typed semantic graph.</summary>
     GraphNeighbor,
 }
@@ -144,7 +134,6 @@ public static class CandidateSourceWeights
         CandidateSource.FtsSymbol => 0.75,
         CandidateSource.FtsPath => 0.70,
         CandidateSource.FtsBody => 0.55,
-        CandidateSource.Cochange => 0.45,
         CandidateSource.GraphNeighbor => 0.40,
         _ => 0.50,
     };

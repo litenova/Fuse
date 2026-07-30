@@ -46,13 +46,14 @@ public sealed class WorkspaceExclusionsTests : IDisposable
     }
 
     [Fact]
-    public void LoadMergesFuseJsonIgnoreSingleString()
+    public void LoadRejectsFuseJsonIgnoreSingleString()
     {
         File.WriteAllText(Path.Combine(_root, "fuse.json"), "{ \"ignore\": \"thirdparty\" }");
 
-        var names = WorkspaceExclusions.LoadDirectoryNames(_root);
+        var exception = Assert.Throws<WorkspaceConfigurationException>(
+            () => WorkspaceExclusions.LoadDirectoryNames(_root));
 
-        Assert.Contains("thirdparty", names, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("ignore", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

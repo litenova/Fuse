@@ -95,7 +95,7 @@ public sealed class FusionConcurrencyTests : IDisposable
     }
 
     [Fact]
-    public async Task FuseAsync_ConcurrentPersistentRunsAgainstSameDirectory_ProduceConsistentResults()
+    public async Task FuseAsync_ConcurrentAnalysisCachedRunsAgainstSameDirectory_ProduceConsistentResults()
     {
         var dir = NewDirectory();
         WriteFile(dir, "Alpha.cs", """
@@ -114,7 +114,7 @@ public sealed class FusionConcurrencyTests : IDisposable
         var orchestrator = _serviceProvider.GetRequiredService<FusionOrchestrator>();
 
         var tasks = Enumerable.Range(0, 12)
-            .Select(_ => orchestrator.FuseAsync(BuildQueryRequest(dir, "Alpha", usePersistentIndex: true)))
+            .Select(_ => orchestrator.FuseAsync(BuildQueryRequest(dir, "Alpha", useAnalysisCache: true)))
             .ToArray();
 
         var results = await Task.WhenAll(tasks);
@@ -125,7 +125,8 @@ public sealed class FusionConcurrencyTests : IDisposable
         foreach (var result in results)
             Assert.Equal(first, result.InMemoryContent);
 
-        Assert.True(File.Exists(SqliteTestHelpers.FuseCacheDatabasePath(dir)));
+        Assert.False(File.Exists(Path.Combine(dir, ".fuse", "fuse-cache.db")));
+        Assert.False(File.Exists(Path.Combine(dir, ".fuse", "fuse.db")));
     }
 
     [Fact]
@@ -208,10 +209,10 @@ public sealed class FusionConcurrencyTests : IDisposable
     }
 
     // Builds a no-scope in-memory fusion request over the whole repo. The classic query scoping mode was
-    // removed (K2), so these concurrency tests exercise the orchestrator, persistent index, and reduction
-    // cache over an unscoped run rather than a query-scoped one; the label argument is retained only to keep
+    // removed (K2), so these concurrency tests exercise the orchestrator, host-memory analysis cache, and
+    // reduction cache over an unscoped run rather than a query-scoped one; the label argument is retained only to keep
     // each concurrent request's marker file distinct.
-    private static FusionRequest BuildQueryRequest(string dir, string label, bool usePersistentIndex = false)
+    private static FusionRequest BuildQueryRequest(string dir, string label, bool useAnalysisCache = false)
     {
         _ = label;
         return new FusionRequest(
@@ -219,15 +220,15 @@ public sealed class FusionConcurrencyTests : IDisposable
             new ReductionOptions(),
             new EmissionOptions(),
             inMemory: true,
-            useReductionCache: usePersistentIndex ? false : true,
-            usePersistentIndex: usePersistentIndex);
+            useReductionCache: useAnalysisCache ? false : true,
+            useAnalysisCache: useAnalysisCache);
     }
 
     private string NewDirectory()
     {
         var dir = Path.Combine(Path.GetTempPath(), "fuse-concurrency-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
-        SqliteTestHelpers.InitializeGitRepository(dir);
+        Directory.CreateDirectory(Path.Combine(dir, ".git"));
         _dirs.Add(dir);
         return dir;
     }

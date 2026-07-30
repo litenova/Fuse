@@ -3,11 +3,16 @@ using Fuse.Indexing;
 using Fuse.Plugins.Formats.Web.Extensions;
 using Fuse.Plugins.Languages.CSharp.Extensions;
 using Fuse.Plugins.Languages.CSharp.Roslyn.Extensions;
+using Fuse.Plugins.Abstractions.Reducers;
+using Fuse.Reduction;
 using Fuse.Cli.Services;
+using Fuse.Cli.Mcp;
+using Fuse.Cli.Rpc;
 using Fuse.Context;
 using Fuse.Retrieval;
 using Fuse.Semantics;
 using Fuse.Semantics.Analyzers;
+using Fuse.Workspace;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Fuse.Cli.Extensions;
@@ -49,8 +54,36 @@ public static class FuseServiceCollectionExtensions
         // Constructed via a factory because the optional ILogger constructor parameter is not registered.
         services.AddSingleton(_ => new RoslynWorkspaceLoader());
         services.AddSingleton(_ => SemanticAnalysisRunner.CreateDefault());
-        services.AddTransient<WorkspaceFileScanner>();
-        services.AddTransient<SemanticIndexer>();
+        services.AddSingleton<WorkspaceFileScanner>();
+        services.AddSingleton<IProcessRunner, OwnedProcessRunner>();
+        services.AddSingleton<BuildCaptureClient>();
+        // The indexer is retained by the singleton job executor. Register it with the same host lifetime so
+        // its compiler client and held-solution cache cannot be captured from a shorter-lived service.
+        services.AddSingleton<SemanticIndexer>();
+        services.AddSingleton<IndexCoordinator>();
+        services.AddSingleton<IWorkspaceIndexJobExecutor, SemanticIndexJobExecutor>();
+        services.AddSingleton<IWorkspaceIndexJobManager, WorkspaceIndexJobManager>();
+        services.AddSingleton<EagerIndex>();
+        services.AddSingleton<LocalIndexAccessProvider>();
+        services.AddSingleton<IIndexAccessProvider>(serviceProvider =>
+            serviceProvider.GetRequiredService<LocalIndexAccessProvider>());
+        services.AddSingleton<ResidentWorkspaceRegistry>();
+        services.AddSingleton<IResidentWorkspaceProvider>(serviceProvider =>
+            serviceProvider.GetRequiredService<ResidentWorkspaceRegistry>());
+        services.AddSingleton<WarmSolutionCache>();
+        services.AddSingleton<PooledCheckWorker>();
+        services.AddSingleton<FuseMcpRuntime>();
+        services.AddSingleton(serviceProvider => new FuseHostRequestContext(
+            serviceProvider.GetRequiredService<SemanticIndexer>(),
+            serviceProvider.GetRequiredService<IChangeSource>(),
+            serviceProvider.GetRequiredService<ContentReductionPipeline>(),
+            serviceProvider.GetRequiredService<Fuse.Reduction.Security.ISecretRedactor>(),
+            serviceProvider.GetRequiredService<IGeneratedCodeDetector>(),
+            serviceProvider.GetRequiredService<IndexCoordinator>(),
+            serviceProvider.GetRequiredService<IWorkspaceIndexJobManager>(),
+            serviceProvider.GetRequiredService<IIndexAccessProvider>(),
+            serviceProvider.GetRequiredService<FuseMcpRuntime>()));
+        services.AddSingleton<IndexJobClient>();
         services.AddSingleton<IChangeSource, GitChangeSource>();
         services.AddSingleton<ContextSessionStore>();
         return services;

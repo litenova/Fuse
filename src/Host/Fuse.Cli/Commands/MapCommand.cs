@@ -69,7 +69,7 @@ public sealed class MapCommand
         await using var store = new WorkspaceIndexStore(databasePath);
         await store.InitializeAsync(context.CancellationToken);
 
-        var renderer = new WorkspaceMapRenderer(store);
+        var renderer = new WorkspaceMapRenderer(store, store);
         var map = await renderer.RenderAsync(detail, MaxRows, context.CancellationToken);
         _consoleUI.WriteResult(map);
     }

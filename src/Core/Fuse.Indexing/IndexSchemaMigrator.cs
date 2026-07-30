@@ -23,8 +23,11 @@ internal sealed class IndexSchemaMigrator
     /// </summary>
     /// <param name="connectionFactory">The connection factory for the index database.</param>
     /// <param name="logger">An optional logger for migration diagnostics.</param>
-    public IndexSchemaMigrator(WorkspaceIndexConnectionFactory _, ILogger? logger = null) =>
+    public IndexSchemaMigrator(WorkspaceIndexConnectionFactory connectionFactory, ILogger? logger = null)
+    {
+        ArgumentNullException.ThrowIfNull(connectionFactory);
         _logger = logger;
+    }
 
     /// <summary>
     ///     Reads the current schema version and, if it is below the target, drops all Fuse-owned
@@ -57,11 +60,30 @@ internal sealed class IndexSchemaMigrator
     /// </remarks>
     public static async Task RebuildAsync(SqliteConnection connection, CancellationToken cancellationToken)
     {
-        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
-        await DropAllObjectsAsync(connection, transaction, cancellationToken);
-        await ExecuteAsync(connection, transaction, WorkspaceIndexSchema.CreateTablesDdl, cancellationToken);
-        await SetVersionAsync(connection, transaction, WorkspaceIndexSchema.TargetVersion, cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        // SQLite ignores PRAGMA foreign_keys changes inside an active transaction. Disable enforcement before the
+        // rebuild transaction so legacy tables with references in an arbitrary sqlite_master order can be removed
+        // as one owned derived-data unit, then restore enforcement before this connection is returned to the pool.
+        await ExecuteAsync(connection, null, "PRAGMA foreign_keys = OFF;", cancellationToken);
+        try
+        {
+            await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+            await DropAllObjectsAsync(connection, transaction, cancellationToken);
+            await ExecuteAsync(connection, transaction, WorkspaceIndexSchema.CreateTablesDdl, cancellationToken);
+            await SetVersionAsync(connection, transaction, WorkspaceIndexSchema.TargetVersion, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        finally
+        {
+            // A cancelled rebuild still returns this connection to a pooled store. Restoring the connection-local
+            // foreign-key setting is a bounded safety cleanup, not more index work, so it gets its own short token.
+            using var restoreForeignKeys = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+            await ExecuteAsync(connection, null, "PRAGMA foreign_keys = ON;", restoreForeignKeys.Token);
+        }
+
+        // SQLite persists auto-vacuum mode only after VACUUM. Rebuilds are the one index path allowed to do this
+        // blocking operation; regular refreshes use the bounded incremental_vacuum maintenance path instead.
+        await ExecuteAsync(connection, null, "PRAGMA auto_vacuum = INCREMENTAL;", cancellationToken);
+        await ExecuteAsync(connection, null, "VACUUM;", cancellationToken);
     }
 
     /// <summary>
@@ -105,7 +127,7 @@ internal sealed class IndexSchemaMigrator
             var result = await command.ExecuteScalarAsync(cancellationToken);
             return result is long version ? (int)version : 0;
         }
-        catch (SqliteException)
+        catch (SqliteException ex) when (IsMissingTable(ex))
         {
             return 0;
         }
@@ -213,6 +235,12 @@ internal sealed class IndexSchemaMigrator
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    // A missing schema table denotes an empty or pre-schema database. Other SQLite errors, especially
+    // SQLITE_NOTADB, must reach WorkspaceIndexStore so corrupt derived data is deleted and recreated.
+    private static bool IsMissingTable(SqliteException exception) =>
+        exception.SqliteErrorCode == 1
+        && exception.Message.Contains("no such table", StringComparison.OrdinalIgnoreCase);
+
     private static async Task EnsureVersionTableForReadAsync(SqliteConnection connection, CancellationToken cancellationToken)
     {
         await EnsureVersionTableAsync(connection, cancellationToken);
@@ -239,7 +267,6 @@ internal sealed class IndexSchemaMigrator
             }
         }
 
-        await ExecuteAsync(connection, transaction, "PRAGMA foreign_keys = OFF;", cancellationToken);
         foreach (var (type, name, _) in objects.OrderByDescending(o => o.IsVirtual))
         {
             var quoted = name.Replace("\"", "\"\"", StringComparison.Ordinal);
@@ -247,7 +274,6 @@ internal sealed class IndexSchemaMigrator
         }
 
         await ExecuteAsync(connection, transaction, "DELETE FROM schema_version;", cancellationToken);
-        await ExecuteAsync(connection, transaction, "PRAGMA foreign_keys = ON;", cancellationToken);
     }
 
     private static async Task SetVersionAsync(

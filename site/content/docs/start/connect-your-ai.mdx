@@ -6,11 +6,11 @@ description: Register Fuse with any MCP-compatible coding agent and confirm a co
 Run the command from inside a Git repository. `fuse mcp install` writes configuration for
 Claude Code, Cursor, GitHub Copilot, OpenCode, Kilo Code, Codex, and Grok Build. Other MCP
 clients use the same stdio server with manual registration. No environment block is
-required: shared daemon, background upgrade, build capture, and session auto-update
-default on inside `fuse mcp serve`.
+required: the shared daemon and syntax-first indexing default on inside `fuse mcp serve`.
+Compiler analysis starts only for an explicit semantic index or compiler-backed request.
 
 ```bash
-fuse mcp install --rules
+fuse mcp install
 ```
 
 Model Context Protocol (MCP) is the connection format that lets a coding agent launch
@@ -27,16 +27,15 @@ The command's options control separate artifacts:
 
 | Command | Writes | Does not write |
 |---------|--------|----------------|
-| `fuse mcp install` | The selected client's MCP server entry for `fuse mcp serve` | Agent rule files, hooks, skills, or an index |
-| `fuse mcp install --rules` | MCP registration plus the client's documented instruction file, such as `AGENTS.md` or `CLAUDE.md`; project scope also adds `.fuse/` to `.gitignore` | A skill or hook |
-| `fuse mcp install --with-hooks` | MCP registration plus project-scoped Claude Code hooks in `.claude/settings.json` | Agent rules unless `--rules` is also set |
-| `fuse mcp install --rules --with-hooks` | MCP registration, agent instructions, and Claude Code hooks | A skill or an index |
+| `fuse mcp install` | MCP registration, the v4.4 managed instruction block, and `.fuse/` in project `.gitignore` when needed | A skill, hook, or index |
+| `fuse mcp install --no-rules` | MCP registration only | Managed instructions, a skill, hook, or index |
+| `fuse mcp install --with-hooks` | Default installation plus project-scoped Claude Code hooks in `.claude/settings.json` | A skill or an index |
 
-The MCP server always advertises its built-in server instructions during connection.
-`--rules` is separate: it persists the same task-routing guidance where the selected
-client reads repository or user instructions. For Codex, OpenCode, and Kilo Code this is
-an `AGENTS.md` file. For Claude Code it is `CLAUDE.md`. These are instruction files, not
-skills.
+The MCP server always advertises its built-in server instructions during connection. The
+installer writes the same short, versioned task-routing block by default and replaces only
+the text between `<!-- fuse:begin v4.4 -->` and `<!-- fuse:end -->`. It leaves all user
+content outside those markers unchanged. For Codex, OpenCode, and Kilo Code this is an
+`AGENTS.md` file. For Claude Code it is `CLAUDE.md`. These are instruction files, not skills.
 
 Reload the agent, then ask it to check the connection:
 
@@ -54,7 +53,7 @@ The opening command registers all seven supported clients for the current projec
 use the default `--client all`. To register Fuse for every project on this machine:
 
 ```bash
-fuse mcp install --rules --scope user
+fuse mcp install --scope user
 ```
 
 Registration scope controls where the MCP client entry and optional rules are written.
@@ -74,34 +73,37 @@ it accepts known files or raw content without a workspace index.
 To register one client:
 
 ```bash
-fuse mcp install --client cursor --rules
-fuse mcp install --client claude --rules
-fuse mcp install --client copilot --rules
-fuse mcp install --client opencode --rules
-fuse mcp install --client kilo --rules
-fuse mcp install --client codex --rules
-fuse mcp install --client grok --rules
+fuse mcp install --client cursor
+fuse mcp install --client claude
+fuse mcp install --client copilot
+fuse mcp install --client opencode
+fuse mcp install --client kilo
+fuse mcp install --client codex
+fuse mcp install --client grok
 ```
 
 The available flags are:
 
 - `--client claude|cursor|copilot|opencode|kilo|codex|grok|all`, default `all`
 - `--scope project|user`, default `project`
-- `--rules`, which writes the recommended agent instructions and, at project scope, adds `.fuse/` to `.gitignore`
-- `--with-hooks`, which writes project-scoped Claude Code verification hooks; combine it with `--rules` when both are wanted
+- `--no-rules`, which writes MCP registration without managed agent instructions or the project `.gitignore` entry
+- `--with-hooks`, which writes project-scoped Claude Code verification hooks in addition to the default managed instructions
 - `--command`, which changes the executable the client launches
+- `fuse mcp doctor [path] --client <name> --scope project|user --json`, which checks registration, executable paths, managed instructions, daemon protocol, repository identity, and active index jobs
 
 ## What Project Setup Writes
 
-- Claude Code: `.mcp.json`, plus a Fuse-managed block in `CLAUDE.md` when `--rules` is set.
-- Cursor: `.cursor/mcp.json`, plus `.cursor/rules/fuse.mdc` when `--rules` is set.
+- Claude Code: `.mcp.json`, plus a Fuse-managed block in `CLAUDE.md`.
+- Cursor: `.cursor/mcp.json`, plus `.cursor/rules/fuse.mdc`.
 - GitHub Copilot: `.vscode/mcp.json`, plus a Fuse-managed block in
-  `.github/copilot-instructions.md` when `--rules` is set.
-- OpenCode: `opencode.json`, plus a Fuse-managed block in `AGENTS.md` when `--rules` is set.
-- Kilo Code: `.kilo/kilo.jsonc`, plus a Fuse-managed block in `AGENTS.md` when `--rules` is set.
-- Codex: `.codex/config.toml`, plus a Fuse-managed block in `AGENTS.md` when `--rules` is set.
-- Grok Build: `.grok/config.toml`, plus a Fuse-managed block in `AGENTS.md` when `--rules` is set.
-- `.gitignore`: appends `.fuse/` at project scope when `--rules` is set (skipped when an equivalent entry already exists).
+  `.github/copilot-instructions.md`.
+- OpenCode: `opencode.json`, plus a Fuse-managed block in `AGENTS.md`.
+- Kilo Code: `.kilo/kilo.jsonc`, plus a Fuse-managed block in `AGENTS.md`.
+- Codex: `.codex/config.toml`, plus a Fuse-managed block in `AGENTS.md`.
+- Grok Build: `.grok/config.toml`, plus a Fuse-managed block in `AGENTS.md`.
+- `.gitignore`: appends `.fuse/` at project scope (skipped when an equivalent entry already exists).
+
+Pass `--no-rules` to omit every managed instruction file and the `.gitignore` update.
 
 Existing config keys and instruction text are retained. Re-running the command updates the
 Fuse server entry and marker-delimited rule in place. Project files can be committed so the
@@ -122,13 +124,28 @@ OpenCode writes `~/.config/opencode/opencode.json` and
 `~/.grok/config.toml`, or `$GROK_HOME/config.toml` when that variable is set.
 
 Cursor and Copilot do not have a user-global rule file. Grok Build documents repository
-`AGENTS.md` discovery but no user-global `AGENTS.md`. `--rules --scope user` skips those
+`AGENTS.md` discovery but no user-global `AGENTS.md`. User-scope installation skips those
 three rules with a note.
 
 The optional project-scoped `--with-hooks` flag also merges two Claude Code hooks into
 `.claude/settings.json`: a post-edit `fuse check --delta --fast` hook and a stop-time
 `fuse gate` hook. User scope with `--with-hooks` is refused because the hook commands are
 bound to one repository and its daemon identity.
+
+## Inspect an Installation
+
+`fuse mcp doctor` reads the selected registration without modifying it. It reports the
+running Fuse version, the `fuse` executable found on PATH, the selected client configuration
+and command, managed-block version, optional hooks, daemon protocol, repository identity,
+and active index job. Use JSON when another tool must consume the result.
+
+```bash
+fuse mcp doctor --client codex --scope project --json
+fuse mcp doctor --client claude --with-hooks
+```
+
+After `fuse mcp install`, the command runs this check and tells you when the selected client
+must restart before it reads the new registration.
 
 ## Get the First Compiler-Backed Result
 
@@ -152,10 +169,11 @@ and removed files are deleted from the `files` table and its derived rows.
 
 Run
 `fuse index` (or ask the agent to call `fuse_workspace` with `action=index`) only when you
-want to wait for a complete semantic index before the first task. Otherwise a cold read
-uses a bounded syntax-first pass and reports when the semantic upgrade is still running.
-Fuse then re-indexes changed files through the live watcher and read-time backstop. It
-reports `partial` or `syntax` analysis when MSBuild cannot load every project.
+want to wait for the syntax index before the first task. Add `--semantic` when a complete
+workspace compiler pass is required. Otherwise a cold read uses a bounded syntax-first pass
+and reports the active job. Fuse then re-indexes changed files through the live watcher and
+read-time backstop. It reports `partial` or `syntax` analysis when compiler analysis cannot
+load every selected project.
 
 ## Local Process and Network Behavior
 
@@ -179,8 +197,6 @@ in the client `env` block or your shell:
 | `FUSE_DAEMON` | `0` | Serve in-process instead of delegating to a shared `fuse host` per repository |
 | `FUSE_AUTO_UPDATE` | `0` | Do not launch a background updater between MCP sessions |
 | `FUSE_EAGER_INDEX` | `0` | Do not start warming the repository when the daemon or MCP server starts |
-| `FUSE_BG_UPGRADE` | `0` | Block the first read on a full synchronous index instead of syntax-first serving |
-| `FUSE_BUILD_CAPTURE` | `0` | Skip tier-1 build capture (oracle-grade checks need a local build instead) |
 | `FUSE_UPDATE_CHECK` | `0` | Disable the NuGet update notice on stderr |
 
 See [Configuration keys](/docs/reference/configuration-keys) for the full list.

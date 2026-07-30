@@ -1,14 +1,11 @@
 using Fuse.Cli.Mcp;
-using Fuse.Indexing;
-using Fuse.Reduction.Caching;
-using Fuse.Semantics;
 using Fuse.Workspace;
 
 namespace Fuse.Cli.Services;
 
 /// <summary>
 ///     Wires the resident workspace (S1) into a resident host process (<c>mcp serve</c> or <c>fuse host</c>): it
-///     registers a <see cref="ResidentWorkspaceRegistry" /> as the read tools' provider, warms the served root in
+///     warms the host-owned <see cref="ResidentWorkspaceRegistry" /> for the served root in
 ///     the background so startup is never blocked by the build, and drives incremental updates from a file
 ///     watcher's coalesced batches. It is opt-in for now (the <c>FUSE_RESIDENT</c> flag), default off, so a host
 ///     that does not opt in behaves exactly as before; promotion to default-on is the S1 latency gate.
@@ -32,12 +29,13 @@ public static class ResidentWorkspaceHosting
     }
 
     /// <summary>
-    ///     Enables the resident workspace for a root over an existing file watcher: registers the registry as the
-    ///     provider, warms the root in the background, and subscribes the watcher's batch to the registry.
+    ///     Enables the resident workspace for a root over an existing file watcher: warms the supplied host-owned
+    ///     registry in the background and subscribes the watcher's batch to it.
     /// </summary>
     /// <param name="root">The absolute repository root the host serves.</param>
     /// <param name="watcher">The host's file watcher; its <see cref="IResidentBatchWatcher.BatchChanged" /> drives updates.</param>
-    /// <param name="indexer">The semantic indexer the registry projects resident edits through into the store.</param>
+    /// <param name="registry">The resident workspace registry owned by this host's dependency container.</param>
+    /// <param name="indexJobs">The host-owned repository job manager used to refresh persisted syntax data.</param>
     /// <param name="log">A sink for non-fatal diagnostics (stderr), or null.</param>
     /// <param name="cancellationToken">The host's lifetime token.</param>
     /// <returns>
@@ -45,11 +43,14 @@ public static class ResidentWorkspaceHosting
     ///     default null provider. The caller owns the watcher's lifetime.
     /// </returns>
     public static IDisposable Enable(
-        string root, IResidentBatchWatcher watcher, SemanticIndexer indexer, Action<string>? log, CancellationToken cancellationToken)
+        string root,
+        IResidentBatchWatcher watcher,
+        ResidentWorkspaceRegistry registry,
+        IWorkspaceIndexJobManager indexJobs,
+        Action<string>? log,
+        CancellationToken cancellationToken)
     {
         var fullRoot = Path.GetFullPath(root);
-        var registry = new ResidentWorkspaceRegistry();
-        FuseTools.ResidentWorkspaces = registry;
 
         _ = Task.Run(async () =>
         {
@@ -76,34 +77,30 @@ public static class ResidentWorkspaceHosting
             if (result is null || result.Applied + result.Added + result.Removed == 0)
                 return;
 
-            // Project the changed cone into the store so the store-backed read tools reflect the edit (S1 step 4).
-            // The resident watcher is the sole store writer (OpenIndexedAsync skips reconcile when resident), so
-            // this does not race the read path. Failures fall back to store-backed silently rather than crash.
+            // Persisted syntax data must use the same job owner as CLI and MCP indexing. The resident workspace
+            // remains current for resident-grade reads while the syntax refresh runs for store-backed readers.
             try
             {
-                var databasePath = FuseStorePaths.ResolveDatabasePath(fullRoot);
-                await using var store = new WorkspaceIndexStore(databasePath);
-                await store.InitializeAsync(batchToken);
-                var changedPaths = batch.Select(c => c.FullPath).ToList();
-                await registry.ProjectChangedAsync(fullRoot, indexer, store, changedPaths, batchToken);
+                await indexJobs.StartOrJoinAsync(
+                    new IndexJobRequest(fullRoot, IndexDepth.Syntax, Force: false, CaptureBundlePath: null),
+                    batchToken);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                log?.Invoke($"resident store projection failed: {ex.Message}");
+                log?.Invoke($"resident syntax refresh request failed: {ex.Message}");
             }
         };
 
         return new ResidentScope(registry);
     }
 
-    // Restores the default provider and disposes the registry (and its held workspaces) on host shutdown. The
-    // watcher is owned by the caller and disposed there.
+    // Disposes the registry's held workspaces on host shutdown. The watcher is owned by the caller and disposed
+    // there.
     private sealed class ResidentScope(ResidentWorkspaceRegistry registry) : IDisposable
     {
         public void Dispose()
         {
             registry.Dispose();
-            FuseTools.ResidentWorkspaces = NullResidentWorkspaceProvider.Instance;
         }
     }
 }

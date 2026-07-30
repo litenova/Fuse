@@ -10,17 +10,12 @@ namespace Fuse.Cli.Tests.Mcp;
 // S2: fuse_check delta mode. With a session and no content it returns the diagnostics introduced or resolved
 // since the persisted session baseline, using the resident workspace's whole-state diagnostics (no build). These
 // drive an in-process fuse_check with a mutable stub resident provider and a real store fixture.
-//
-// Shares a collection with the other tests that mutate the static FuseTools.ResidentWorkspaces, so xUnit
-// serializes them rather than racing the shared static across parallel classes.
-[Collection("FuseToolsResidentProvider")]
 public sealed class FuseCheckDeltaModeTests : IDisposable
 {
     private readonly ServiceProvider _provider = new ServiceCollection().AddFuseForTests().BuildServiceProvider();
 
     public void Dispose()
     {
-        FuseTools.ResidentWorkspaces = NullResidentWorkspaceProvider.Instance;
         _provider.Dispose();
     }
 
@@ -33,16 +28,18 @@ public sealed class FuseCheckDeltaModeTests : IDisposable
         {
             var root = Path.GetFullPath(work);
             var stub = new MutableCurrentProvider(root, []);
-            FuseTools.ResidentWorkspaces = stub;
+            var runtime = FuseMcpRuntime.CreateIsolated(indexer, stub);
 
             // First call: no baseline yet, so the current (empty) set is established as the baseline.
-            var established = await FuseTools.FuseCheckAsync(indexer, work, session: "s1", cancellationToken: CancellationToken.None);
+            var established = await CheckToolOperations.ExecuteAsync(
+                indexer, work, session: "s1", cancellationToken: CancellationToken.None, runtime: runtime);
             Assert.Contains("established", established);
 
             // The agent edits and introduces an error; the resident whole-state now reports it.
             stub.Current = [new CheckDiagnostic("CS1061", "Error", "'Widget' does not contain a definition for 'Nope'", "Widget.cs", 1)];
 
-            var delta = await FuseTools.FuseCheckAsync(indexer, work, session: "s1", cancellationToken: CancellationToken.None);
+            var delta = await CheckToolOperations.ExecuteAsync(
+                indexer, work, session: "s1", cancellationToken: CancellationToken.None, runtime: runtime);
             Assert.Contains("1 introduced", delta);
             Assert.Contains("CS1061", delta);
         }
@@ -62,12 +59,14 @@ public sealed class FuseCheckDeltaModeTests : IDisposable
             var root = Path.GetFullPath(work);
             var stub = new MutableCurrentProvider(root,
                 [new CheckDiagnostic("CS0246", "Error", "type X not found", "Widget.cs", 3)]);
-            FuseTools.ResidentWorkspaces = stub;
+            var runtime = FuseMcpRuntime.CreateIsolated(indexer, stub);
 
-            await FuseTools.FuseCheckAsync(indexer, work, session: "s2", cancellationToken: CancellationToken.None); // establish with the error present
+            await CheckToolOperations.ExecuteAsync(
+                indexer, work, session: "s2", cancellationToken: CancellationToken.None, runtime: runtime); // establish with the error present
             stub.Current = []; // the edit fixed it
 
-            var delta = await FuseTools.FuseCheckAsync(indexer, work, session: "s2", cancellationToken: CancellationToken.None);
+            var delta = await CheckToolOperations.ExecuteAsync(
+                indexer, work, session: "s2", cancellationToken: CancellationToken.None, runtime: runtime);
             Assert.Contains("1 resolved", delta);
         }
         finally
@@ -86,14 +85,17 @@ public sealed class FuseCheckDeltaModeTests : IDisposable
             var root = Path.GetFullPath(work);
             var stub = new MutableCurrentProvider(root,
                 [new CheckDiagnostic("CS1061", "Error", "no member", "Widget.cs", 1)]);
-            FuseTools.ResidentWorkspaces = stub;
+            var runtime = FuseMcpRuntime.CreateIsolated(indexer, stub);
 
-            await FuseTools.FuseCheckAsync(indexer, work, session: "s3", cancellationToken: CancellationToken.None); // baseline = 1 error
-            var reset = await FuseTools.FuseCheckAsync(indexer, work, session: "s3", markGreen: true, cancellationToken: CancellationToken.None);
+            await CheckToolOperations.ExecuteAsync(
+                indexer, work, session: "s3", cancellationToken: CancellationToken.None, runtime: runtime); // baseline = 1 error
+            var reset = await CheckToolOperations.ExecuteAsync(
+                indexer, work, session: "s3", markGreen: true, cancellationToken: CancellationToken.None, runtime: runtime);
             Assert.Contains("marked green", reset);
 
             // After mark-green the current set is the new baseline, so there is no delta.
-            var delta = await FuseTools.FuseCheckAsync(indexer, work, session: "s3", cancellationToken: CancellationToken.None);
+            var delta = await CheckToolOperations.ExecuteAsync(
+                indexer, work, session: "s3", cancellationToken: CancellationToken.None, runtime: runtime);
             Assert.Contains("0 introduced, 0 resolved", delta);
         }
         finally
@@ -109,9 +111,7 @@ public sealed class FuseCheckDeltaModeTests : IDisposable
         var work = NewWorkspace();
         try
         {
-            FuseTools.ResidentWorkspaces = NullResidentWorkspaceProvider.Instance; // no resident workspace
-
-            var output = await FuseTools.FuseCheckAsync(indexer, work, session: "s4", cancellationToken: CancellationToken.None);
+            var output = await CheckToolOperations.ExecuteAsync(indexer, work, session: "s4", cancellationToken: CancellationToken.None);
             Assert.Contains("abstain", output);
             Assert.Contains("FUSE_RESIDENT", output);
         }
@@ -170,7 +170,7 @@ public sealed class FuseCheckDeltaModeTests : IDisposable
             string queried, string relativeFilePath, string newContent, CancellationToken cancellationToken) =>
             Matches(queried) ? [] : null;
 
-        public IReadOnlyList<CheckDiagnostic>? TryGetCurrentDiagnostics(string queried) =>
+        public IReadOnlyList<CheckDiagnostic>? TryGetCurrentDiagnostics(string queried, CancellationToken cancellationToken) =>
             Matches(queried) ? Current : null;
 
         private bool Matches(string queried) =>

@@ -13,25 +13,27 @@
 
 # Fuse
 
-Fuse is a local .NET tool with a persistent semantic index, typed-graph wiring
-resolution, reduced task-scoped source, and pre-write compiler verification for
-coding agents. It indexes a solution through MSBuild and Roslyn, stores the result
-in `.fuse/fuse.db`, and reuses it across agent turns instead of rediscovering the
-same structure through repeated file reads and text searches.
+Fuse is a local .NET tool with a persistent syntax index, typed-graph wiring
+resolution on demand, reduced task-scoped source, and pre-write compiler verification
+for coding agents. It stores repository facts in `.fuse/fuse.db` and reuses them across
+agent turns instead of rediscovering the same structure through repeated file reads and
+text searches.
 
 From a .NET project inside a Git repository:
 
 ```bash
 dotnet tool install -g Fuse
-fuse mcp install --rules
+fuse mcp install
 ```
 
 The installer supports Claude Code, Cursor, GitHub Copilot, OpenCode, Kilo Code, Codex,
 and Grok Build. Use `--client <name>` to configure one client; the default `all` configures
-all seven for the selected scope. `fuse mcp install` writes MCP client registration only.
-`--rules` also writes the client's documented instruction file, such as `AGENTS.md` or
-`CLAUDE.md`; it does not install a skill. `--with-hooks` separately writes project-scoped
-Claude Code hooks. See [Connect your coding agent](https://fuse.codes/docs/start/connect-your-ai)
+all seven for the selected scope. `fuse mcp install` writes MCP registration and a short,
+versioned managed block in the client's documented instruction file, such as `AGENTS.md` or
+`CLAUDE.md`. Pass `--no-rules` to register MCP without the managed block. `--with-hooks`
+separately writes project-scoped Claude Code hooks. Run `fuse mcp doctor` after installation
+to inspect registration, managed guidance, daemon reachability, and index state. See [Connect
+your coding agent](https://fuse.codes/docs/start/connect-your-ai)
 for the exact file and scope matrix.
 
 Reload your MCP client, then ask:
@@ -41,11 +43,11 @@ Resolve IOrderService to its implementation, then check the proposed OrderServic
 with fuse_check before writing it.
 ```
 
-When the MCP server starts, its shared local daemon begins warming `.fuse/fuse.db` in
-the background. A cold read waits for a bounded syntax-first pass and reports when the
-semantic graph is still upgrading. Run `fuse index` when you want a synchronous full
-index before connecting the agent. `fuse mcp install --rules` also adds `.fuse/` to
-`.gitignore` at project scope.
+When the MCP server starts, its shared local daemon owns one index job for the repository.
+A cold read starts a syntax index and reports its job state. Run `fuse index` to render
+progress in a terminal, `fuse index --semantic` for explicit compiler analysis, and
+`fuse index status` or `fuse index cancel` to control the job. The installer adds `.fuse/`
+to `.gitignore` at project scope.
 
 Every MCP operation except `fuse_reduce` requires a Git repository identity. Fuse walks upward to the nearest
 `.git` directory or file, so a call from a nested source or output folder uses the same
@@ -108,7 +110,7 @@ indexing for that project and reports the mode.
 - When a signature must change, `fuse_refactor` stages the refactor as a diff and
   returns it only when the compiler reports no new diagnostic.
 - After an edit, `fuse_test` selects and runs the test types that reach the changed
-  symbol instead of starting with the whole suite.
+  symbol, grouped by owning project, instead of starting with the whole suite.
 
 Every answer names how it was produced. Fuse calls this the **verification grade**:
 oracle grade checks against the compilation captured from the real build, build grade

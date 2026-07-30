@@ -4,34 +4,106 @@ using Fuse.Semantics;
 namespace Fuse.Cli.Mcp;
 
 /// <summary>
-///     The in-process index access path: one writer queue per root plus the cross-process writer mutex (R14).
-///     Used by daemon-less CLI, <c>FUSE_DAEMON=0</c> serve, and as the fallback when no daemon answers.
+///     The in-process index access path. Cold reads, refreshes, and explicit index requests all enter the
+///     repository-owned job manager before opening the resulting store. Used by daemon-less CLI,
+///     <c>FUSE_DAEMON=0</c> serve, and as the fallback when no daemon answers.
 /// </summary>
 public sealed class LocalIndexAccessProvider : IIndexAccessProvider
 {
-    /// <summary>The shared local provider used when MCP is not delegating to a daemon.</summary>
-    public static LocalIndexAccessProvider Instance { get; } = new();
+    private readonly IndexCoordinator _coordinator;
+    private readonly IWorkspaceIndexJobManager _jobs;
+    private readonly TimeSpan? _coldReadDeadline;
+
+    /// <summary>
+    ///     Initializes a new instance of the <see cref="LocalIndexAccessProvider" /> class.
+    /// </summary>
+    /// <param name="coordinator">The process-owned store coordinator used only to open the committed store.</param>
+    /// <param name="jobs">The process-owned repository job manager.</param>
+    /// <param name="coldReadDeadline">
+    ///     An optional local-read deadline. Production MCP reads use <see cref="ColdReadDeadline" />; tests can
+    ///     supply a longer bounded wait when they need to assert the completed fallback. Pass
+    ///     <see cref="Timeout.InfiniteTimeSpan" /> for a daemon-owned RPC read, which waits until syntax is
+    ///     committed or the host lifetime is cancelled.
+    /// </param>
+    public LocalIndexAccessProvider(
+        IndexCoordinator coordinator,
+        IWorkspaceIndexJobManager jobs,
+        TimeSpan? coldReadDeadline = null)
+    {
+        if (coldReadDeadline is { } deadline
+            && deadline != Timeout.InfiniteTimeSpan
+            && deadline <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(coldReadDeadline), "The cold-read deadline must be positive.");
+
+        _coordinator = coordinator;
+        _jobs = jobs;
+        _coldReadDeadline = coldReadDeadline;
+    }
 
     /// <inheritdoc />
-    public Task<WorkspaceIndexStore> OpenIndexedAsync(
-        SemanticIndexer indexer, string path, CancellationToken cancellationToken) =>
-        IndexCoordinator.Default.OpenIndexedAsync(
-            indexer,
-            path,
-            FuseTools.BackgroundSemanticUpgradeEnabled,
-            FuseTools.UpgradeSupervisor,
-            FuseTools.ScheduleSemanticUpgrade,
-            residentRoot => FuseTools.ResidentWorkspaces.DescribeResident(residentRoot) is not null,
-            cancellationToken);
-
-    /// <inheritdoc />
-    public Task<SemanticIndexResult> IndexAsync(
+    public Task<IndexJobStartResult> StartSyntaxAsync(
         SemanticIndexer indexer, string path, CancellationToken cancellationToken)
     {
         var root = WorkspacePathResolver.ResolveRepositoryRoot(path);
-        return IndexCoordinator.Default.OpenForWriteAsync(
-            root,
-            (writeStore, ct) => indexer.IndexAsync(root, writeStore, ct),
+        return _jobs.StartOrJoinAsync(
+            new IndexJobRequest(root, IndexDepth.Syntax, Force: false, CaptureBundlePath: null),
             cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<WorkspaceIndexStore> OpenIndexedAsync(
+        SemanticIndexer indexer, string path, CancellationToken cancellationToken)
+    {
+        var root = WorkspacePathResolver.ResolveRepositoryRoot(path);
+        var started = await StartSyntaxAsync(indexer, root, cancellationToken);
+        if (started.Conflict)
+            throw new IndexBusyException();
+
+        var syntaxReady = _jobs.WaitForSyntaxReadyAsync(root, cancellationToken);
+        var deadline = _coldReadDeadline ?? TimeSpan.FromMilliseconds(ColdReadDeadline.DeadlineMilliseconds());
+        if (deadline != Timeout.InfiniteTimeSpan
+            && await Task.WhenAny(syntaxReady, Task.Delay(deadline, cancellationToken)) != syntaxReady)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new ColdStartInProgressException(root);
+        }
+
+        var snapshot = await syntaxReady;
+        if (snapshot is null)
+            throw new InvalidOperationException("index job disappeared before syntax became readable");
+        if (snapshot.State == IndexJobState.Cancelled)
+            throw new OperationCanceledException("index job was cancelled", cancellationToken);
+        if (snapshot.State == IndexJobState.Failed)
+            throw new InvalidOperationException(snapshot.ErrorMessage ?? "index_failed");
+
+        return await _coordinator.OpenForReadOnlyAsync(root, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<SemanticIndexResult> IndexAsync(
+        SemanticIndexer indexer, string path, CancellationToken cancellationToken)
+    {
+        var root = WorkspacePathResolver.ResolveRepositoryRoot(path);
+        var started = await _jobs.StartOrJoinAsync(
+            new IndexJobRequest(root, IndexDepth.Syntax, Force: false, CaptureBundlePath: null),
+            cancellationToken);
+        if (started.Conflict)
+            throw new IndexBusyException();
+
+        var snapshot = await _jobs.WaitForCompletionAsync(root, cancellationToken)
+            ?? throw new InvalidOperationException("index job disappeared before completion");
+        if (snapshot.State == IndexJobState.Cancelled)
+            throw new OperationCanceledException("index job was cancelled", cancellationToken);
+        if (snapshot.State == IndexJobState.Failed)
+            throw new InvalidOperationException(snapshot.ErrorMessage ?? "index_failed");
+
+        return new SemanticIndexResult(
+            "syntax",
+            snapshot.Counts.Files,
+            snapshot.Counts.Projects,
+            snapshot.Counts.Symbols,
+            snapshot.Counts.Chunks,
+            snapshot.Counts.Routes,
+            Diagnostics: []);
     }
 }

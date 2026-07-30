@@ -1,4 +1,5 @@
 using Fuse.Cli.Rpc;
+using Fuse.Cli.Mcp;
 using Fuse.Plugins.Abstractions.Reducers;
 using Fuse.Reduction;
 using Fuse.Reduction.Security;
@@ -13,19 +14,22 @@ namespace Fuse.Cli.Tests.Host;
 
 // Served-root binding (R7): every RPC that carries a root must match the daemon's served root. These tests
 // parameterize over each root-bound method so a gap on one entry point fails the suite.
-[Collection("FuseToolsResidentProvider")]
 public sealed class FuseHostServedRootTests : IDisposable
 {
     private readonly ServiceProvider _provider = new ServiceCollection().AddFuseForTests().BuildServiceProvider();
 
-    private FuseHostService NewService(string servedRoot) => new(
-        _provider.GetRequiredService<SemanticIndexer>(),
-        _provider.GetRequiredService<IChangeSource>(),
-        _provider.GetRequiredService<ContentReductionPipeline>(),
-        _provider.GetRequiredService<ISecretRedactor>(),
-        _provider.GetRequiredService<IGeneratedCodeDetector>(),
-        NullLogger<FuseHostService>.Instance,
-        servedRoot);
+    private FuseHostService NewService(string servedRoot)
+    {
+        var context = new FuseHostRequestContext(
+            _provider.GetRequiredService<SemanticIndexer>(),
+            _provider.GetRequiredService<IChangeSource>(),
+            _provider.GetRequiredService<ContentReductionPipeline>(),
+            _provider.GetRequiredService<ISecretRedactor>(),
+            _provider.GetRequiredService<IGeneratedCodeDetector>(),
+            _provider.GetRequiredService<IndexCoordinator>(),
+            _provider.GetRequiredService<IWorkspaceIndexJobManager>());
+        return new FuseHostService(context, NullLogger<FuseHostService>.Instance, servedRoot);
+    }
 
     private static string SessionToken(FuseHostService service) => service.Handshake().SessionToken;
 
@@ -49,7 +53,9 @@ public sealed class FuseHostServedRootTests : IDisposable
 
     public static TheoryData<string> RootBoundMethods => new()
     {
-        "index",
+        "indexStart",
+        "indexStatus",
+        "indexCancel",
         "graph",
         "scope",
         "explain",
@@ -62,7 +68,6 @@ public sealed class FuseHostServedRootTests : IDisposable
     [MemberData(nameof(RootBoundMethods))]
     public async Task RootBoundMethod_RejectsMismatchedServedRoot(string method)
     {
-        Fuse.Cli.Mcp.FuseTools.ResidentWorkspaces = Fuse.Workspace.NullResidentWorkspaceProvider.Instance;
         var served = NewFixture();
         var other = NewFixture();
         try
@@ -86,7 +91,6 @@ public sealed class FuseHostServedRootTests : IDisposable
     [MemberData(nameof(RootBoundMethods))]
     public async Task RootBoundMethod_AcceptsMatchingServedRoot(string method)
     {
-        Fuse.Cli.Mcp.FuseTools.ResidentWorkspaces = Fuse.Workspace.NullResidentWorkspaceProvider.Instance;
         var served = NewFixture();
         try
         {
@@ -105,8 +109,14 @@ public sealed class FuseHostServedRootTests : IDisposable
     {
         switch (method)
         {
-            case "index":
-                await service.IndexAsync(token, root);
+            case "indexStart":
+                await service.IndexStartAsync(token, root);
+                break;
+            case "indexStatus":
+                _ = service.IndexStatus(token, root);
+                break;
+            case "indexCancel":
+                await service.IndexCancelAsync(token, root);
                 break;
             case "graph":
                 await service.GraphAsync(token, root, "Files");
@@ -133,7 +143,6 @@ public sealed class FuseHostServedRootTests : IDisposable
 
     public void Dispose()
     {
-        Fuse.Cli.Mcp.FuseTools.ResidentWorkspaces = Fuse.Workspace.NullResidentWorkspaceProvider.Instance;
         _provider.Dispose();
     }
 }

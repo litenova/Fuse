@@ -4,10 +4,7 @@ namespace Fuse.Cli.Services;
 ///     Console user interface implementation using System.Console.
 /// </summary>
 /// <remarks>
-///     <para>
-///         This implementation provides colored console output using ANSI color codes
-///         and UTF-8 symbols for status indicators.
-///     </para>
+///     This implementation provides colored console output using ANSI color codes and ASCII status labels.
 /// </remarks>
 public sealed class ConsoleUI : IConsoleUI
 {
@@ -18,7 +15,7 @@ public sealed class ConsoleUI : IConsoleUI
     public void WriteSuccess(string message)
     {
         Console.ForegroundColor = ConsoleColor.Green;
-        Console.WriteLine($"  ✔ {message}");
+        Console.WriteLine($"  [OK] {message}");
         Console.ResetColor();
     }
 
@@ -29,7 +26,7 @@ public sealed class ConsoleUI : IConsoleUI
     public void WriteError(string message)
     {
         Console.ForegroundColor = ConsoleColor.Red;
-        Console.WriteLine($"  ✖ {message}");
+        Console.WriteLine($"  [ERROR] {message}");
         Console.ResetColor();
     }
 
@@ -51,7 +48,7 @@ public sealed class ConsoleUI : IConsoleUI
     public void WriteResult(string message)
     {
         Console.ForegroundColor = ConsoleColor.Gray;
-        Console.WriteLine($"  ➜ {message}");
+        Console.WriteLine($"  {message}");
         Console.ResetColor();
     }
 

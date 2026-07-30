@@ -4,7 +4,7 @@ using Fuse.Reduction.Caching;
 namespace Fuse.Fusion.Storage;
 
 /// <summary>
-///     In-memory cache fronting a namespaced <see cref="IKeyValueStore" /> with typed encode and decode.
+///     Run-local decoded cache fronting a namespaced host-memory <see cref="IKeyValueStore" />.
 /// </summary>
 /// <typeparam name="TKey">The logical key type.</typeparam>
 /// <typeparam name="TValue">The cached value type.</typeparam>
@@ -43,7 +43,7 @@ internal sealed class NamespacedKvCache<TKey, TValue> where TKey : notnull
     }
 
     /// <summary>
-    ///     Reads a cached value, consulting memory first then the backing store.
+    ///     Reads a cached value, consulting the run-local decoded map first then the backing store.
     /// </summary>
     /// <param name="key">The logical key.</param>
     /// <param name="value">The value when found; otherwise the default for <typeparamref name="TValue" />.</param>
@@ -72,7 +72,7 @@ internal sealed class NamespacedKvCache<TKey, TValue> where TKey : notnull
     }
 
     /// <summary>
-    ///     Stores a value in memory and buffers it for the next store flush.
+    ///     Stores a value in the decoded map and the host memory cache.
     /// </summary>
     /// <param name="key">The logical key.</param>
     /// <param name="value">The value to store.</param>

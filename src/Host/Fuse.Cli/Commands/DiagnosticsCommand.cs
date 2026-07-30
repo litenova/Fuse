@@ -21,12 +21,13 @@ namespace Fuse.Cli.Commands;
 public sealed class DiagnosticsCommand
 {
     private readonly IConsoleUI _consoleUI;
+    private readonly IndexCoordinator _indexCoordinator;
 
     /// <summary>
     ///     Initializes a new instance of the <see cref="DiagnosticsCommand" /> class for CLI option binding only.
     /// </summary>
     /// <remarks>Used by DotMake.CommandLine to bind options; the console UI is null, so this instance must not run.</remarks>
-    public DiagnosticsCommand() : this(null!)
+    public DiagnosticsCommand() : this(null!, new IndexCoordinator())
     {
     }
 
@@ -34,7 +35,18 @@ public sealed class DiagnosticsCommand
     ///     Initializes a new instance of the <see cref="DiagnosticsCommand" /> class.
     /// </summary>
     /// <param name="consoleUI">The console UI for output.</param>
-    public DiagnosticsCommand(IConsoleUI consoleUI) => _consoleUI = consoleUI;
+    public DiagnosticsCommand(IConsoleUI consoleUI) : this(consoleUI, new IndexCoordinator())
+    {
+    }
+
+    /// <summary>Initializes a diagnostics command with its host-owned index coordinator.</summary>
+    /// <param name="consoleUI">The console UI for output.</param>
+    /// <param name="indexCoordinator">The host-owned coordinator used to open the committed index.</param>
+    public DiagnosticsCommand(IConsoleUI consoleUI, IndexCoordinator indexCoordinator)
+    {
+        _consoleUI = consoleUI;
+        _indexCoordinator = indexCoordinator;
+    }
 
     /// <summary>The workspace directory. Defaults to the current directory.</summary>
     [CliArgument(Description = "The workspace directory. Defaults to the current directory.")]
@@ -69,7 +81,7 @@ public sealed class DiagnosticsCommand
                 return;
             }
 
-            await using var store = await IndexCoordinator.Default.OpenForReadOnlyAsync(root, context.CancellationToken);
+            await using var store = await _indexCoordinator.OpenForReadOnlyAsync(root, context.CancellationToken);
             var state = await store.GetStateAsync(context.CancellationToken);
             var indexedBy = await store.GetMetaAsync(WorkspaceIndexStore.FuseVersionMetaKey, context.CancellationToken);
             var indexState = state.FileCount == 0

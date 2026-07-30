@@ -19,8 +19,7 @@ internal static class TestStoreIsolation
 {
     /// <summary>
     ///     Runs once at assembly load, before any test: points the machine-wide store fallback at a throwaway
-    ///     directory and turns off the fire-and-forget background semantic upgrade (it outlives a test and holds
-    ///     the store open during teardown). Individual tests opt back in when they exercise the upgrade.
+    ///     directory so temporary fixtures never touch a developer's derived index.
     /// </summary>
     [ModuleInitializer]
     internal static void Initialize()
@@ -28,7 +27,6 @@ internal static class TestStoreIsolation
         var userData = Path.Combine(Path.GetTempPath(), "fuse-tests-userdata", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(userData);
         Environment.SetEnvironmentVariable(FuseStorePaths.UserDataEnvironmentVariable, userData);
-        Environment.SetEnvironmentVariable("FUSE_BG_UPGRADE", "0");
     }
 
     /// <summary>

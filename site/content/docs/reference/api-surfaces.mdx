@@ -19,17 +19,17 @@ Agents should prefer MCP. Hooks and editor integrations that need a warm residen
 
 ## Intent map
 
-The table lists the canonical entry point per intent. A cell marked "none" means that surface has no dedicated command for that intent; use the MCP or CLI column instead. Deprecated CLI aliases remain for scripts; prefer the canonical command in new work.
+The table lists the canonical entry point per intent. A cell marked "none" means that surface has no dedicated command for that intent; use the MCP or CLI column instead.
 
 | Intent | MCP tool | CLI command | Host RPC | Notes |
 |--------|----------|-------------|----------|-------|
 | Workspace status and index freshness | `fuse_workspace` (`action=status`) | `fuse diagnostics [path]` | none | Fast read of `index_meta` only; does not create `.fuse/fuse.db` on a cold workspace |
-| Build or refresh the index | `fuse_workspace` (`action=index`) | `fuse index [path]` | `fuse/index` | MCP read tools also build on first use via `fuse/openIndexed` when the daemon is active |
+| Build or refresh the index | `fuse_workspace` (`action=index`) | `fuse index [path]` | `fuse/indexStart` | MCP read tools also build on first use via `fuse/openIndexed` when the daemon is active |
 | Workspace map (symbols, routes, counts) | `fuse_workspace` (`action=map`) | `fuse map [path]` | `fuse/graph` | Host graph adds dependency edges and optional scope overlay |
 | Semantic load diagnosis | `fuse_workspace` (`action=doctor`) | `fuse doctor [path]` | `fuse/doctor` | Actively loads through the daemon-held MSBuild solution when available; explains per-project downgrade |
 | Apply a verified single-file edit | `fuse_workspace` (`action=apply`) | none | none | The one explicit server tree-write path; dry run unless `write=true` |
-| Task localization (rank candidate files) | `fuse_find` (`kind=task`) | `fuse find <query> --kind task` | `fuse/scope` (`mode=search`), `fuse/graph` (`scopeMode=search`), `fuse/openIndexed` | Deprecated alias: `fuse localize [path] --task "..."` |
-| Wiring resolution (service, request, route, config) | `fuse_find` (`kind=service\|request\|route\|config`) | `fuse find <query> --kind service` (etc.) | none | Deprecated alias: `fuse resolve [path] --service ...` (and `--request`, `--route`, `--config`, `--symbol`) |
+| Task localization (rank candidate files) | `fuse_find` (`kind=task`) | `fuse find <query> --kind task` | `fuse/scope` (`mode=search`), `fuse/graph` (`scopeMode=search`), `fuse/openIndexed` | |
+| Wiring resolution (service, request, route, config) | `fuse_find` (`kind=service\|request\|route\|config`) | `fuse find <query> --kind service` (etc.) | none | |
 | Exact symbol, path, or text lookup | `fuse_find` (`kind=symbol\|path\|text\|all`) | `fuse find <query> [--kind symbol\|path\|text\|all]` | none | |
 | Symbol exact signature | `fuse_find` (`kind=signatures`) | none | none | Resident workspace (`FUSE_RESIDENT=1`) answers from compiler metadata when qualified |
 | Symbol callers and implementers | `fuse_find` (`kind=neighbors`) | none | none | |
@@ -46,19 +46,6 @@ The table lists the canonical entry point per intent. A cell marked "none" means
 | Host compatibility handshake | none | none | `fuse/handshake` | Returns protocol version and session token |
 | Context diagnostics (secrets, hotspots, gaps) | none | none | `fuse/diagnostics` | Not the same as `fuse diagnostics` CLI (index state) |
 | Stop the host daemon | none | none | `fuse/shutdown` | |
-
-## Deprecated CLI aliases
-
-These commands predate the `fuse_find` union. They remain for existing scripts; new agent instructions should call `fuse_find` or `fuse find` with the matching `kind`.
-
-| Deprecated command | Canonical replacement |
-|--------------------|----------------------|
-| `fuse localize [path] --task "..."` | `fuse find "..." --kind task` or MCP `fuse_find` with `kind=task` |
-| `fuse resolve [path] --service IOrderService` | `fuse find IOrderService --kind service` or MCP `fuse_find` with `kind=service` |
-| `fuse resolve [path] --request CreateOrderCommand` | `fuse find CreateOrderCommand --kind request` |
-| `fuse resolve [path] --route "POST /api/orders"` | `fuse find "POST /api/orders" --kind route` |
-| `fuse resolve [path] --config Orders` | `fuse find Orders --kind config` |
-| `fuse resolve [path] --symbol OrderService` | `fuse find OrderService --kind symbol` |
 
 ## Surface registry
 
@@ -77,7 +64,9 @@ These commands predate the `fuse_find` union. They remain for existing scripts; 
 | mcp | `fuse_reduce` |
 | rpc | `fuse/handshake` |
 | rpc | `fuse/stats` |
-| rpc | `fuse/index` |
+| rpc | `fuse/indexStart` |
+| rpc | `fuse/indexStatus` |
+| rpc | `fuse/indexCancel` |
 | rpc | `fuse/openIndexed` |
 | rpc | `fuse/graph` |
 | rpc | `fuse/scope` |

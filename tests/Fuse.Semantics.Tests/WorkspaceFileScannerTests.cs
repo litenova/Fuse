@@ -118,7 +118,7 @@ public sealed class WorkspaceFileScannerTests : IDisposable
                 new EmptyFileFilter(),
                 new BinaryFileFilter(fileSystem),
             ]);
-        return new WorkspaceFileScanner(pipeline, new FileHashService());
+        return new WorkspaceFileScanner(pipeline);
     }
 
     public void Dispose()

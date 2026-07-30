@@ -1,3 +1,5 @@
+using Fuse.Scoping;
+
 namespace Fuse.Fusion.Scoping;
 
 /// <summary>

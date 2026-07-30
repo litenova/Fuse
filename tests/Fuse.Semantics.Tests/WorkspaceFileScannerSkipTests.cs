@@ -7,8 +7,8 @@ using Xunit;
 
 namespace Fuse.Semantics.Tests;
 
-// R35: one hostile file (oversized, unreadable) must never abort the whole index. The scan skips it with a
-// recorded reason and keeps indexing the good files, which stay findable.
+// R35: unreadable files never abort the inventory. Oversized source retains inventory metadata rather than a
+// body-bearing syntax payload, while ordinary files remain indexable.
 public sealed class WorkspaceFileScannerSkipTests : IDisposable
 {
     private readonly string _root =
@@ -17,10 +17,10 @@ public sealed class WorkspaceFileScannerSkipTests : IDisposable
     public WorkspaceFileScannerSkipTests() => Directory.CreateDirectory(_root);
 
     [Fact]
-    public async Task OversizedFile_IsSkipped_GoodFilesStillIndexed()
+    public async Task OversizedFile_IsInventoryOnly_GoodFilesStillIndexed()
     {
         WriteText("src/Good.cs", "namespace App; public class Good { }");
-        // A text file larger than the default 5 MB cap: passes the binary filter, then our size check skips it.
+        // A text file larger than the default 5 MB cap: it retains only inventory metadata.
         var big = Path.Combine(_root, "src", "Big.cs");
         Directory.CreateDirectory(Path.GetDirectoryName(big)!);
         var content = new byte[WorkspaceFileScanner.DefaultMaxFileBytes + 1024];
@@ -30,8 +30,10 @@ public sealed class WorkspaceFileScannerSkipTests : IDisposable
         var result = await CreateScanner().ScanWithSkipsAsync(new FileScanRequest(_root), CancellationToken.None);
 
         Assert.Contains(result.Files, f => Norm(f.NormalizedPath).EndsWith("src/Good.cs", StringComparison.OrdinalIgnoreCase));
-        Assert.DoesNotContain(result.Files, f => Norm(f.NormalizedPath).EndsWith("src/Big.cs", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(result.Skipped, s => Norm(s.Path).EndsWith("src/Big.cs", StringComparison.OrdinalIgnoreCase) && s.Reason.Contains("too large", StringComparison.OrdinalIgnoreCase));
+        var bigRecord = Assert.Single(result.Files, f => Norm(f.NormalizedPath).EndsWith("src/Big.cs", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(IndexDetailLevel.InventoryOnly, bigRecord.DetailLevel);
+        Assert.Contains(result.DetailLimited, s => Norm(s.Path).EndsWith("src/Big.cs", StringComparison.OrdinalIgnoreCase)
+            && s.Reason.Contains("too large", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -65,7 +67,7 @@ public sealed class WorkspaceFileScannerSkipTests : IDisposable
             fileSystem,
             new GitIgnoreParser(fileSystem),
             [new GitIgnoreFilter(), new ExtensionFilter(), new ExcludedDirectoryFilter(), new EmptyFileFilter(), new BinaryFileFilter(fileSystem)]);
-        return new WorkspaceFileScanner(pipeline, new FileHashService());
+        return new WorkspaceFileScanner(pipeline);
     }
 
     private void WriteText(string relativePath, string content)

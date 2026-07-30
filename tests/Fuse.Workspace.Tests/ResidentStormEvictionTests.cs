@@ -33,10 +33,10 @@ public sealed class ResidentStormEvictionTests
             using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
             using var watcher = new FakeResidentBatchWatcher();
             using var provider = new ServiceCollection().AddFuse().BuildServiceProvider();
-            var indexer = provider.GetRequiredService<SemanticIndexer>();
+            var residents = provider.GetRequiredService<ResidentWorkspaceRegistry>();
+            var indexJobs = provider.GetRequiredService<IWorkspaceIndexJobManager>();
 
-            using var scope = ResidentWorkspaceHosting.Enable(root, watcher, indexer, null, cts.Token);
-            var residents = FuseTools.ResidentWorkspaces;
+            using var scope = ResidentWorkspaceHosting.Enable(root, watcher, residents, indexJobs, null, cts.Token);
 
             var warmed = await WaitForResidentAsync(residents, root, TimeSpan.FromMinutes(2));
             if (!warmed)
@@ -64,7 +64,6 @@ public sealed class ResidentStormEvictionTests
         }
         finally
         {
-            FuseTools.ResidentWorkspaces = NullResidentWorkspaceProvider.Instance;
             try { Directory.Delete(work, recursive: true); } catch (IOException) { }
         }
     }

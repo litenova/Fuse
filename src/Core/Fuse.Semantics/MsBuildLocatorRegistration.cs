@@ -26,3 +26,9 @@ internal static class MsBuildLocatorRegistration
         }
     }
 }
+
+// The default warm-cache loader owns MSBuild registration. Refactor operations catch this marker so they retain
+// their actionable abstention while injected caches can serve an already-loaded Roslyn solution without an SDK.
+internal sealed class MsBuildLocatorUnavailableException(Exception innerException) : Exception(innerException.Message, innerException)
+{
+}

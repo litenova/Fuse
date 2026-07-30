@@ -176,14 +176,15 @@ jobs:
         if: matrix.smoke
         shell: bash
         run: |
-          # Verify the self-contained binary can build the semantic index (FTS5 present in the bundled
-          # SQLite) and serve context, in an isolated store so the run does not depend on a shared cache.
+          # Verify the self-contained binary can build the syntax index (FTS5 present in the bundled
+          # SQLite) and serve context, in an isolated Git repository and store.
           BIN="artifacts/runtime/${{ matrix.rid }}/${{ matrix.binary }}"
           WS="${RUNNER_TEMP:-/tmp}/fuse-runtime-smoke"
           export FUSE_USER_DATA="${RUNNER_TEMP:-/tmp}/fuse-runtime-store"
           rm -rf "$WS" "$FUSE_USER_DATA"
           mkdir -p "$WS" "$FUSE_USER_DATA"
           cp -r tests/fixtures/SampleShop/* "$WS/"
+          git init -q "$WS"
           "$BIN" index "$WS"
           # diagnostics must report the index built and FTS5 available, or the publish dropped FTS5.
           "$BIN" diagnostics "$WS" | tee "$WS/.diag.txt"

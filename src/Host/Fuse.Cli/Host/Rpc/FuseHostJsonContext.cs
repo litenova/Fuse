@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Fuse.Cli.Mcp;
 
 namespace Fuse.Cli.Rpc;
 
@@ -17,6 +18,11 @@ namespace Fuse.Cli.Rpc;
 [JsonSerializable(typeof(GraphNodeDto))]
 [JsonSerializable(typeof(GraphEdgeDto))]
 [JsonSerializable(typeof(IndexResultDto))]
+[JsonSerializable(typeof(IndexJobStartResult))]
+[JsonSerializable(typeof(IndexJobSnapshot))]
+[JsonSerializable(typeof(IndexJobRequest))]
+[JsonSerializable(typeof(IndexCountSnapshot))]
+[JsonSerializable(typeof(IndexStorageSnapshot))]
 [JsonSerializable(typeof(LanguageCountDto))]
 [JsonSerializable(typeof(ScopeResultDto))]
 [JsonSerializable(typeof(ScopeFileDto))]

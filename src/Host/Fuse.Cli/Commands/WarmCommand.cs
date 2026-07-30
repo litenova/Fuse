@@ -1,14 +1,12 @@
 using DotMake.CommandLine;
-using Fuse.Cli.Mcp;
 using Fuse.Cli.Services;
-using Fuse.Semantics;
 
 namespace Fuse.Cli.Commands;
 
 /// <summary>
 ///     Warms the persistent index for a workspace now (R38): builds the syntax-first index so a subsequent read
-///     hits a warm store rather than paying the cold cost. Unlike the automatic eager warm-on-start, this is
-///     explicit and runs regardless of the <c>FUSE_EAGER_INDEX</c> opt-out. A warm store is a no-op.
+///     hits a warm store rather than paying the cold cost. It starts or joins the same daemon-owned syntax job as
+///     <c>fuse index</c> and runs regardless of the <c>FUSE_EAGER_INDEX</c> opt-out.
 /// </summary>
 [CliCommand(
     Name = "warm",
@@ -17,7 +15,7 @@ namespace Fuse.Cli.Commands;
     Parent = typeof(FuseCliCommand))]
 public sealed class WarmCommand
 {
-    private readonly SemanticIndexer _indexer;
+    private readonly IndexJobClient _jobs;
     private readonly IConsoleUI _consoleUI;
 
     /// <summary>
@@ -31,11 +29,11 @@ public sealed class WarmCommand
     /// <summary>
     ///     Initializes a new instance of the <see cref="WarmCommand" /> class.
     /// </summary>
-    /// <param name="indexer">The semantic indexer used to build the index.</param>
+    /// <param name="jobs">The daemon or in-process index lifecycle client.</param>
     /// <param name="consoleUI">The console UI for output.</param>
-    public WarmCommand(SemanticIndexer indexer, IConsoleUI consoleUI)
+    public WarmCommand(IndexJobClient jobs, IConsoleUI consoleUI)
     {
-        _indexer = indexer;
+        _jobs = jobs;
         _consoleUI = consoleUI;
     }
 
@@ -71,8 +69,8 @@ public sealed class WarmCommand
         }
 
         _consoleUI.WriteStep($"Warming the index for {root}");
-        await EagerIndex.WarmAsync(_indexer, root, context.CancellationToken);
-        _consoleUI.WriteResult($"warmed: {root} (syntax-first index built; the semantic upgrade continues in the background).");
+        await WarmAsync(root, context.CancellationToken);
+        _consoleUI.WriteResult($"warmed: {root} (syntax index is current).");
     }
 
     // R40: the opt-in always-on warm service surface. install/uninstall actually attempt the platform
@@ -119,7 +117,7 @@ public sealed class WarmCommand
             var repos = WarmServiceState.Recent();
             var paused = WarmServicePolicy.ShouldPause(PowerState.OnBattery(), highLoad: false);
             await WarmServiceRunner.RunOnceAsync(
-                repos, paused, (root, ct) => EagerIndex.WarmAsync(_indexer, root, ct), cancellationToken);
+                repos, paused, WarmAsync, cancellationToken);
             try
             {
                 await Task.Delay(interval, cancellationToken);
@@ -129,5 +127,37 @@ public sealed class WarmCommand
                 break;
             }
         }
+    }
+
+    private async Task WarmAsync(string root, CancellationToken cancellationToken)
+    {
+        var started = await _jobs.StartAsync(
+            new Fuse.Cli.Mcp.IndexJobRequest(
+                root,
+                Fuse.Cli.Mcp.IndexDepth.Syntax,
+                Force: false,
+                CaptureBundlePath: null),
+            cancellationToken);
+        if (started.Result.Conflict)
+            throw new IndexJobClientException(
+                "index_job_conflict",
+                started.Result.Snapshot.ErrorMessage ?? "index job conflict");
+
+        var snapshot = started.Result.Snapshot;
+        while (snapshot.State is Fuse.Cli.Mcp.IndexJobState.Queued
+               or Fuse.Cli.Mcp.IndexJobState.Running
+               or Fuse.Cli.Mcp.IndexJobState.Cancelling)
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
+            snapshot = await _jobs.StatusAsync(root, started.UsesDaemon, cancellationToken)
+                ?? throw new IndexJobClientException("daemon_unavailable", "The index job stopped reporting status.");
+        }
+
+        if (snapshot.State == Fuse.Cli.Mcp.IndexJobState.Failed)
+            throw new IndexJobClientException(
+                snapshot.ErrorCode ?? "index_failed",
+                snapshot.ErrorMessage ?? "index job failed");
+        if (snapshot.State == Fuse.Cli.Mcp.IndexJobState.Cancelled)
+            throw new OperationCanceledException("index job was cancelled", cancellationToken);
     }
 }

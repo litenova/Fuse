@@ -2,4 +2,4 @@ index_state: upgrade_pending
 files_indexed: 1
 grade: deferred (not semantic-ready)
 hint: syntax tier is live; the semantic graph is upgrading. Retry fuse shortly for the richer answer.
-availability: index mode partial; full-text search available; tier-1 build capture {tier1}; verify serves {verify-grade}; workspace store-backed; semantic upgrade in progress; up to date.
+availability: index mode partial; full-text search available; tier-1 build capture {tier1}; verify serves {verify-grade}; workspace store-backed; compiler analysis in progress; up to date.

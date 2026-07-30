@@ -9,9 +9,9 @@ using Fuse.Collection.FileSystem;
 namespace Fuse.Cli.Services;
 
 /// <summary>
-///     Writes MCP client configuration so an AI client can launch <c>fuse mcp serve</c> automatically.
+///     Reads and writes the client-specific files used by the MCP installation coordinator.
 /// </summary>
-public sealed class McpInstallService
+internal static class McpInstallFiles
 {
     /// <summary>
     ///     Environment variable overriding the user profile root for MCP install paths. Used by tests to
@@ -19,103 +19,11 @@ public sealed class McpInstallService
     /// </summary>
     internal const string UserProfileOverrideEnvironmentVariable = "FUSE_MCP_INSTALL_HOME";
 
-    private const string ServerName = "fuse";
+    internal const string ServerName = "fuse";
 
-    // The client launches `fuse mcp serve` with no environment block: agent-first defaults (shared daemon,
-    // auto-update, background upgrade, build capture) ship in the binary. Opt-outs are documented under Advanced.
+    // The client launches `fuse mcp serve` with no environment block. The shared daemon and syntax-first index
+    // behavior ship in the binary; compiler analysis starts only from an explicit semantic request.
     private static readonly string[] ServeArguments = ["mcp", "serve"];
-
-    /// <summary>
-    ///     Registers Fuse with the requested MCP clients at the given scope.
-    /// </summary>
-    /// <param name="clients">The clients to configure.</param>
-    /// <param name="scope">Project-local files or user-global registration.</param>
-    /// <param name="projectDirectory">A path inside the project repository; defaults to the current directory.</param>
-    /// <param name="fuseCommand">The executable the client should launch; defaults to the running binary or <c>fuse</c>.</param>
-    /// <param name="writeRules">
-    ///     When <see langword="true" />, also writes task-routing guidance for the <c>fuse_*</c> tools into each
-    ///     configured client's instruction file when that client has a documented file. At project scope, also appends
-    ///     <c>.fuse/</c> to <c>.gitignore</c> when no equivalent entry exists.
-    /// </param>
-    /// <param name="consoleUI">The console UI for status output.</param>
-    /// <param name="cancellationToken">A token that cancels Claude CLI registration.</param>
-    /// <returns>The number of clients configured successfully.</returns>
-    public async Task<int> InstallAsync(
-        IReadOnlyList<McpInstallClient> clients,
-        McpInstallScope scope,
-        string? projectDirectory,
-        string? fuseCommand,
-        bool writeRules,
-        IConsoleUI consoleUI,
-        CancellationToken cancellationToken)
-    {
-        if (!TryValidateFuseCommand(fuseCommand, out var command, out var validationError))
-        {
-            consoleUI.WriteError(validationError!);
-            return 0;
-        }
-
-        var requestedProjectRoot = string.IsNullOrWhiteSpace(projectDirectory)
-            ? Directory.GetCurrentDirectory()
-            : Path.GetFullPath(projectDirectory);
-        var projectRoot = requestedProjectRoot;
-        if (scope == McpInstallScope.Project)
-        {
-            if (!WorkspaceIdentityResolver.TryResolveRepositoryRoot(requestedProjectRoot, out projectRoot))
-            {
-                consoleUI.WriteError(
-                    $"Project-scope MCP registration requires a Git repository identity. "
-                    + $"'{Path.GetFullPath(requestedProjectRoot)}' is not inside a Git repository; no files were written.");
-                return 0;
-            }
-
-            if (!string.Equals(
-                    Path.TrimEndingDirectorySeparator(Path.GetFullPath(requestedProjectRoot)),
-                    projectRoot,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                consoleUI.WriteStep($"Resolved project scope to repository root: {projectRoot}");
-            }
-        }
-
-        var configuredClients = new List<McpInstallClient>(clients.Count);
-        foreach (var client in clients)
-        {
-            var success = client switch
-            {
-                McpInstallClient.Claude => scope == McpInstallScope.User
-                    ? await RegisterClaudeUserAsync(command, consoleUI, cancellationToken)
-                    : WriteClaudeProjectConfig(projectRoot, command, consoleUI),
-                McpInstallClient.Cursor => WriteCursorConfig(scope, projectRoot, command, consoleUI),
-                McpInstallClient.Copilot => WriteCopilotConfig(scope, projectRoot, command, consoleUI),
-                McpInstallClient.OpenCode => WriteLocalArrayConfig(client, scope, projectRoot, command, consoleUI),
-                McpInstallClient.Kilo => WriteLocalArrayConfig(client, scope, projectRoot, command, consoleUI),
-                McpInstallClient.Codex => WriteTomlConfig(client, scope, projectRoot, command, consoleUI),
-                McpInstallClient.Grok => WriteTomlConfig(client, scope, projectRoot, command, consoleUI),
-                _ => false,
-            };
-
-            if (success)
-                configuredClients.Add(client);
-        }
-
-        if (writeRules)
-        {
-            foreach (var client in configuredClients)
-                WriteClientRule(client, scope, projectRoot, consoleUI);
-
-            if (scope == McpInstallScope.Project && configuredClients.Count > 0)
-            {
-                GitIgnoreHelper.TryEnsureFuseEntry(
-                    projectRoot,
-                    consoleUI.WriteStep,
-                    consoleUI.WriteStep);
-            }
-        }
-
-        return configuredClients.Count;
-    }
-
     /// <summary>
     ///     Resolves the Fuse executable path for MCP registration.
     /// </summary>
@@ -161,7 +69,7 @@ public sealed class McpInstallService
         return true;
     }
 
-    private static bool WriteClaudeProjectConfig(string projectRoot, string fuseCommand, IConsoleUI consoleUI)
+    internal static bool WriteClaudeProjectConfig(string projectRoot, string fuseCommand, IConsoleUI consoleUI)
     {
         var path = GetConfigPath(McpInstallClient.Claude, McpInstallScope.Project, projectRoot);
         var config = LoadOrCreateClaude(path);
@@ -172,7 +80,7 @@ public sealed class McpInstallService
         return true;
     }
 
-    private static bool WriteCursorConfig(
+    internal static bool WriteCursorConfig(
         McpInstallScope scope,
         string projectRoot,
         string fuseCommand,
@@ -188,7 +96,7 @@ public sealed class McpInstallService
         return true;
     }
 
-    private static bool WriteCopilotConfig(
+    internal static bool WriteCopilotConfig(
         McpInstallScope scope,
         string projectRoot,
         string fuseCommand,
@@ -204,7 +112,7 @@ public sealed class McpInstallService
         return true;
     }
 
-    private static bool WriteLocalArrayConfig(
+    internal static bool WriteLocalArrayConfig(
         McpInstallClient client,
         McpInstallScope scope,
         string projectRoot,
@@ -226,7 +134,7 @@ public sealed class McpInstallService
         return true;
     }
 
-    private static bool WriteTomlConfig(
+    internal static bool WriteTomlConfig(
         McpInstallClient client,
         McpInstallScope scope,
         string projectRoot,
@@ -240,7 +148,7 @@ public sealed class McpInstallService
         return true;
     }
 
-    private static async Task<bool> RegisterClaudeUserAsync(
+    internal static async Task<bool> RegisterClaudeUserAsync(
         string fuseCommand,
         IConsoleUI consoleUI,
         CancellationToken cancellationToken)
@@ -496,7 +404,48 @@ public sealed class McpInstallService
         };
     }
 
-    private static string DescribeScope(McpInstallScope scope) =>
+    /// <summary>
+    ///     Resolves the instruction file managed for a client and scope.
+    /// </summary>
+    /// <param name="client">The MCP client.</param>
+    /// <param name="scope">The selected installation scope.</param>
+    /// <param name="projectRoot">The repository root used for project scope.</param>
+    /// <returns>The managed instruction path, or null when the client has no documented instruction file at that scope.</returns>
+    internal static string? GetInstructionPath(McpInstallClient client, McpInstallScope scope, string projectRoot) => client switch
+    {
+        McpInstallClient.Claude => scope == McpInstallScope.User
+            ? Path.Combine(GetUserProfileDirectory(), ".claude", "CLAUDE.md")
+            : Path.Combine(projectRoot, "CLAUDE.md"),
+        McpInstallClient.Cursor => scope == McpInstallScope.Project
+            ? Path.Combine(projectRoot, ".cursor", "rules", "fuse.mdc")
+            : null,
+        McpInstallClient.Copilot => scope == McpInstallScope.Project
+            ? Path.Combine(projectRoot, ".github", "copilot-instructions.md")
+            : null,
+        McpInstallClient.OpenCode => scope == McpInstallScope.User
+            ? Path.Combine(GetConfigHomeDirectory(), "opencode", "AGENTS.md")
+            : Path.Combine(projectRoot, "AGENTS.md"),
+        McpInstallClient.Kilo => scope == McpInstallScope.User
+            ? Path.Combine(GetConfigHomeDirectory(), "kilo", "AGENTS.md")
+            : Path.Combine(projectRoot, "AGENTS.md"),
+        McpInstallClient.Codex => scope == McpInstallScope.User
+            ? Path.Combine(GetClientHomeDirectory("CODEX_HOME", ".codex"), "AGENTS.md")
+            : Path.Combine(projectRoot, "AGENTS.md"),
+        McpInstallClient.Grok => scope == McpInstallScope.Project
+            ? Path.Combine(projectRoot, "AGENTS.md")
+            : null,
+        _ => null,
+    };
+
+    /// <summary>Checks whether an instruction file contains the current managed guidance block.</summary>
+    /// <param name="content">The instruction file content, or null when the file is absent.</param>
+    /// <returns>True when the v4.4 managed block has both markers.</returns>
+    internal static bool HasCurrentManagedRuleBlock(string? content) =>
+        !string.IsNullOrEmpty(content)
+        && content.Contains(RuleBeginMarker, StringComparison.Ordinal)
+        && content.Contains(RuleEndMarker, StringComparison.Ordinal);
+
+    internal static string DescribeScope(McpInstallScope scope) =>
         scope == McpInstallScope.User ? "user scope, all projects" : "project";
 
     private static string GetOpenCodeConfigPath(McpInstallScope scope, string projectRoot)
@@ -535,7 +484,10 @@ public sealed class McpInstallService
         return alternatives.FirstOrDefault(File.Exists) ?? defaultPath;
     }
 
-    private static string DescribeClient(McpInstallClient client) => client switch
+    /// <summary>Returns the display name used in client-facing installation diagnostics.</summary>
+    /// <param name="client">The supported MCP client.</param>
+    /// <returns>The documented client display name.</returns>
+    internal static string DescribeClient(McpInstallClient client) => client switch
     {
         McpInstallClient.Claude => "Claude Code",
         McpInstallClient.Cursor => "Cursor",
@@ -547,10 +499,11 @@ public sealed class McpInstallService
         _ => client.ToString(),
     };
 
-    // Idempotency markers for the managed rule block in freeform instruction files. A re-run replaces the region
-    // between them; a future remove can excise it cleanly.
-    private const string RuleBeginMarker = "<!-- fuse:begin (managed by `fuse mcp install --rules`; edit outside these markers) -->";
-    private const string RuleEndMarker = "<!-- fuse:end -->";
+    // The v4.4 marker is intentionally short and versioned. UpsertMarkedBlock also recognizes the previous
+    // managed marker so a new install replaces it without touching user-authored text around the block.
+    internal const string RuleBeginMarker = "<!-- fuse:begin v4.4 -->";
+    internal const string RuleEndMarker = "<!-- fuse:end -->";
+    private const string RuleBeginPrefix = "<!-- fuse:begin";
 
     /// <summary>
     ///     Writes the Fuse usage rule into the given client's instruction file, scope permitting.
@@ -560,7 +513,7 @@ public sealed class McpInstallService
     /// <param name="projectRoot">The project root for project-scoped rule files.</param>
     /// <param name="consoleUI">The console UI for status output.</param>
     /// <returns><see langword="true" /> when a rule file was written; <see langword="false" /> when skipped.</returns>
-    private static bool WriteClientRule(
+    internal static bool WriteClientRule(
         McpInstallClient client,
         McpInstallScope scope,
         string projectRoot,
@@ -660,8 +613,10 @@ public sealed class McpInstallService
         if (File.Exists(path))
         {
             var existing = File.ReadAllText(path);
-            var begin = existing.IndexOf(RuleBeginMarker, StringComparison.Ordinal);
-            var end = existing.IndexOf(RuleEndMarker, StringComparison.Ordinal);
+            var begin = existing.IndexOf(RuleBeginPrefix, StringComparison.Ordinal);
+            var end = begin < 0
+                ? -1
+                : existing.IndexOf(RuleEndMarker, begin + RuleBeginPrefix.Length, StringComparison.Ordinal);
             if (begin >= 0 && end > begin)
             {
                 // Replace the existing managed region in place, leaving surrounding content untouched.
@@ -696,7 +651,10 @@ public sealed class McpInstallService
             "alwaysApply: true",
             "---",
             "",
+            RuleBeginMarker,
             FuseAgentGuidance.RuleBody) + "\n";
+
+        content = content.TrimEnd('\n') + "\n" + RuleEndMarker + "\n";
 
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, content);
@@ -762,7 +720,10 @@ public sealed class McpInstallService
         return Path.Combine(configHome, "Code", "User");
     }
 
-    private static string? FindExecutableOnPath(string name)
+    /// <summary>Finds an executable on the current process PATH.</summary>
+    /// <param name="name">The executable base name.</param>
+    /// <returns>The resolved executable path, or null when PATH does not contain it.</returns>
+    internal static string? FindExecutableOnPath(string name)
     {
         var pathValue = Environment.GetEnvironmentVariable("PATH");
         if (string.IsNullOrWhiteSpace(pathValue))

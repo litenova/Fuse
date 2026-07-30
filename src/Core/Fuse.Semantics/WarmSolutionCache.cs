@@ -4,7 +4,7 @@ using Microsoft.CodeAnalysis.MSBuild;
 namespace Fuse.Semantics;
 
 /// <summary>
-///     A per-root, process-wide cache of MSBuild-loaded Roslyn <see cref="Solution" />s (R42), so the tools that
+///     A per-root, host-owned cache of MSBuild-loaded Roslyn <see cref="Solution" />s (R42), so the tools that
 ///     need a design-time workspace - <c>fuse_refactor</c> and <c>fuse_workspace doctor</c>'s live load - reuse one
 ///     held solution instead of re-opening an <see cref="MSBuildWorkspace" /> and paying the whole design-time
 ///     load (measured 4-26s) on every call. Roslyn solutions are immutable snapshots, so a held solution is
@@ -80,9 +80,6 @@ public sealed class WarmSolutionCache : IDisposable
         _loader = loader ?? DefaultLoadAsync;
         _signature = signature ?? (target => ComputeSignature(target));
     }
-
-    /// <summary>The process-wide shared cache the tools and refactorers use by default.</summary>
-    public static WarmSolutionCache Shared { get; set; } = new();
 
     /// <summary>The total number of real MSBuild solution/project opens this cache has performed (a cache-miss counter).</summary>
     public int LoadCount
@@ -328,7 +325,15 @@ public sealed class WarmSolutionCache : IDisposable
     // its own abstain message.
     private static async Task<LoadedWorkspace> DefaultLoadAsync(string full, CancellationToken cancellationToken)
     {
-        EnsureLocatorRegistered();
+        try
+        {
+            EnsureLocatorRegistered();
+        }
+        catch (Exception ex)
+        {
+            throw new MsBuildLocatorUnavailableException(ex);
+        }
+
         var workspace = MSBuildWorkspace.Create();
         var failures = WorkspaceLoadFailures.Track(workspace);
         Solution solution;

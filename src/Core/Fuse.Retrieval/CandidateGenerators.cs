@@ -85,7 +85,7 @@ public sealed class ExactCandidateGenerator : ICandidateGenerator
     ///     Initializes a new instance of the <see cref="ExactCandidateGenerator" /> class.
     /// </summary>
     /// <param name="store">The index store to query.</param>
-    public ExactCandidateGenerator(IWorkspaceIndexStore store) => _resolver = new SemanticResolver(store);
+    public ExactCandidateGenerator(IWorkspaceIndexGraphStore store) => _resolver = new SemanticResolver(store);
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<CandidateNode>> GenerateAsync(LocalizationRequest request, CancellationToken cancellationToken)
@@ -130,13 +130,13 @@ public sealed class ExactCandidateGenerator : ICandidateGenerator
 /// </summary>
 public sealed class PathCandidateGenerator : ICandidateGenerator
 {
-    private readonly IWorkspaceIndexStore _store;
+    private readonly IWorkspaceIndexQueryStore _store;
 
     /// <summary>
     ///     Initializes a new instance of the <see cref="PathCandidateGenerator" /> class.
     /// </summary>
     /// <param name="store">The index store to query.</param>
-    public PathCandidateGenerator(IWorkspaceIndexStore store) => _store = store;
+    public PathCandidateGenerator(IWorkspaceIndexQueryStore store) => _store = store;
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<CandidateNode>> GenerateAsync(LocalizationRequest request, CancellationToken cancellationToken)

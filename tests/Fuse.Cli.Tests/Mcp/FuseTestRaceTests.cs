@@ -10,15 +10,13 @@ namespace Fuse.Cli.Tests.Mcp;
 // F2 candidate racing through the fuse_test MCP surface: parses the candidates JSON, races the overlay
 // typechecks over the (stubbed) resident workspace, and renders per-candidate diagnostics plus a strict-
 // dominance winner. Also covers the abstention when no resident workspace serves the root, and the input
-// guards (bound on k, malformed JSON). Shares the resident-provider collection so the static is not raced.
-[Collection("FuseToolsResidentProvider")]
+// guards (bound on k, malformed JSON).
 public sealed class FuseTestRaceTests : IDisposable
 {
     private readonly ServiceProvider _provider = new ServiceCollection().AddFuseForTests().BuildServiceProvider();
 
     public void Dispose()
     {
-        FuseTools.ResidentWorkspaces = NullResidentWorkspaceProvider.Instance;
         _provider.Dispose();
     }
 
@@ -30,7 +28,7 @@ public sealed class FuseTestRaceTests : IDisposable
         try
         {
             // The stub is content-keyed: any candidate whose content contains BROKEN gets a CS error, else clean.
-            FuseTools.ResidentWorkspaces = new ContentKeyedProvider(root);
+            var runtime = FuseMcpRuntime.CreateIsolated(indexer, new ContentKeyedProvider(root));
 
             const string candidates = """
                 [
@@ -40,8 +38,8 @@ public sealed class FuseTestRaceTests : IDisposable
                 ]
                 """;
 
-            var output = await FuseTools.FuseTestAsync(
-                indexer, path: work, candidates: candidates, cancellationToken: CancellationToken.None);
+            var output = await TestToolOperations.ExecuteAsync(
+                indexer, path: work, candidates: candidates, cancellationToken: CancellationToken.None, runtime: runtime);
 
             Assert.Contains("verification grade: oracle", output);
             Assert.Contains("race of 3 candidate(s):", output);
@@ -62,7 +60,7 @@ public sealed class FuseTestRaceTests : IDisposable
         var work = NewWorkspace(out var root);
         try
         {
-            FuseTools.ResidentWorkspaces = new ContentKeyedProvider(root);
+            var runtime = FuseMcpRuntime.CreateIsolated(indexer, new ContentKeyedProvider(root));
             const string candidates = """
                 [
                   {"id":"a","file":"Widget.cs","content":"clean a"},
@@ -70,8 +68,8 @@ public sealed class FuseTestRaceTests : IDisposable
                 ]
                 """;
 
-            var output = await FuseTools.FuseTestAsync(
-                indexer, path: work, candidates: candidates, cancellationToken: CancellationToken.None);
+            var output = await TestToolOperations.ExecuteAsync(
+                indexer, path: work, candidates: candidates, cancellationToken: CancellationToken.None, runtime: runtime);
 
             Assert.Contains("winner: none", output);
             Assert.Contains("tie", output);
@@ -89,12 +87,11 @@ public sealed class FuseTestRaceTests : IDisposable
         var work = NewWorkspace(out _);
         try
         {
-            FuseTools.ResidentWorkspaces = NullResidentWorkspaceProvider.Instance;
             const string candidates = """
                 [{"id":"a","file":"Widget.cs","content":"x"},{"id":"b","file":"Widget.cs","content":"y"}]
                 """;
 
-            var output = await FuseTools.FuseTestAsync(
+            var output = await TestToolOperations.ExecuteAsync(
                 indexer, path: work, candidates: candidates, cancellationToken: CancellationToken.None);
 
             Assert.Contains("cannot race (abstain)", output);
@@ -116,7 +113,7 @@ public sealed class FuseTestRaceTests : IDisposable
             var candidates = "[" + string.Join(",",
                 Enumerable.Range(0, 5).Select(i => $"{{\"file\":\"W.cs\",\"content\":\"c{i}\"}}")) + "]";
 
-            var output = await FuseTools.FuseTestAsync(
+            var output = await TestToolOperations.ExecuteAsync(
                 indexer, path: work, candidates: candidates, maxCandidates: 4, cancellationToken: CancellationToken.None);
 
             Assert.Contains("exceed the bound", output);
@@ -134,11 +131,11 @@ public sealed class FuseTestRaceTests : IDisposable
         var work = NewWorkspace(out _);
         try
         {
-            var one = await FuseTools.FuseTestAsync(
+            var one = await TestToolOperations.ExecuteAsync(
                 indexer, path: work, candidates: """[{"file":"W.cs","content":"x"}]""", cancellationToken: CancellationToken.None);
             Assert.Contains("at least two candidates", one);
 
-            var bad = await FuseTools.FuseTestAsync(
+            var bad = await TestToolOperations.ExecuteAsync(
                 indexer, path: work, candidates: "{not json", cancellationToken: CancellationToken.None);
             Assert.Contains("must be a JSON array", bad);
         }

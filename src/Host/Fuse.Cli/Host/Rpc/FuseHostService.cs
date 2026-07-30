@@ -29,11 +29,11 @@ namespace Fuse.Cli.Rpc;
 ///     Method names use the <c>fuse/</c> namespace. A random session token is generated at host start, returned
 ///     from <c>fuse/handshake</c>, and required on every other RPC method. When the process is the
 ///     <c>fuse host</c> entry point, the served repository root is taken from <c>--directory</c> (defaulting to
-///     the current directory) and every RPC method that carries a <paramref name="root" /> rejects a path that
+///     the current directory) and every RPC method that carries a <c>root</c> parameter rejects a path that
 ///     does not match it. The service never throws across the wire for an expected condition; it returns a typed
 ///     DTO so the client can render a clear state rather than parse an error.
 /// </remarks>
-public sealed class FuseHostService : IDisposable
+public sealed class FuseHostService : IAsyncDisposable, IDisposable
 {
     /// <summary>
     ///     The wire protocol version. Bumped on any breaking change to a DTO or method shape so a stale in-repo
@@ -41,12 +41,14 @@ public sealed class FuseHostService : IDisposable
     ///     serialization error. There is no external client to mirror: the VS Code extension was removed in v4
     ///     (Decision D15), so the host is the minimal pipe endpoint the hooks need.
     /// </summary>
-    public const int ProtocolVersion = 10;
+    public const int ProtocolVersion = 11;
 
-    private const int ListLimit = 100_000;
+    internal const int ListLimit = 100_000;
 
     private readonly ILogger<FuseHostService> _logger;
     private readonly SemanticIndexer _indexer;
+    private readonly IndexCoordinator _indexCoordinator;
+    private readonly IWorkspaceIndexJobManager _indexJobs;
     private readonly IChangeSource _changeSource;
     private readonly ContentReductionPipeline _reductionPipeline;
     private readonly ISecretRedactor _redactor;
@@ -55,27 +57,43 @@ public sealed class FuseHostService : IDisposable
     private readonly string? _servedRoot;
     private readonly long _startTimestamp;
     private readonly TaskCompletionSource _shutdownRequested = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly object _payloadLock = new();
-    private readonly HashSet<string> _payloadPaths = new(StringComparer.OrdinalIgnoreCase);
-    private readonly SemanticUpgradeSupervisor _upgradeSupervisor;
-    private readonly bool _backgroundSemanticUpgradeEnabled;
-    private readonly Fuse.Workspace.IResidentWorkspaceProvider? _residentWorkspacesOverride;
-    private CompilerStateBudget? _compilerStateBudget;
+    private readonly CancellationTokenSource _lifetime = new();
+    private readonly HostPayloadTracker _payloads;
+    private readonly Fuse.Workspace.IResidentWorkspaceProvider _residentWorkspaces;
+    private readonly IIndexAccessProvider _indexAccess;
+    private readonly LocalIndexAccessProvider _hostIndexAccess;
+    private readonly FuseMcpRuntime _runtime;
+    private readonly FuseHostReadOperations _readOperations;
+    private readonly FuseHostIndexOperations _indexOperations;
+    private readonly FuseHostVerificationOperations _verificationOperations;
+    private int _disposed;
 
-    // The resident workspace this daemon checks against. In production the daemon process owns the process-wide
-    // provider, so reading the static is correct; the override lets an in-process test give the daemon its own
-    // provider distinct from a client's provider (both would otherwise share the one static).
-    private Fuse.Workspace.IResidentWorkspaceProvider ResidentWorkspaces =>
-        _residentWorkspacesOverride ?? Fuse.Cli.Mcp.FuseTools.ResidentWorkspaces;
+    internal Fuse.Workspace.IResidentWorkspaceProvider ResidentWorkspaces => _residentWorkspaces;
+
+    internal CancellationToken LifetimeToken => _lifetime.Token;
+
+    internal IChangeSource ChangeSource => _changeSource;
+
+    internal ContentReductionPipeline ReductionPipeline => _reductionPipeline;
+
+    internal ISecretRedactor Redactor => _redactor;
+
+    internal IGeneratedCodeDetector GeneratedCodeDetector => _generatedCodeDetector;
+
+    internal ILogger<FuseHostService> Logger => _logger;
+
+    internal SemanticIndexer Indexer => _indexer;
+
+    internal IWorkspaceIndexJobManager IndexJobs => _indexJobs;
+
+    internal FuseMcpRuntime Runtime => _runtime;
+
+    internal void TrackPayload(string path) => _payloads.Track(path);
 
     /// <summary>
     ///     Initializes a new instance of the <see cref="FuseHostService" /> class.
     /// </summary>
-    /// <param name="indexer">The semantic indexer that builds and refreshes the workspace index.</param>
-    /// <param name="changeSource">The git change source for review (changes) scoping.</param>
-    /// <param name="reductionPipeline">The reduction pipeline used to render context payloads.</param>
-    /// <param name="redactor">The secret redactor, used read-only to locate secret spans for diagnostics.</param>
-    /// <param name="generatedCodeDetector">Detects machine-generated C# (for example EF Core migrations) for diagnostics.</param>
+    /// <param name="context">The host-owned application dependencies shared by focused RPC operations.</param>
     /// <param name="logger">The logger for host-side diagnostics, routed away from the transport stream.</param>
     /// <param name="servedRoot">
     ///     The repository root this daemon serves. When omitted and the process is <c>fuse host</c>, the root is
@@ -83,34 +101,52 @@ public sealed class FuseHostService : IDisposable
     ///     root arguments are not validated (in-process tests and non-host callers).
     /// </param>
     /// <param name="residentWorkspaces">
-    ///     The resident workspace provider this daemon checks against. When null (production), the process-wide
-    ///     <see cref="Fuse.Cli.Mcp.FuseTools.ResidentWorkspaces" /> is read at call time. An in-process test passes
-    ///     its own provider so the daemon's resident is distinct from a client's provider on the shared static.
+    ///     The resident workspace provider this daemon checks against. Tests may supply a provider that is distinct
+    ///     from the host runtime's provider.
     /// </param>
-    public FuseHostService(
-        SemanticIndexer indexer,
-        IChangeSource changeSource,
-        ContentReductionPipeline reductionPipeline,
-        ISecretRedactor redactor,
-        IGeneratedCodeDetector generatedCodeDetector,
+    internal FuseHostService(
+        FuseHostRequestContext context,
         ILogger<FuseHostService> logger,
         string? servedRoot = null,
         Fuse.Workspace.IResidentWorkspaceProvider? residentWorkspaces = null)
     {
-        _residentWorkspacesOverride = residentWorkspaces;
-        _indexer = indexer;
-        _changeSource = changeSource;
-        _reductionPipeline = reductionPipeline;
-        _redactor = redactor;
-        _generatedCodeDetector = generatedCodeDetector;
+        ArgumentNullException.ThrowIfNull(context);
+        _indexer = context.Indexer;
+        _indexCoordinator = context.IndexCoordinator;
+        _indexJobs = context.IndexJobs;
+        _changeSource = context.ChangeSource;
+        _reductionPipeline = context.ReductionPipeline;
+        _redactor = context.Redactor;
+        _generatedCodeDetector = context.GeneratedCodeDetector;
         _logger = logger;
+        _payloads = new HostPayloadTracker(logger);
+        _indexAccess = context.IndexAccess ?? context.Runtime?.IndexAccess
+            ?? new LocalIndexAccessProvider(_indexCoordinator, _indexJobs);
+        // A daemon-owned RPC has no MCP tool response body in which to return a deferred availability header.
+        // Keep the shared job running and wait for its committed syntax store until the daemon stops instead.
+        _hostIndexAccess = new LocalIndexAccessProvider(
+            _indexCoordinator,
+            _indexJobs,
+            Timeout.InfiniteTimeSpan);
+        _residentWorkspaces = residentWorkspaces
+            ?? context.Runtime?.ResidentWorkspaces
+            ?? Fuse.Workspace.NullResidentWorkspaceProvider.Instance;
+        _runtime = context.Runtime ?? new FuseMcpRuntime(
+            _indexAccess,
+            _residentWorkspaces,
+            _indexCoordinator,
+            _indexJobs,
+            new WarmSolutionCache(),
+            new PooledCheckWorker(),
+            new OwnedProcessRunner());
+        _readOperations = new FuseHostReadOperations(this);
+        _indexOperations = new FuseHostIndexOperations(this);
+        _verificationOperations = new FuseHostVerificationOperations(this);
         _sessionToken = FuseHostSessionToken.Generate();
         _servedRoot = servedRoot is not null
             ? NormalizeRoot(servedRoot)
             : TryResolveServedRootFromCommandLine();
         _startTimestamp = Stopwatch.GetTimestamp();
-        _upgradeSupervisor = new SemanticUpgradeSupervisor(message => _logger.LogInformation("{Message}", message));
-        _backgroundSemanticUpgradeEnabled = BackgroundSemanticUpgradeEnabled();
     }
 
     /// <summary>
@@ -152,17 +188,23 @@ public sealed class FuseHostService : IDisposable
     }
 
     /// <summary>
-    ///     Builds or refreshes the semantic index for a repository root and returns its summary: the tier
-    ///     (semantic, partial, or syntax), file/symbol/route counts, per-language breakdown, full-text-search
-    ///     availability, schema version, and the Fuse build that wrote it. This explicit action always refreshes
-    ///     the complete repository inventory.
+    ///     Starts or joins an index job for a repository root. The default job extracts syntax only; callers must
+    ///     request <see cref="IndexDepth.Semantic" /> to load the compiler workspace.
     /// </summary>
     /// <param name="sessionToken">The session token from <c>fuse/handshake</c>.</param>
     /// <param name="root">The absolute repository root to index.</param>
-    /// <returns>The index summary the extension's index panel renders.</returns>
+    /// <param name="depth">The requested syntax or semantic depth.</param>
+    /// <param name="force">Whether to discard existing derived data before indexing.</param>
+    /// <param name="captureBundlePath">An optional portable capture bundle directory.</param>
+    /// <returns>The shared job snapshot and whether this caller joined it.</returns>
     /// <exception cref="LocalRpcException">The session token is missing or invalid, or the root does not match the served root.</exception>
-    [JsonRpcMethod("fuse/index")]
-    public async Task<IndexResultDto> IndexAsync(string sessionToken, string root)
+    [JsonRpcMethod("fuse/indexStart")]
+    public Task<IndexJobStartResult> IndexStartAsync(
+        string sessionToken,
+        string root,
+        IndexDepth depth = IndexDepth.Syntax,
+        bool force = false,
+        string? captureBundlePath = null)
     {
         FuseHostSessionToken.Validate(_sessionToken, sessionToken);
         ValidateServedRoot(root);
@@ -170,32 +212,44 @@ public sealed class FuseHostService : IDisposable
         if (!Directory.Exists(resolved))
         {
             _logger.LogWarning("Index requested for missing directory {Root}.", resolved);
-            return new IndexResultDto("NotIndexed", 0, 0, "none", 0, 0, 0, false, FuseBuildInfo.Current, []);
+            return Task.FromResult(new IndexJobStartResult(
+                FuseHostIndexOperations.MissingWorkspaceSnapshot(resolved), Joined: false, Conflict: false));
         }
 
-        try
-        {
-            var stopwatch = Stopwatch.StartNew();
-            var pass = await IndexCoordinator.Default.OpenForWriteAsync(
-                resolved,
-                (writeStore, ct) => _indexer.IndexAsync(resolved, writeStore, ct),
-                CancellationToken.None);
-            stopwatch.Stop();
-            return await BuildIndexResultDtoAsync(resolved, pass, stopwatch.ElapsedMilliseconds);
-        }
-        catch (IndexBusyException)
-        {
-            return new IndexResultDto("IndexBusy", 0, 0, "none", 0, 0, 0, false, FuseBuildInfo.Current, []);
-        }
-        catch (IndexRebuildingException)
-        {
-            return new IndexResultDto("Rebuilding", 0, 0, "none", 0, 0, 0, false, FuseBuildInfo.Current, []);
-        }
+        return _indexJobs.StartOrJoinAsync(
+            new IndexJobRequest(resolved, depth, force, captureBundlePath),
+            LifetimeToken);
+    }
+
+    /// <summary>Returns the active or last completed job for a repository root.</summary>
+    /// <param name="sessionToken">The session token from <c>fuse/handshake</c>.</param>
+    /// <param name="root">The absolute repository root.</param>
+    /// <returns>The job snapshot, or null when the daemon has not indexed this root.</returns>
+    /// <exception cref="LocalRpcException">The session token is missing or invalid, or the root does not match the served root.</exception>
+    [JsonRpcMethod("fuse/indexStatus")]
+    public IndexJobSnapshot? IndexStatus(string sessionToken, string root)
+    {
+        FuseHostSessionToken.Validate(_sessionToken, sessionToken);
+        ValidateServedRoot(root);
+        return _indexJobs.GetStatus(Path.GetFullPath(root));
+    }
+
+    /// <summary>Requests cancellation of the active repository job.</summary>
+    /// <param name="sessionToken">The session token from <c>fuse/handshake</c>.</param>
+    /// <param name="root">The absolute repository root.</param>
+    /// <returns>The job snapshot after cancellation was requested, or null when no job is active.</returns>
+    /// <exception cref="LocalRpcException">The session token is missing or invalid, or the root does not match the served root.</exception>
+    [JsonRpcMethod("fuse/indexCancel")]
+    public Task<IndexJobSnapshot?> IndexCancelAsync(string sessionToken, string root)
+    {
+        FuseHostSessionToken.Validate(_sessionToken, sessionToken);
+        ValidateServedRoot(root);
+        return _indexJobs.CancelAsync(Path.GetFullPath(root), LifetimeToken);
     }
 
     /// <summary>
-    ///     Prepares the semantic index for store-backed reads (R19): open, reconcile, syntax-first cold start, and
-    ///     background semantic upgrade run under the daemon's single-writer <see cref="IndexCoordinator" />.
+    ///     Prepares the syntax index for store-backed reads. A cold, incomplete, or inventory-stale store starts
+    ///     or joins the daemon-owned syntax job; a current syntax store remains readable while semantic work runs.
     ///     Non-owner MCP clients call this before opening the store read-only locally.
     /// </summary>
     /// <param name="sessionToken">The session token from <c>fuse/handshake</c>.</param>
@@ -203,28 +257,11 @@ public sealed class FuseHostService : IDisposable
     /// <returns>A coarse readiness result for the client to map to tool output.</returns>
     /// <exception cref="LocalRpcException">The session token is missing or invalid, or the root does not match the served root.</exception>
     [JsonRpcMethod("fuse/openIndexed")]
-    public async Task<OpenIndexedResultDto> OpenIndexedAsync(string sessionToken, string root)
+    public Task<OpenIndexedResultDto> OpenIndexedAsync(string sessionToken, string root)
     {
         FuseHostSessionToken.Validate(_sessionToken, sessionToken);
         ValidateServedRoot(root);
-        var resolved = Path.GetFullPath(root);
-        if (!Directory.Exists(resolved))
-            return new OpenIndexedResultDto("not_indexed", "workspace directory not found", 0, null);
-
-        try
-        {
-            await using var store = await OpenIndexedForHostAsync(resolved, CancellationToken.None);
-            var state = await store.GetStateAsync(CancellationToken.None);
-            return new OpenIndexedResultDto("ready", null, state.FileCount, state.Mode);
-        }
-        catch (IndexBusyException)
-        {
-            return new OpenIndexedResultDto("index_busy", "the index database is in use; retry shortly", 0, null);
-        }
-        catch (IndexRebuildingException ex)
-        {
-            return new OpenIndexedResultDto("index_rebuilding", ex.Message, 0, null);
-        }
+        return _indexOperations.OpenIndexedAsync(Path.GetFullPath(root));
     }
 
     /// <summary>
@@ -243,111 +280,13 @@ public sealed class FuseHostService : IDisposable
     /// <returns>The graph nodes and edges at the requested level of detail.</returns>
     /// <exception cref="LocalRpcException">The session token is missing or invalid, or the root does not match the served root.</exception>
     [JsonRpcMethod("fuse/graph")]
-    public async Task<GraphDto> GraphAsync(
+    public Task<GraphDto> GraphAsync(
         string sessionToken, string root, string detail, string? scopeMode = null, string? seed = null, string? query = null,
         string? since = null, string? directory = null)
     {
         FuseHostSessionToken.Validate(_sessionToken, sessionToken);
         ValidateServedRoot(root);
-        var resolved = Path.GetFullPath(root);
-        var expandDirectory = !string.IsNullOrWhiteSpace(directory);
-        var directories = !expandDirectory && string.Equals(detail, "Directories", StringComparison.OrdinalIgnoreCase);
-        if (!Directory.Exists(resolved))
-            return new GraphDto([], [], directories ? "Directories" : "Files");
-
-        await using var store = await OpenIndexedForHostAsync(resolved, CancellationToken.None);
-
-        var files = await store.FindFilesByPathAsync(string.Empty, ListLimit, CancellationToken.None);
-        var tokenByPath = await store.GetFileTokenEstimatesAsync(CancellationToken.None);
-        var edges = await store.GetFileDependencyEdgesAsync(CancellationToken.None);
-
-        // Declared symbol names per file, for the node label and hover.
-        var typesByPath = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-        foreach (var symbol in await store.ListSymbolsAsync(ListLimit, CancellationToken.None))
-        {
-            if (!typesByPath.TryGetValue(symbol.FilePath, out var names))
-                typesByPath[symbol.FilePath] = names = [];
-            if (names.Count < 25 && !names.Contains(symbol.Name))
-                names.Add(symbol.Name);
-        }
-
-        // Degree-based centrality: a file's in+out edge count, normalized to [0, 1] by the busiest file.
-        var degree = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (var edge in edges)
-        {
-            degree[edge.FromPath] = degree.GetValueOrDefault(edge.FromPath) + 1;
-            degree[edge.ToPath] = degree.GetValueOrDefault(edge.ToPath) + 1;
-        }
-        var maxDegree = degree.Count == 0 ? 1 : degree.Values.Max();
-
-        // Optional scope overlay: tag each file with the role a fusion would give it, so the webview recolors.
-        var roleByPath = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (!string.IsNullOrWhiteSpace(scopeMode))
-        {
-            var (_, plan) = await PlanScopeAsync(store, resolved, scopeMode!, seed, query, since, 0);
-            foreach (var item in plan.Items)
-                roleByPath[item.Path] = item.Role;
-        }
-
-        var fileNodes = files.Select(f => new GraphNodeDto(
-            f.NormalizedPath,
-            typesByPath.GetValueOrDefault(f.NormalizedPath, []),
-            Math.Round(degree.GetValueOrDefault(f.NormalizedPath) / (double)maxDegree, 4),
-            tokenByPath.GetValueOrDefault(f.NormalizedPath),
-            roleByPath.GetValueOrDefault(f.NormalizedPath))).ToList();
-
-        var fileEdges = edges
-            .GroupBy(e => (e.FromPath, e.ToPath))
-            .Select(g => new GraphEdgeDto(g.Key.FromPath, g.Key.ToPath, g.Count(), g.First().Kind))
-            .ToList();
-
-        if (expandDirectory)
-        {
-            var prefix = directory!.Replace('\\', '/').TrimEnd('/') + "/";
-            bool Under(string p) => p.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
-            var subNodes = fileNodes.Where(n => Under(n.Path)).ToList();
-            var subPaths = new HashSet<string>(subNodes.Select(n => n.Path), StringComparer.OrdinalIgnoreCase);
-            var subEdges = fileEdges.Where(e => subPaths.Contains(e.From) && subPaths.Contains(e.To)).ToList();
-            return new GraphDto(subNodes, subEdges, "Files");
-        }
-
-        if (!directories)
-            return new GraphDto(fileNodes, fileEdges, "Files");
-
-        return AggregateToDirectories(fileNodes, fileEdges);
-    }
-
-    // Folds the file graph into directory supernodes: a node per directory (token cost and centrality summed for
-    // relative sizing) and one edge per distinct cross-directory reference, so a large repository ships a small
-    // graph the webview expands on demand.
-    private static GraphDto AggregateToDirectories(IReadOnlyList<GraphNodeDto> fileNodes, IReadOnlyList<GraphEdgeDto> fileEdges)
-    {
-        static string DirectoryOf(string path)
-        {
-            var slash = path.LastIndexOf('/');
-            return slash <= 0 ? "." : path[..slash];
-        }
-
-        var byDir = new Dictionary<string, (double Centrality, int Tokens, int Files)>(StringComparer.OrdinalIgnoreCase);
-        foreach (var node in fileNodes)
-        {
-            var dir = DirectoryOf(node.Path);
-            var acc = byDir.GetValueOrDefault(dir);
-            byDir[dir] = (acc.Centrality + node.Centrality, acc.Tokens + node.TokenCost, acc.Files + 1);
-        }
-
-        var dirNodes = byDir
-            .Select(kv => new GraphNodeDto(kv.Key, [$"{kv.Value.Files} files"], Math.Round(kv.Value.Centrality, 4), kv.Value.Tokens, null))
-            .ToList();
-
-        var dirEdges = fileEdges
-            .Select(e => (From: DirectoryOf(e.From), To: DirectoryOf(e.To)))
-            .Where(e => !string.Equals(e.From, e.To, StringComparison.OrdinalIgnoreCase))
-            .GroupBy(e => (e.From, e.To))
-            .Select(g => new GraphEdgeDto(g.Key.From, g.Key.To, g.Count(), "reference"))
-            .ToList();
-
-        return new GraphDto(dirNodes, dirEdges, "Directories");
+        return _readOperations.GraphAsync(Path.GetFullPath(root), detail, scopeMode, seed, query, since, directory);
     }
 
     /// <summary>
@@ -364,43 +303,12 @@ public sealed class FuseHostService : IDisposable
     /// <returns>The included files with token costs, the total tokens, and the payload file path.</returns>
     /// <exception cref="LocalRpcException">The session token is missing or invalid, or the root does not match the served root.</exception>
     [JsonRpcMethod("fuse/scope")]
-    public async Task<ScopeResultDto> ScopeAsync(
+    public Task<ScopeResultDto> ScopeAsync(
         string sessionToken, string root, string mode, string? seed, string? query, string? since, int maxTokens)
     {
         FuseHostSessionToken.Validate(_sessionToken, sessionToken);
         ValidateServedRoot(root);
-        var resolved = Path.GetFullPath(root);
-        if (!Directory.Exists(resolved))
-            return new ScopeResultDto((mode ?? "search").Trim().ToLowerInvariant(), [], 0, null);
-
-        await using var store = await OpenIndexedForHostAsync(resolved, CancellationToken.None);
-
-        var (normalizedMode, plan) = await PlanScopeAsync(store, resolved, mode, seed, query, since, maxTokens);
-
-        string? payloadPath = null;
-        if (plan.Items.Count > 0)
-        {
-            var renderer = new SemanticContextRenderer(_reductionPipeline, new SourceContentProvider(new PhysicalFileSystem()));
-            var rendered = await renderer.RenderAsync(plan, resolved, CancellationToken.None);
-            var content = SemanticContextEmitter.Emit(plan, rendered, ContextOutputFormat.Xml, resolved);
-
-            var dir = PayloadDirectory;
-            Directory.CreateDirectory(dir);
-            payloadPath = Path.Combine(dir, $"{HostEndpoint.PipeName(resolved)}-{normalizedMode}-{Guid.NewGuid():N}.fuse.xml");
-            await File.WriteAllTextAsync(payloadPath, content);
-            RestrictPayloadPermissions(payloadPath);
-            lock (_payloadLock)
-                _payloadPaths.Add(payloadPath);
-        }
-
-        var files = plan.Items
-            .Select(i => new ScopeFileDto(i.Path, i.EstimatedTokens))
-            .OrderByDescending(f => f.TokenCost)
-            .ToList();
-
-        _logger.LogInformation("Scope {Mode} on {Root}: {Files} files, {Tokens} tokens.",
-            normalizedMode, resolved, files.Count, plan.EstimatedTokens);
-        return new ScopeResultDto(normalizedMode, files, plan.EstimatedTokens, payloadPath);
+        return _readOperations.ScopeAsync(Path.GetFullPath(root), mode, seed, query, since, maxTokens);
     }
 
     /// <summary>
@@ -416,24 +324,12 @@ public sealed class FuseHostService : IDisposable
     /// <returns>The scoping mode and the planned files with their roles, tiers, and scores.</returns>
     /// <exception cref="LocalRpcException">The session token is missing or invalid, or the root does not match the served root.</exception>
     [JsonRpcMethod("fuse/explain")]
-    public async Task<ExplainResultDto> ExplainAsync(
+    public Task<ExplainResultDto> ExplainAsync(
         string sessionToken, string root, string mode, string? seed, string? query, string? since)
     {
         FuseHostSessionToken.Validate(_sessionToken, sessionToken);
         ValidateServedRoot(root);
-        var resolved = Path.GetFullPath(root);
-        if (!Directory.Exists(resolved))
-            return new ExplainResultDto((mode ?? "search").Trim().ToLowerInvariant(), []);
-
-        await using var store = await OpenIndexedForHostAsync(resolved, CancellationToken.None);
-
-        var (normalizedMode, plan) = await PlanScopeAsync(store, resolved, mode, seed, query, since, 0);
-        var files = plan.Items
-            .Select(i => new ExplainFileDto(i.Path, i.Role, i.Tier.ToString(), i.Score))
-            .ToList();
-
-        _logger.LogInformation("Explain {Mode} on {Root}: {Files} planned files.", normalizedMode, resolved, files.Count);
-        return new ExplainResultDto(normalizedMode, files);
+        return _readOperations.ExplainAsync(Path.GetFullPath(root), mode, seed, query, since);
     }
 
     /// <summary>
@@ -446,74 +342,11 @@ public sealed class FuseHostService : IDisposable
     /// <returns>The detected secrets, hotspots, graph gaps, and generated files.</returns>
     /// <exception cref="LocalRpcException">The session token is missing or invalid, or the root does not match the served root.</exception>
     [JsonRpcMethod("fuse/diagnostics")]
-    public async Task<DiagnosticsDto> DiagnosticsAsync(string sessionToken, string root)
+    public Task<DiagnosticsDto> DiagnosticsAsync(string sessionToken, string root)
     {
         FuseHostSessionToken.Validate(_sessionToken, sessionToken);
         ValidateServedRoot(root);
-        var resolved = Path.GetFullPath(root);
-        if (!Directory.Exists(resolved))
-            return new DiagnosticsDto([], [], [], []);
-
-        await using var store = await OpenIndexedForHostAsync(resolved, CancellationToken.None);
-
-        var files = await store.FindFilesByPathAsync(string.Empty, ListLimit, CancellationToken.None);
-
-        // Read each indexed file's content once to locate the secret spans the reduction path would redact (mapped
-        // to zero-based editor ranges) and to flag machine-generated C#. Read failures skip the file.
-        var secrets = new List<SecretDiagnosticDto>();
-        var generated = new List<string>();
-        foreach (var file in files)
-        {
-            string content;
-            try
-            {
-                content = await File.ReadAllTextAsync(Path.Combine(resolved, file.NormalizedPath.Replace('/', Path.DirectorySeparatorChar)));
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                continue;
-            }
-
-            if (string.Equals(file.Extension, ".cs", StringComparison.OrdinalIgnoreCase) && _generatedCodeDetector.IsGenerated(content))
-                generated.Add(file.NormalizedPath);
-
-            var spans = _redactor.FindSecretSpans(content);
-            if (spans.Count == 0)
-                continue;
-
-            var lineStarts = ComputeLineStarts(content);
-            foreach (var span in spans)
-            {
-                var (startLine, startCol) = OffsetToLineColumn(lineStarts, span.Start);
-                var (endLine, endCol) = OffsetToLineColumn(lineStarts, span.Start + span.Length);
-                secrets.Add(new SecretDiagnosticDto(file.NormalizedPath, span.Kind, startLine, startCol, endLine, endCol));
-            }
-        }
-
-        var tokenByPath = await store.GetFileTokenEstimatesAsync(CancellationToken.None);
-        var hotspots = tokenByPath
-            .Select(kv => new HotspotDiagnosticDto(kv.Key, kv.Value))
-            .OrderByDescending(h => h.TokenCost)
-            .Take(20)
-            .ToList();
-
-        // Graph gaps: indexed files that no typed dependency edge touches (often reflection-only or dead code the
-        // syntax tier cannot connect).
-        var connected = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var edge in await store.GetFileDependencyEdgesAsync(CancellationToken.None))
-        {
-            connected.Add(edge.FromPath);
-            connected.Add(edge.ToPath);
-        }
-        var graphGaps = files
-            .Select(f => f.NormalizedPath)
-            .Where(p => !connected.Contains(p))
-            .OrderBy(p => p, StringComparer.Ordinal)
-            .ToList();
-
-        _logger.LogInformation("Diagnostics on {Root}: {Secrets} secrets, {Hotspots} hotspots, {Gaps} gaps, {Generated} generated.",
-            resolved, secrets.Count, hotspots.Count, graphGaps.Count, generated.Count);
-        return new DiagnosticsDto(secrets, hotspots, graphGaps, generated);
+        return _readOperations.DiagnosticsAsync(Path.GetFullPath(root));
     }
 
     /// <summary>
@@ -527,7 +360,8 @@ public sealed class FuseHostService : IDisposable
     {
         FuseHostSessionToken.Validate(_sessionToken, sessionToken);
         _logger.LogInformation("Shutdown requested by client.");
-        DeleteTrackedPayloads();
+        _payloads.DeleteTrackedPayloads();
+        _lifetime.Cancel();
         _shutdownRequested.TrySetResult();
     }
 
@@ -546,32 +380,11 @@ public sealed class FuseHostService : IDisposable
     /// </returns>
     /// <exception cref="LocalRpcException">The session token is missing or invalid, or the root does not match the served root.</exception>
     [JsonRpcMethod("fuse/check")]
-    public async Task<CheckDeltaDto> CheckDeltaAsync(string sessionToken, string root, string session)
+    public Task<CheckDeltaDto> CheckDeltaAsync(string sessionToken, string root, string session)
     {
         FuseHostSessionToken.Validate(_sessionToken, sessionToken);
         ValidateServedRoot(root);
-        var resolved = Path.GetFullPath(root);
-
-        // The current whole-state diagnostics come from a live resident workspace (the same process-wide provider
-        // the MCP fuse_check delta mode reads); delta mode must not run a build, so with no resident workspace this
-        // returns an empty, non-resident delta and the hook stays silent.
-        var current = ResidentWorkspaces.TryGetCurrentDiagnostics(resolved);
-        if (current is null)
-            return new CheckDeltaDto(false, [], []);
-
-        await using var store = await OpenStoreAsync(resolved);
-        var baseline = await store.GetCheckSessionBaselineAsync(session, CancellationToken.None);
-        if (baseline is null)
-        {
-            await store.SaveCheckSessionBaselineAsync(session, resolved, current, CancellationToken.None);
-            return new CheckDeltaDto(true, [], []);
-        }
-
-        var delta = DiagnosticDelta.Compute(baseline.Diagnostics, current);
-        return new CheckDeltaDto(
-            true,
-            delta.Introduced.Select(ToCheckDiagnosticDto).ToList(),
-            delta.Resolved.Select(ToCheckDiagnosticDto).ToList());
+        return _verificationOperations.CheckDeltaAsync(Path.GetFullPath(root), session);
     }
 
     /// <summary>
@@ -590,70 +403,52 @@ public sealed class FuseHostService : IDisposable
     /// </returns>
     /// <exception cref="LocalRpcException">The session token is missing or invalid, or the root does not match the served root.</exception>
     [JsonRpcMethod("fuse/checkOverlay")]
-    public async Task<CheckOverlayResultDto> CheckOverlayAsync(
+    public Task<CheckOverlayResultDto> CheckOverlayAsync(
         string sessionToken, string root, string relativeFilePath, string newContent, bool includeAnalyzers)
     {
         FuseHostSessionToken.Validate(_sessionToken, sessionToken);
         ValidateServedRoot(root);
-        var resolved = Path.GetFullPath(root);
-        var diagnostics = await ResidentWorkspaces.TryCheckOverlayAsync(
-            resolved, relativeFilePath, newContent, includeAnalyzers, CancellationToken.None);
-        return diagnostics is null
-            ? new CheckOverlayResultDto(false, [])
-            : new CheckOverlayResultDto(true, diagnostics.Select(ToCheckDiagnosticDto).ToList());
+        return _verificationOperations.CheckOverlayAsync(
+            Path.GetFullPath(root),
+            relativeFilePath,
+            newContent,
+            includeAnalyzers);
     }
 
     /// <summary>Runs a live doctor load through this root's held warm solution cache.</summary>
     [JsonRpcMethod("fuse/doctor")]
-    public async Task<DoctorResultDto> DoctorAsync(string sessionToken, string root)
+    public Task<DoctorResultDto> DoctorAsync(string sessionToken, string root)
     {
         FuseHostSessionToken.Validate(_sessionToken, sessionToken);
         ValidateServedRoot(root);
-        BudgetFor(root).ActivateWarm();
-        return new DoctorResultDto(await Fuse.Cli.Commands.DoctorCommand.BuildLiveReportAsync(_indexer, Path.GetFullPath(root), CancellationToken.None));
+        return _verificationOperations.DoctorAsync(Path.GetFullPath(root));
     }
 
     /// <summary>Runs a staged compiler refactor through this root's held warm solution cache.</summary>
     [JsonRpcMethod("fuse/refactor")]
-    public async Task<RefactorResultDto> RefactorAsync(string sessionToken, string root, RefactorRequestDto request)
+    public Task<RefactorResultDto> RefactorAsync(string sessionToken, string root, RefactorRequestDto request)
     {
         FuseHostSessionToken.Validate(_sessionToken, sessionToken);
         ValidateServedRoot(root);
-        BudgetFor(root).ActivateWarm();
-        var output = await FuseTools.FuseRefactorCoreAsync(
-            root, request.Symbol, request.NewName, request.Operation, request.ContainingType, request.ParameterType,
-            request.ParameterName, request.Argument, request.NewOrder, request.DiagnosticId, request.File,
-            CancellationToken.None, routeToHost: false);
-        return new RefactorResultDto(output);
+        return _verificationOperations.RefactorAsync(Path.GetFullPath(root), request);
     }
 
     /// <summary>Runs a capture-bundle oracle check through this host's pooled worker ownership domain.</summary>
     [JsonRpcMethod("fuse/checkCapture")]
-    public async Task<CaptureCheckResultDto> CheckCaptureAsync(
+    public Task<CaptureCheckResultDto> CheckCaptureAsync(
         string sessionToken, string root, string relativeFilePath, string newContent)
     {
         FuseHostSessionToken.Validate(_sessionToken, sessionToken);
         ValidateServedRoot(root);
-        BudgetFor(root).ActivateCapture();
-        var result = await FuseTools.TryOracleFromCaptureBundleAsync(
-            Path.GetFullPath(root), relativeFilePath, newContent, new BuildCaptureClient(), CancellationToken.None);
-        return result is { Verified: true }
-            ? new CaptureCheckResultDto(true, null, result.Diagnostics.Select(ToCheckDiagnosticDto).ToList())
-            : new CaptureCheckResultDto(false, result?.Reason, []);
+        return _verificationOperations.CheckCaptureAsync(Path.GetFullPath(root), relativeFilePath, newContent);
     }
 
     /// <summary>Reserves the daemon's per-root budget for an opt-in resident workspace.</summary>
     public void ActivateResidentBudget(string root)
     {
         ValidateServedRoot(root);
-        BudgetFor(root).ActivateResident();
+        _verificationOperations.ActivateResidentBudget(Path.GetFullPath(root));
     }
-
-    private static CheckDiagnosticDto ToCheckDiagnosticDto(CheckDiagnostic diagnostic) =>
-        new(diagnostic.Id, diagnostic.Severity, diagnostic.Message, diagnostic.FilePath, diagnostic.Line);
-
-    private CompilerStateBudget BudgetFor(string root) =>
-        _compilerStateBudget ??= new CompilerStateBudget(Path.GetFullPath(root));
 
     // Confirms the caller's root matches the repository root this daemon was started to serve.
     private void ValidateServedRoot(string root)
@@ -700,164 +495,27 @@ public sealed class FuseHostService : IDisposable
     /// </summary>
     public void Dispose()
     {
-        DeleteTrackedPayloads();
-        _ = _upgradeSupervisor.DisposeAsync();
+        DisposeAsync().AsTask().GetAwaiter().GetResult();
     }
 
-    private Task<WorkspaceIndexStore> OpenIndexedForHostAsync(string root, CancellationToken cancellationToken) =>
-        IndexCoordinator.Default.OpenIndexedAsync(
-            _indexer,
-            root,
-            _backgroundSemanticUpgradeEnabled,
-            _upgradeSupervisor,
-            ScheduleSemanticUpgrade,
-            residentRoot => Fuse.Cli.Mcp.FuseTools.ResidentWorkspaces.DescribeResident(residentRoot) is not null,
-            cancellationToken);
-
-    private void ScheduleSemanticUpgrade(SemanticIndexer indexer, string root) =>
-        _upgradeSupervisor.Schedule(root, cancellationToken =>
-            IndexCoordinator.Default.RunBackgroundUpgradeAsync(indexer, root, cancellationToken));
-
-    private static bool BackgroundSemanticUpgradeEnabled()
+    /// <inheritdoc />
+    public async ValueTask DisposeAsync()
     {
-        var value = Environment.GetEnvironmentVariable("FUSE_BG_UPGRADE");
-        if (value is null)
-            return true;
-        return !(value.Equals("0", StringComparison.Ordinal)
-                 || value.Equals("false", StringComparison.OrdinalIgnoreCase)
-                 || value.Equals("no", StringComparison.OrdinalIgnoreCase)
-                 || value.Equals("off", StringComparison.OrdinalIgnoreCase));
-    }
-
-    private async Task<IndexResultDto> BuildIndexResultDtoAsync(
-        string resolved, SemanticIndexResult pass, long elapsedMs)
-    {
-        await using var store = await IndexCoordinator.Default.OpenForReadOnlyAsync(resolved, CancellationToken.None);
-        var state = await store.GetStateAsync(CancellationToken.None);
-        var languages = (await store.GetLanguageCountsAsync(CancellationToken.None))
-            .Select(l => new LanguageCountDto(l.Language, l.Count))
-            .ToList();
-        var fuseVersion = await store.GetMetaAsync(WorkspaceIndexStore.FuseVersionMetaKey, CancellationToken.None)
-                          ?? FuseBuildInfo.Current;
-        var manifest = await WorkspaceIndexManifest.ValidateAsync(resolved, store, CancellationToken.None);
-
-        _logger.LogInformation("Index {Root}: [{Mode}] {Files} files, {Symbols} symbols, {Routes} routes.",
-            resolved, pass.Mode, pass.FileCount, pass.SymbolCount, pass.RouteCount);
-        return new IndexResultDto(
-            manifest.Ready ? "Warm" : "NotIndexed",
-            pass.FileCount,
-            elapsedMs,
-            pass.Mode,
-            pass.SymbolCount,
-            pass.RouteCount,
-            state.SchemaVersion,
-            store.FullTextSearchAvailable,
-            fuseVersion,
-            languages);
-    }
-
-    // Opens the store for check-session baseline persistence (daemon-owned small writes).
-    private static async Task<WorkspaceIndexStore> OpenStoreAsync(string root)
-    {
-        var store = new WorkspaceIndexStore(FuseStorePaths.ResolveDatabasePath(root));
-        await store.InitializeAsync(CancellationToken.None);
-        return store;
-    }
-
-    // Plans a scoped context payload for a mode: focus (a symbol or file seed), changes (a git review), or search
-    // (localize the query, then build context from the located files). Shared by scope and explain.
-    private async Task<(string Mode, ContextPlan Plan)> PlanScopeAsync(
-        WorkspaceIndexStore store, string root, string mode, string? seed, string? query, string? since, int maxTokens)
-    {
-        var engine = new SemanticRetrievalEngine(store, _changeSource);
-        var normalized = (mode ?? "search").Trim().ToLowerInvariant();
-        int? budget = maxTokens > 0 ? maxTokens : null;
-
-        switch (normalized)
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+        _lifetime.Cancel();
+        try
         {
-            case "changes":
-                return ("changes", await engine.ReviewAsync(
-                    new ReviewRequest(root, string.IsNullOrWhiteSpace(since) ? "HEAD" : since!, MaxTokens: budget),
-                    CancellationToken.None));
-
-            case "focus":
-                var seeds = new List<ContextSeed>();
-                if (!string.IsNullOrWhiteSpace(seed))
-                    seeds.Add(new ContextSeed(LooksLikePath(seed!) ? ContextSeedKind.File : ContextSeedKind.Symbol, seed!));
-                return ("focus", await engine.PlanContextAsync(
-                    new ContextRequest(root, seeds, MaxTokens: budget), CancellationToken.None));
-
-            default:
-                var located = await engine.LocalizeAsync(new LocalizationRequest(root, Query: query), CancellationToken.None);
-                var fileSeeds = located.Candidates
-                    .Where(c => !string.IsNullOrEmpty(c.Path))
-                    .Select(c => new ContextSeed(ContextSeedKind.File, c.Path))
-                    .ToList();
-                return ("search", await engine.PlanContextAsync(
-                    new ContextRequest(root, fileSeeds, MaxTokens: budget), CancellationToken.None));
+            _payloads.DeleteTrackedPayloads();
+            await _indexJobs.DisposeAsync();
+        }
+        finally
+        {
+            _lifetime.Dispose();
         }
     }
 
-    // A focus seed is treated as a file when it looks like a path (a separator or a known source extension),
-    // otherwise as a symbol name.
-    private static bool LooksLikePath(string seed) =>
-        seed.Contains('/', StringComparison.Ordinal)
-        || seed.Contains('\\', StringComparison.Ordinal)
-        || Path.HasExtension(seed);
+    internal Task<WorkspaceIndexStore> OpenIndexedForHostAsync(string root, CancellationToken cancellationToken) =>
+        _hostIndexAccess.OpenIndexedAsync(_indexer, root, cancellationToken);
 
-    // The character offset at which each line starts, so an offset maps to a line by binary search.
-    private static int[] ComputeLineStarts(string content)
-    {
-        var starts = new List<int> { 0 };
-        for (var i = 0; i < content.Length; i++)
-            if (content[i] == '\n')
-                starts.Add(i + 1);
-        return [.. starts];
-    }
-
-    // Maps a character offset to a zero-based (line, column) using the precomputed line-start table.
-    private static (int Line, int Column) OffsetToLineColumn(int[] lineStarts, int offset)
-    {
-        var line = Array.BinarySearch(lineStarts, offset);
-        if (line < 0)
-            line = ~line - 1;
-        line = Math.Clamp(line, 0, lineStarts.Length - 1);
-        return (line, offset - lineStarts[line]);
-    }
-
-    private static string PayloadDirectory =>
-        Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Fuse",
-            "host-payloads");
-
-    // On Unix, scope payloads may contain source excerpts; restrict to owner read/write only.
-    private static void RestrictPayloadPermissions(string path)
-    {
-        if (!OperatingSystem.IsWindows())
-            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-    }
-
-    private void DeleteTrackedPayloads()
-    {
-        string[] paths;
-        lock (_payloadLock)
-        {
-            paths = [.. _payloadPaths];
-            _payloadPaths.Clear();
-        }
-
-        foreach (var path in paths)
-        {
-            try
-            {
-                if (File.Exists(path))
-                    File.Delete(path);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to delete payload file {Path}.", path);
-            }
-        }
-    }
 }

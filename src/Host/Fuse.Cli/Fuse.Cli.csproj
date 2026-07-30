@@ -55,7 +55,6 @@
         <ProjectReference Include="..\..\Plugins\Fuse.Plugins.Languages.CSharp\Fuse.Plugins.Languages.CSharp.csproj" />
         <ProjectReference Include="..\..\Plugins\Fuse.Plugins.Languages.CSharp.Roslyn\Fuse.Plugins.Languages.CSharp.Roslyn.csproj" />
         <ProjectReference Include="..\..\Plugins\Fuse.Plugins.Formats.Web\Fuse.Plugins.Formats.Web.csproj" />
-        <ProjectReference Include="..\..\..\tests\benchmarks\Fuse.Benchmarks\Fuse.Benchmarks.csproj" />
         <!-- C3: build the worker before this project so its output is available to bundle, but do NOT reference its
              assembly - its Basic.CompilerLog closure must stay out of fuse.dll's own directory (the separate-process
              isolation the worker exists for). ReferenceOutputAssembly=false gives build ordering without flowing

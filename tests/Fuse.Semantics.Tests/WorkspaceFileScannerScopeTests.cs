@@ -43,7 +43,7 @@ public sealed class WorkspaceFileScannerScopeTests : IDisposable
             fileSystem,
             new GitIgnoreParser(fileSystem),
             [new GitIgnoreFilter(), new ExtensionFilter(), new ExcludedDirectoryFilter(), new EmptyFileFilter(), new BinaryFileFilter(fileSystem)]);
-        return new WorkspaceFileScanner(pipeline, new FileHashService());
+        return new WorkspaceFileScanner(pipeline);
     }
 
     private void Write(string relativePath, string content)

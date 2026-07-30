@@ -52,13 +52,61 @@ public sealed class HostRpcOutcomeTests : IDisposable
                     Path.Combine(root, $"T{i}.cs"),
                     $"namespace Storm; public class Type{i} {{ public void M() {{ }} }}");
 
-            var output = await FuseTools.FuseImpactAsync(
-                indexer, symbol: "Type0", path: root, cancellationToken: CancellationToken.None);
+            var coordinator = _provider.GetRequiredService<IndexCoordinator>();
+            var runtime = new FuseMcpRuntime(
+                new LocalIndexAccessProvider(
+                    coordinator,
+                    _provider.GetRequiredService<IWorkspaceIndexJobManager>(),
+                    TimeSpan.FromSeconds(30)),
+                NullResidentWorkspaceProvider.Instance,
+                coordinator,
+                _provider.GetRequiredService<IWorkspaceIndexJobManager>(),
+                _provider.GetRequiredService<WarmSolutionCache>(),
+                _provider.GetRequiredService<PooledCheckWorker>(),
+                _provider.GetRequiredService<IProcessRunner>());
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var output = await ImpactToolOperations.ExecuteAsync(
+                indexer, symbol: "Type0", path: root, cancellationToken: timeout.Token, runtime: runtime);
 
             Assert.StartsWith("index_state: ready", output);
             Assert.Contains($"files_indexed: {StormFileCount}", output);
             Assert.Contains("up to date", output);
             Assert.DoesNotContain("results may lag the working tree", output);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
+    public async Task Impact_returns_the_building_header_when_the_index_read_is_deferred()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "fuse-impact-deferred", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        root.AsIsolatedRepo();
+
+        try
+        {
+            var coordinator = _provider.GetRequiredService<IndexCoordinator>();
+            var runtime = new FuseMcpRuntime(
+                new DeferredIndexAccessProvider(root),
+                NullResidentWorkspaceProvider.Instance,
+                coordinator,
+                _provider.GetRequiredService<IWorkspaceIndexJobManager>(),
+                _provider.GetRequiredService<WarmSolutionCache>(),
+                _provider.GetRequiredService<PooledCheckWorker>(),
+                _provider.GetRequiredService<IProcessRunner>());
+
+            var output = await ImpactToolOperations.ExecuteAsync(
+                _provider.GetRequiredService<SemanticIndexer>(),
+                symbol: "Widget",
+                path: root,
+                cancellationToken: CancellationToken.None,
+                runtime: runtime);
+
+            Assert.StartsWith("index_state: building_syntax", output);
+            Assert.DoesNotContain(FuseOperationalErrors.InternalErrorPrefix, output);
         }
         finally
         {
@@ -93,12 +141,16 @@ public sealed class HostRpcOutcomeTests : IDisposable
             new CheckDiagnostic("CS1061", "Error", "'Widget' does not contain a definition for 'Nope'", "Widget.cs", 1),
         ]);
 
-        var service = new FuseHostService(
+        var hostContext = new FuseHostRequestContext(
             indexer,
             _provider.GetRequiredService<IChangeSource>(),
             _provider.GetRequiredService<ContentReductionPipeline>(),
             _provider.GetRequiredService<ISecretRedactor>(),
             _provider.GetRequiredService<IGeneratedCodeDetector>(),
+            _provider.GetRequiredService<IndexCoordinator>(),
+            _provider.GetRequiredService<IWorkspaceIndexJobManager>());
+        var service = new FuseHostService(
+            hostContext,
             NullLogger<FuseHostService>.Instance,
             work,
             daemonResident);
@@ -107,14 +159,15 @@ public sealed class HostRpcOutcomeTests : IDisposable
         try
         {
             await ready.Task.WaitAsync(TimeSpan.FromSeconds(10), cts.Token);
-            FuseTools.ResidentWorkspaces = new RemoteResidentWorkspaceProvider();
+            var runtime = FuseMcpRuntime.CreateIsolated(indexer, new RemoteResidentWorkspaceProvider());
 
-            var output = await FuseTools.FuseCheckAsync(
+            var output = await CheckToolOperations.ExecuteAsync(
                 indexer,
                 work,
                 "Widget.cs",
                 "namespace Sample; public sealed class Widget { public int Spin() => Nope; }",
-                cancellationToken: CancellationToken.None);
+                cancellationToken: CancellationToken.None,
+                runtime: runtime);
 
             Assert.Contains("verification grade: oracle", output);
             Assert.Contains("CS1061", output);
@@ -123,7 +176,6 @@ public sealed class HostRpcOutcomeTests : IDisposable
         {
             await cts.CancelAsync();
             try { await serverTask; } catch (OperationCanceledException) { }
-            FuseTools.ResidentWorkspaces = NullResidentWorkspaceProvider.Instance;
             try { Directory.Delete(work, recursive: true); } catch (IOException) { }
         }
     }
@@ -208,9 +260,23 @@ public sealed class HostRpcOutcomeTests : IDisposable
                 string.Equals(queried, Path.GetFullPath(root), StringComparison.OrdinalIgnoreCase) ? diagnostics : null);
     }
 
+    private sealed class DeferredIndexAccessProvider(string root) : IIndexAccessProvider
+    {
+        public Task<IndexJobStartResult> StartSyntaxAsync(
+            SemanticIndexer indexer, string path, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<WorkspaceIndexStore> OpenIndexedAsync(
+            SemanticIndexer indexer, string path, CancellationToken cancellationToken) =>
+            throw new ColdStartInProgressException(root);
+
+        public Task<SemanticIndexResult> IndexAsync(
+            SemanticIndexer indexer, string path, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
     public void Dispose()
     {
-        FuseTools.ResidentWorkspaces = NullResidentWorkspaceProvider.Instance;
         _provider.Dispose();
     }
 }

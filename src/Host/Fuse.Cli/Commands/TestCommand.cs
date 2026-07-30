@@ -1,5 +1,6 @@
 using System.Text;
 using DotMake.CommandLine;
+using Fuse.Cli.Mcp;
 using Fuse.Cli.Services;
 using Fuse.Indexing;
 using Fuse.Reduction.Caching;
@@ -58,7 +59,7 @@ public sealed class TestCommand
             return;
         }
 
-        var root = System.IO.Path.GetFullPath(Path);
+        var root = WorkspacePathResolver.ResolveRepositoryRoot(Path);
         var databasePath = FuseStorePaths.ResolveDatabasePath(root);
         if (!File.Exists(databasePath))
         {
@@ -76,52 +77,51 @@ public sealed class TestCommand
             return;
         }
 
-        var discovery = await new DotNetWorkspaceDiscoverer().DiscoverAsync(root, context.CancellationToken);
-        var target = discovery.SolutionPath ?? discovery.ProjectPaths.FirstOrDefault();
-        if (target is null)
-        {
-            _consoleUI.WriteError($"Selected {covering.Count} covering test type(s), but found no solution or project to run them.");
-            return;
-        }
-
-        var coveringTypes = covering.Select(c => c.Symbol).ToList();
-        var filter = TestFilterBuilder.BuildContains(coveringTypes);
-        var scratch = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "fuse-test", Guid.NewGuid().ToString("N"));
-        try
-        {
-            var result = await BuildGradeTestRunner.RunAsync(target, filter, scratch, TimeSpan.FromMinutes(10), context.CancellationToken);
-            _consoleUI.WriteResult(Render(Symbol, coveringTypes, result));
-        }
-        finally
-        {
-            try { Directory.Delete(scratch, recursive: true); } catch (IOException) { }
-        }
+        var scopedRun = await new ProjectScopedCoveringTestRunner().RunAsync(
+            root,
+            covering
+                .Where(item => !string.IsNullOrWhiteSpace(item.Symbol))
+                .Select(item => new CoveredTestSelection(item.Path, item.Symbol!))
+                .ToList(),
+            TimeSpan.FromMinutes(10),
+            context.CancellationToken);
+        _consoleUI.WriteResult(Render(Symbol, root, scopedRun));
     }
 
-    private static string Render(string symbol, IReadOnlyList<string> coveringTypes, TestRunResult result)
+    private static string Render(string symbol, string root, ProjectScopedTestRun scopedRun)
     {
         var builder = new StringBuilder();
-        builder.AppendLine("verification grade: build (ran dotnet test scoped to the covering tests; the emit fast path is future work)");
-        if (result.TimedOut)
+        if (scopedRun.ProjectRuns.Count == 0)
         {
-            builder.AppendLine($"covering tests for {symbol}: timed out and the test host was killed.");
+            var unowned = scopedRun.UnownedTestFiles.Count == 0
+                ? "no selected test type had an owning project"
+                : $"{scopedRun.UnownedTestFiles.Count} selected test file(s) had no owning project: {string.Join(", ", scopedRun.UnownedTestFiles)}";
+            builder.AppendLine($"covering tests for {symbol}: {scopedRun.SelectedTestTypes.Count} test type(s) selected, but {unowned} (selection-only).");
             return builder.ToString().TrimEnd();
         }
 
-        if (result.Diagnostics is not null)
+        var results = scopedRun.ProjectRuns.SelectMany(run => run.Result.Verdicts).ToList();
+        var passed = results.Count(verdict => verdict.Outcome == "passed");
+        var failed = results.Count(verdict => verdict.Outcome == "failed");
+        var notRun = results.Count(verdict => verdict.Outcome == "not-run");
+        builder.AppendLine($"verification grade: build (ran dotnet test scoped to the covering tests in {scopedRun.ProjectRuns.Count} owning project(s); the emit fast path is future work)");
+        foreach (var run in scopedRun.ProjectRuns)
         {
-            builder.AppendLine($"covering tests for {symbol}: {result.Diagnostics}");
-            return builder.ToString().TrimEnd();
+            var project = System.IO.Path.GetRelativePath(root, run.ProjectPath).Replace('\\', '/');
+            if (run.Result.TimedOut)
+                builder.AppendLine($"  {project}: timed out and the test host was killed.");
+            else if (run.Result.Diagnostics is not null)
+                builder.AppendLine($"  {project}: {run.Result.Diagnostics}");
         }
 
-        var passed = result.Verdicts.Count(v => v.Outcome == "passed");
-        var failed = result.Verdicts.Count(v => v.Outcome == "failed");
-        var notRun = result.Verdicts.Count(v => v.Outcome == "not-run");
-        builder.AppendLine($"covering tests for {symbol}: {coveringTypes.Count} test type(s), {result.Verdicts.Count} test(s) run - {passed} passed, {failed} failed, {notRun} not-run");
-        foreach (var verdict in result.Verdicts.OrderBy(v => v.Outcome == "failed" ? 0 : 1).ThenBy(v => v.Name, StringComparer.Ordinal))
+        if (scopedRun.UnownedTestFiles.Count > 0)
+            builder.AppendLine($"selection-only: {scopedRun.UnownedTestFiles.Count} selected test file(s) had no owning project: {string.Join(", ", scopedRun.UnownedTestFiles)}");
+
+        builder.AppendLine($"covering tests for {symbol}: {scopedRun.SelectedTestTypes.Count} test type(s), {results.Count} test(s) run - {passed} passed, {failed} failed, {notRun} not-run");
+        foreach (var verdict in results.OrderBy(verdict => verdict.Outcome == "failed" ? 0 : 1).ThenBy(verdict => verdict.Name, StringComparer.Ordinal))
             builder.AppendLine($"  {verdict.Outcome} {verdict.Name}");
 
-        var notRunnable = CoveringRunAnalysis.NotRunnableTypes(coveringTypes, result.Verdicts);
+        var notRunnable = CoveringRunAnalysis.NotRunnableTypes(scopedRun.SelectedTestTypes, results);
         if (notRunnable.Count > 0)
         {
             builder.AppendLine($"not-runnable ({notRunnable.Count}; selected but produced no result):");

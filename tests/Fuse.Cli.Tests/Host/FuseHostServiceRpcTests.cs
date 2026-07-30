@@ -1,6 +1,7 @@
 using System.IO.Pipelines;
 using System.Text.Json;
 using Fuse.Cli.Rpc;
+using Fuse.Cli.Mcp;
 using Fuse.Plugins.Abstractions.Reducers;
 using Fuse.Reduction;
 using Fuse.Retrieval;
@@ -16,20 +17,22 @@ namespace Fuse.Cli.Tests;
 // header framing the named-pipe transport uses) to validate the wire wiring end to end: a client calls the
 // fuse/* methods by name and gets back deserialized DTOs, and fuse/shutdown completes the host's shutdown task.
 //
-// The fuse/check RPC reads the process-wide FuseTools.ResidentWorkspaces static, so this class joins the
-// collection that serializes the tests mutating it, avoiding a parallel race on the shared static.
-[Collection("FuseToolsResidentProvider")]
 public sealed class FuseHostServiceRpcTests : IDisposable
 {
     private readonly ServiceProvider _provider = new ServiceCollection().AddFuseForTests().BuildServiceProvider();
 
-    private FuseHostService NewService() => new(
-        _provider.GetRequiredService<SemanticIndexer>(),
-        _provider.GetRequiredService<IChangeSource>(),
-        _provider.GetRequiredService<ContentReductionPipeline>(),
-        _provider.GetRequiredService<ISecretRedactor>(),
-        _provider.GetRequiredService<IGeneratedCodeDetector>(),
-        NullLogger<FuseHostService>.Instance);
+    private FuseHostService NewService(Fuse.Workspace.IResidentWorkspaceProvider? residentWorkspaces = null)
+    {
+        var context = new FuseHostRequestContext(
+            _provider.GetRequiredService<SemanticIndexer>(),
+            _provider.GetRequiredService<IChangeSource>(),
+            _provider.GetRequiredService<ContentReductionPipeline>(),
+            _provider.GetRequiredService<ISecretRedactor>(),
+            _provider.GetRequiredService<IGeneratedCodeDetector>(),
+            _provider.GetRequiredService<IndexCoordinator>(),
+            _provider.GetRequiredService<IWorkspaceIndexJobManager>());
+        return new FuseHostService(context, NullLogger<FuseHostService>.Instance, residentWorkspaces: residentWorkspaces);
+    }
 
     private static string SessionToken(FuseHostService service) => service.Handshake().SessionToken;
 
@@ -99,7 +102,7 @@ public sealed class FuseHostServiceRpcTests : IDisposable
         clientRpc.StartListening();
 
         var handshake = await clientRpc.InvokeAsync<FuseHostHandshake>("fuse/handshake");
-        Assert.Equal(10, handshake.ProtocolVersion);
+        Assert.Equal(11, handshake.ProtocolVersion);
         Assert.Equal(FuseHostService.ProtocolVersion, handshake.ProtocolVersion);
         Assert.False(string.IsNullOrWhiteSpace(handshake.HostVersion));
         Assert.False(string.IsNullOrWhiteSpace(handshake.SessionToken));
@@ -136,7 +139,7 @@ public sealed class FuseHostServiceRpcTests : IDisposable
 
         var handshake = await clientRpc.InvokeAsync<FuseHostHandshake>("fuse/handshake");
 
-        Assert.Equal(10, handshake.ProtocolVersion);
+        Assert.Equal(11, handshake.ProtocolVersion);
         Assert.Equal(FuseHostService.ProtocolVersion, handshake.ProtocolVersion);
         Assert.False(string.IsNullOrWhiteSpace(handshake.HostVersion));
         Assert.False(string.IsNullOrWhiteSpace(handshake.SessionToken));
@@ -189,7 +192,7 @@ public sealed class FuseHostServiceRpcTests : IDisposable
     }
 
     [Fact]
-    public async Task Index_WarmsTheEngineAndCountsFiles()
+    public async Task IndexStart_builds_syntax_index_and_counts_files()
     {
         var source = NewFixture(
             ("Widget.cs", "public class Widget { public void Run() { } }"),
@@ -198,10 +201,14 @@ public sealed class FuseHostServiceRpcTests : IDisposable
         try
         {
             var service = NewService();
-            var result = await service.IndexAsync(SessionToken(service), source);
+            var result = await service.IndexStartAsync(SessionToken(service), source);
+            var completed = await _provider.GetRequiredService<IWorkspaceIndexJobManager>()
+                .WaitForCompletionAsync(source, CancellationToken.None);
 
-            Assert.Equal("Warm", result.IndexState);
-            Assert.True(result.FileCount >= 2, $"expected at least 2 files, got {result.FileCount}");
+            Assert.False(result.Conflict);
+            Assert.NotNull(completed);
+            Assert.Equal(IndexJobState.Completed, completed!.State);
+            Assert.True(completed.Counts.Files >= 2, $"expected at least 2 files, got {completed.Counts.Files}");
         }
         finally
         {
@@ -210,17 +217,20 @@ public sealed class FuseHostServiceRpcTests : IDisposable
     }
 
     [Fact]
-    public async Task Index_EmptyRepositoryReportsWarmCompletedManifest()
+    public async Task IndexStart_empty_repository_reports_completed_job()
     {
         var source = NewFixture();
 
         try
         {
             var service = NewService();
-            var result = await service.IndexAsync(SessionToken(service), source);
+            await service.IndexStartAsync(SessionToken(service), source);
+            var result = await _provider.GetRequiredService<IWorkspaceIndexJobManager>()
+                .WaitForCompletionAsync(source, CancellationToken.None);
 
-            Assert.Equal("Warm", result.IndexState);
-            Assert.Equal(0, result.FileCount);
+            Assert.NotNull(result);
+            Assert.Equal(IndexJobState.Completed, result!.State);
+            Assert.Equal(0, result.Counts.Files);
         }
         finally
         {
@@ -229,15 +239,15 @@ public sealed class FuseHostServiceRpcTests : IDisposable
     }
 
     [Fact]
-    public async Task Index_MissingDirectory_ReportsNotIndexed()
+    public async Task IndexStart_missing_directory_reports_failed_job()
     {
         var missing = Path.Combine(Path.GetTempPath(), "fuse-host-missing", Guid.NewGuid().ToString("N"));
 
         var service = NewService();
-        var result = await service.IndexAsync(SessionToken(service), missing);
+        var result = await service.IndexStartAsync(SessionToken(service), missing);
 
-        Assert.Equal("NotIndexed", result.IndexState);
-        Assert.Equal(0, result.FileCount);
+        Assert.Equal(IndexJobState.Failed, result.Snapshot.State);
+        Assert.Equal("workspace_not_found", result.Snapshot.ErrorCode);
     }
 
     [Fact]
@@ -495,11 +505,41 @@ public sealed class FuseHostServiceRpcTests : IDisposable
     }
 
     [Fact]
+    public async Task Graph_waits_for_the_daemon_owned_syntax_job_beyond_the_mcp_read_deadline()
+    {
+        var source = NewFixture(("Widget.cs", "public class Widget { public int Value() => 1; }"));
+        var coordinator = _provider.GetRequiredService<IndexCoordinator>();
+        var jobs = new WorkspaceIndexJobManager(
+            new DelayedIndexExecutor(
+                new SemanticIndexJobExecutor(coordinator, _provider.GetRequiredService<SemanticIndexer>())));
+        var context = new FuseHostRequestContext(
+            _provider.GetRequiredService<SemanticIndexer>(),
+            _provider.GetRequiredService<IChangeSource>(),
+            _provider.GetRequiredService<ContentReductionPipeline>(),
+            _provider.GetRequiredService<ISecretRedactor>(),
+            _provider.GetRequiredService<IGeneratedCodeDetector>(),
+            coordinator,
+            jobs);
+
+        try
+        {
+            using var service = new FuseHostService(context, NullLogger<FuseHostService>.Instance);
+            var graph = await service.GraphAsync(SessionToken(service), source, "Files");
+
+            Assert.Contains(graph.Nodes, node => node.Path == "Widget.cs");
+        }
+        finally
+        {
+            await jobs.DisposeAsync();
+            CleanupFixture(source);
+        }
+    }
+
+    [Fact]
     public async Task Check_WithNoResidentWorkspace_ReturnsNonResidentEmptyDelta()
     {
         // Delta mode must not run a build, so with no resident workspace the RPC returns a non-resident empty
         // delta and an ambient-verification hook stays silent rather than blocking editing.
-        Fuse.Cli.Mcp.FuseTools.ResidentWorkspaces = Fuse.Workspace.NullResidentWorkspaceProvider.Instance;
         var source = NewFixture(("Widget.cs", "public class Widget { public void Run() { } }"));
         try
         {
@@ -520,7 +560,6 @@ public sealed class FuseHostServiceRpcTests : IDisposable
     public async Task CheckOverlay_WithNoResidentWorkspace_ReturnsNoResident()
     {
         // With no resident workspace the daemon cannot answer resident-grade; the caller falls back to its own path.
-        Fuse.Cli.Mcp.FuseTools.ResidentWorkspaces = Fuse.Workspace.NullResidentWorkspaceProvider.Instance;
         var source = NewFixture(("Widget.cs", "public class Widget { public void Run() { } }"));
         try
         {
@@ -559,12 +598,12 @@ public sealed class FuseHostServiceRpcTests : IDisposable
     {
         // G5: the RPC delegates to the daemon's resident workspace, so a non-owner client gets resident-grade
         // diagnostics over the pipe. A fake resident provider stands in for the daemon's live workspace.
-        Fuse.Cli.Mcp.FuseTools.ResidentWorkspaces = new FakeResidentProvider(
+        var residentWorkspaces = new FakeResidentProvider(
             [new Fuse.Indexing.CheckDiagnostic("CS0246", "Error", "type 'Gadget' not found", "Widget.cs", 1)]);
         var source = NewFixture(("Widget.cs", "public class Widget { }"));
         try
         {
-            var service = NewService();
+            var service = NewService(residentWorkspaces);
             var result = await service.CheckOverlayAsync(SessionToken(service), source, "Widget.cs", "public class Widget : Gadget { }", includeAnalyzers: true);
 
             Assert.True(result.HasResident);
@@ -574,8 +613,20 @@ public sealed class FuseHostServiceRpcTests : IDisposable
         }
         finally
         {
-            Fuse.Cli.Mcp.FuseTools.ResidentWorkspaces = Fuse.Workspace.NullResidentWorkspaceProvider.Instance;
             CleanupFixture(source);
+        }
+    }
+
+    private sealed class DelayedIndexExecutor(IWorkspaceIndexJobExecutor inner) : IWorkspaceIndexJobExecutor
+    {
+        public async Task<SemanticIndexResult> ExecuteAsync(
+            string jobId,
+            IndexJobRequest request,
+            IProgress<IndexJobProgress> progress,
+            CancellationToken cancellationToken)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(4), cancellationToken);
+            return await inner.ExecuteAsync(jobId, request, progress, cancellationToken);
         }
     }
 
@@ -596,7 +647,6 @@ public sealed class FuseHostServiceRpcTests : IDisposable
 
     public void Dispose()
     {
-        Fuse.Cli.Mcp.FuseTools.ResidentWorkspaces = Fuse.Workspace.NullResidentWorkspaceProvider.Instance;
         _provider.Dispose();
     }
 }

@@ -55,7 +55,7 @@ public sealed class DependencyGraphBuilder
     /// <param name="parallelism">Maximum number of files analyzed concurrently.</param>
     /// <param name="cancellationToken">Token used to cancel reads and analysis.</param>
     /// <param name="index">
-    ///     Optional persistent analysis index. When supplied, each file's referenced and declared types are read
+    ///     Optional host-memory analysis index. When supplied, each file's referenced and declared types are read
     ///     from the index on a content-and-tier hit and recomputed and stored on a miss.
     /// </param>
     /// <returns>The awaited result is the populated dependency graph.</returns>

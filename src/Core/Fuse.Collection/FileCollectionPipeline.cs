@@ -101,7 +101,7 @@ public sealed class FileCollectionPipeline
         // A caller-supplied candidate set (for example a git-native file listing) replaces the directory walk but
         // still passes every filter below. Its relative entries resolve against the root; only existing files
         // survive, so a stale listing degrades the set rather than throwing.
-        var candidateSource = options.CandidateFiles is { Count: > 0 }
+        var candidateSource = options.CandidateFiles is not null
             ? options.CandidateFiles
                 .Select(path => Path.IsPathRooted(path) ? path : Path.Combine(rootDirectory, path))
                 .Where(path => _fileSystem.GetFileInfo(path).Exists)

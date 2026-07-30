@@ -26,6 +26,7 @@ public static class SemanticContextEmitter
     /// <param name="changedSince">The git base ref for review plans, for the manifest.</param>
     /// <param name="unchangedPaths">Paths to emit as a reference (body omitted) because they were already sent unchanged in the session.</param>
     /// <param name="apiDeltaSection">The rendered public-API delta section (T2) for a review plan, or null to omit.</param>
+    /// <param name="claimsSection">The rendered claim-ledger section for a review plan, or null to omit.</param>
     /// <returns>The emitted payload.</returns>
     public static string Emit(
         ContextPlan plan,

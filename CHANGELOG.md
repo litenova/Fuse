@@ -2,7 +2,59 @@
 
 All notable changes to Fuse are documented here. The format is based on Keep a Changelog. Fuse 4.0.0 is the first public release; it carries the whole product and there is no prior public version to migrate from.
 
-## [Unreleased]
+## [4.4.0] - 2026-07-30
+
+### Added
+
+- The `fuse.json` schema the CLI writes is now published at `https://fuse.codes/schema/v4.4/fuse.schema.json`, so an editor can validate a file written by `fuse init`.
+- `fuse index` now exposes a repository-owned job lifecycle. `fuse index status`, `fuse index cancel`, and `fuse index clean --yes` report, cancel, and remove only documented derived index files. Start, status, and cancel support JSON output.
+- `fuse mcp doctor` reports the running binary, PATH lookup, selected MCP client registration and command, managed-instruction version, optional Claude hooks, daemon protocol, repository identity, and active index job. It supports human output and `--json`.
+
+### Changed
+
+- Indexing starts at the syntax tier. `fuse index --semantic` explicitly continues into selected-workspace compiler analysis after syntax rows are available, without starting a build-capture worker. Matching callers join one daemon-owned job instead of colliding with the SQLite writer.
+- Host protocol 11 replaces `fuse/index` with `fuse/indexStart`, `fuse/indexStatus`, and `fuse/indexCancel`. `fuse/openIndexed` includes the current job snapshot while syntax data is being built.
+- `fuse_workspace action=index` now starts or joins the daemon job, `action=status` reports job details without creating an index, and `action=cancel` requests shared-job cancellation. A source edit starts a refresh job before a read returns indexed facts.
+- Syntax refreshes now build their inventory from `git ls-files -s -z` and porcelain-v2 status. Clean tracked files reuse the Git blob id, while dirty and untracked files stream a SHA-256 hash. Unchanged files no longer have their derived rows or FTS documents rewritten.
+- Generated files retain declarations, signatures, routes, and outlines without indexed method bodies or comments. Files over the 5 MiB source limit retain inventory metadata with an `inventory_only` detail level. Schema 18 uses contentless-delete FTS5 documents linked through `search_documents`; existing derived indexes rebuild.
+- Completed and cancelled index jobs now truncate the SQLite WAL. Full rebuilds set incremental auto-vacuum mode and compact FTS5 once; ordinary refreshes use one bounded merge and at most 1,024 reclaimed pages. An incompatible index removes only its known derived files, including obsolete reduction-cache sidecars and `r60-semantics.json`.
+- Reduction output and per-file analysis now share a repository-scoped, daemon-owned memory cache capped at 64 MiB. The cache uses least-recently-used eviction and ends with the process; Fuse no longer creates `fuse-cache.db`.
+- `fuse mcp install` now writes the v4.4 managed agent guidance by default. `--no-rules` skips that block, while `--with-hooks` remains explicit. Re-running installation replaces only the marker-delimited Fuse block and preserves surrounding user content.
+- Daemon and MCP startup no longer load an MSBuild solution in the background. Compiler state starts only for an explicit semantic index or a compiler-backed request.
+- File-specific `fuse_check` resolves SDK default compile items and explicit linked `Compile` items before compiler work. It verifies every project that owns a linked source file in sequence, and no longer selects a full solution for a single-file check.
+- `fuse_test` and `fuse test` now group selected covering types by their owning projects. Each project receives only its own test filter and runs in sequence, including every owner of a linked test source file.
+- Refactor requests now use the daemon's host-owned warm-solution cache. Repeated rename, signature, type, and code-fix requests no longer create an independent compiler-state cache per MCP call.
+
+### Fixed
+
+- Production builds treat compiler warnings as errors. Obsolete Roslyn event subscriptions, ambiguous XML documentation, and nullable test setup were corrected before enabling the gate.
+- A default syntax job no longer tries to select a compiler workspace. Repositories with multiple root solution filters now complete syntax indexing; only `fuse index --semantic` asks for an unambiguous target.
+- Generated declaration indexing now retains type-level symbols and signature chunks only. Generated member rows no longer inflate the symbol, chunk, and full-text tables, while exact generated-type lookup remains available.
+- Index JSON snapshots now use named lifecycle values and follow the same redirected-output cadence as terminal progress: phase changes, ten-percent buckets, or five-second heartbeats.
+- Starting an index job no longer runs synchronous SQLite setup on the caller thread. A locked store now yields the bounded syntax-building header instead of waiting for the writer timeout.
+- The daemon watcher now ignores `.git` metadata. Git commands used by inventory no longer trigger a second refresh job after each completed index.
+- Direct CLI impact and review-handoff calls now use the host-owned index runtime. Concurrent reads no longer create conflicting isolated job managers.
+- Retained completed, cancelled, and failed jobs now preserve their terminal elapsed duration instead of continuing to age in `fuse index status`.
+- Refactor operations now use an already-loaded host warm-solution cache before MSBuild registration. A daemon-held compiler snapshot remains available when local SDK discovery cannot run.
+- Read-only index opens no longer rerun database pragmas or create schema tables. A contended find request now returns its availability header within the short read timeout. Resident compiler projection uses the same Git blob and SHA-256 identities as the scanner, so its follow-up reconcile does not rewrite unchanged files. Corrupt non-database files reach the derived-data recovery path instead of being described as a generic schema mismatch.
+- Daemon graph, scope, explain, and diagnostics RPC reads now wait for their repository-owned syntax job instead of applying the MCP deferral deadline. Resident signature lookup returns known compiler metadata while its syntax job starts through the selected local or daemon access path, and a deferred impact read returns its availability header instead of `internal_error:`.
+- A command that spawns the shared daemon no longer hangs a piped or redirected caller. The daemon inherited the caller's standard handles, so its stdout stayed open for the daemon's whole idle window and a shell pipeline, CI log capture, or agent harness kept waiting long after the command finished. The daemon now receives its own streams, is marked detached, and reports through its rolling file log only. `fuse update` starts its detached updater the same way.
+- `fuse context --seed <name>` resolves a name at the syntax tier. Seeds were matched only against the typed graph, so with syntax-first indexing the command returned an empty payload without saying why; a name now plans its declaring file and names the tier in the provenance line.
+- `fuse init` writes the workspace path with forward slashes. `fuse.json` is committed, so a file written on Windows has to resolve on Linux and macOS, where a backslash is an ordinary filename character.
+- `dotnet build Fuse.slnx -c Release` now builds the product in Release. The solution declared its source folders as nested elements, which the SLNX parser does not map to a build type, so every `src` project compiled into `bin/Debug` while the test projects built Release. Folder declarations are flat and the Debug and Release build types are declared explicitly.
+- Cancelling an index job that finishes concurrently no longer risks an `ObjectDisposedException`. The job manager owns each job's cancellation source and releases it at shutdown rather than when the worker exits.
+
+### Changed (internal structure)
+
+- The MCP tool surface is one operation type per tool (`WorkspaceToolOperations`, `FindToolOperations`, `ContextToolOperations`, `ImpactToolOperations`, `CheckToolOperations`, `TestToolOperations`, `RefactorToolOperations`, `ReviewToolOperations`, `ReduceToolOperations`) behind one handler type per tool, replacing the `FuseToolOperations` partial class and its pass-through `FuseTools` facade. Availability-header formatting and index-store access are separate collaborators. Tool names, arguments, descriptions, and output are unchanged.
+- Index job lifecycle types live under `Mcp/Jobs`, host RPC contracts are split by subject under `Host/Rpc/Contracts`, each index lifecycle command has its own file, and warm-service installation, warm-service state, and Fuse peer-process discovery are separated from their launchers. Persisted index-job metadata keys and the derived-file reader are declared once and shared.
+
+### Removed
+
+- The packaged CLI no longer includes `fuse eval`, `fuse resident-latency`, or `fuse testexec`. Benchmark source and recorded results remain in the separate `Fuse.Benchmarks.slnx` solution and are not part of normal product validation.
+- `fuse localize` and `fuse resolve` are removed. Use `fuse find <query> --kind task` for task localization and `fuse find <query> --kind service|request|route|config|symbol` for exact lookup and wiring resolution.
+- The `git_cochange` table, collector, retrieval prior, ranking diagnostic configuration, and `FUSE_COCHANGE` setting are removed. The recorded historical ranking results remain in the repository.
+- `FUSE_BUILD_CAPTURE` no longer selects an index path. Build capture is invoked only by portable capture and compiler-backed verification.
 
 ## [4.3.0] - 2026-07-16
 

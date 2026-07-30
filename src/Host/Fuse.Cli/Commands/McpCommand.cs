@@ -5,11 +5,12 @@ namespace Fuse.Cli.Commands;
 
 /// <summary>
 ///     Parent group for the Model Context Protocol surface: <c>fuse mcp install</c> registers Fuse with an AI
-///     client, and <c>fuse mcp serve</c> is the stdio server the client launches.
+///     client, <c>fuse mcp doctor</c> inspects that connection, and <c>fuse mcp serve</c> is the stdio server the
+///     client launches.
 /// </summary>
 [CliCommand(
     Name = "mcp",
-    Description = "Manage the Fuse Model Context Protocol server: install (register with a client) and serve (stdio server).",
+    Description = "Manage the Fuse Model Context Protocol server: install, doctor, and serve.",
     Parent = typeof(FuseCliCommand))]
 public sealed class McpCommand
 {
@@ -36,13 +37,14 @@ public sealed class McpCommand
     }
 
     /// <summary>
-    ///     Points the user at the <c>install</c> and <c>serve</c> subcommands when <c>fuse mcp</c> is run bare.
+    ///     Points the user at the <c>install</c>, <c>doctor</c>, and <c>serve</c> subcommands when <c>fuse mcp</c>
+    ///     is run bare.
     /// </summary>
     /// <param name="context">The CLI invocation context.</param>
     public void Run(CliContext context)
     {
         _consoleUI.WriteResult(
             "Use a subcommand: 'fuse mcp install' to register Fuse with an AI client, "
-            + "or 'fuse mcp serve' to run the stdio MCP server (your client launches this).");
+            + "'fuse mcp doctor' to inspect that connection, or 'fuse mcp serve' to run the stdio server.");
     }
 }

@@ -210,8 +210,10 @@ public sealed class IndexConcurrencyIntegrationTests : IAsyncLifetime, IDisposab
 {
     private readonly ServiceProvider _provider = new ServiceCollection().AddFuseForTests().BuildServiceProvider();
     private readonly string _root = Path.Combine(Path.GetTempPath(), "fuse-index-concurrency", Guid.NewGuid().ToString("N"));
+    private readonly IndexCoordinator _coordinator = new();
     private SemanticIndexer Indexer => _provider.GetRequiredService<SemanticIndexer>();
     private IChangeSource ChangeSource => _provider.GetRequiredService<IChangeSource>();
+    private FuseMcpRuntime Runtime => _provider.GetRequiredService<FuseMcpRuntime>();
 
     public Task InitializeAsync()
     {
@@ -238,17 +240,36 @@ public sealed class IndexConcurrencyIntegrationTests : IAsyncLifetime, IDisposab
                 CancellationToken.None);
         }
 
-        var tasks = Enumerable.Range(0, 8).Select(_ => FuseTools.FuseFindAsync(
+        var tasks = Enumerable.Range(0, 8).Select(_ => FindToolOperations.ExecuteAsync(
             Indexer,
             ChangeSource,
             "Widget",
             path: _root,
-            kind: "symbol")).ToArray();
+            kind: "symbol",
+            runtime: Runtime)).ToArray();
 
         var results = await Task.WhenAll(tasks);
-        Assert.All(results, r => Assert.Contains("Widget", r));
+
+        // Reaching here at all is the deadlock assertion. Every result must then be either the indexed answer or
+        // one of the documented deferrals: a read that races this process's own reconcile abstains with the
+        // availability header rather than blocking, so requiring all eight to carry the symbol would assert
+        // against the contract and fail intermittently under load.
+        Assert.All(results, result => Assert.True(
+            result.Contains("Widget", StringComparison.Ordinal) || IsDocumentedDeferral(result),
+            $"a concurrent find returned neither the indexed answer nor a documented deferral: {result}"));
+
+        // At least one call must return the real answer, so the test still proves concurrent reads are served.
+        Assert.Contains(results, result => result.Contains("Widget", StringComparison.Ordinal));
         Assert.DoesNotContain(results, r => r.StartsWith(FuseOperationalErrors.InternalErrorPrefix));
     }
+
+    // The deferral shapes a read may return while the index is contended or refreshing: the structured
+    // availability header (R20) or an operational index-state prefix.
+    private static bool IsDocumentedDeferral(string result) =>
+        result.StartsWith("index_state:", StringComparison.Ordinal)
+        || result.StartsWith(FuseOperationalErrors.IndexBusyPrefix, StringComparison.Ordinal)
+        || result.StartsWith(FuseOperationalErrors.IndexRebuildingPrefix, StringComparison.Ordinal)
+        || result.StartsWith(FuseOperationalErrors.IndexNotBuiltPrefix, StringComparison.Ordinal);
 
     [Fact]
     public async Task Warm_reads_complete_while_coordinator_write_lock_is_held()
@@ -269,7 +290,7 @@ public sealed class IndexConcurrencyIntegrationTests : IAsyncLifetime, IDisposab
         }
 
         var writeReleased = new TaskCompletionSource();
-        var write = IndexCoordinator.Default.ExecuteWriteAsync(
+        var write = _coordinator.ExecuteWriteAsync(
             _root,
             async (_, ct) =>
             {
@@ -280,7 +301,7 @@ public sealed class IndexConcurrencyIntegrationTests : IAsyncLifetime, IDisposab
 
         await Task.Delay(50);
 
-        await using var store = await IndexCoordinator.Default.OpenForReadOnlyAsync(_root, CancellationToken.None);
+        await using var store = await _coordinator.OpenForReadOnlyAsync(_root, CancellationToken.None);
         var state = await store.GetStateAsync(CancellationToken.None);
         Assert.Equal(1, state.FileCount);
         Assert.Equal("syntax", state.Mode);
@@ -303,23 +324,16 @@ public sealed class IndexConcurrencyIntegrationTests : IAsyncLifetime, IDisposab
             await seed.UpsertFilesAsync(files, CancellationToken.None);
         }
 
-        FuseTools.BackgroundSemanticUpgradeEnabled = false;
-        try
-        {
-            var opens = Enumerable.Range(0, 24).Select(_ => FuseTools.FuseFindAsync(
-                Indexer,
-                ChangeSource,
-                "F1",
-                path: _root,
-                kind: "path")).ToArray();
-            var results = await Task.WhenAll(opens);
-            Assert.Equal(24, results.Length);
-            Assert.DoesNotContain(results, r => r.StartsWith(FuseOperationalErrors.InternalErrorPrefix));
-        }
-        finally
-        {
-            FuseTools.BackgroundSemanticUpgradeEnabled = false;
-        }
+        var opens = Enumerable.Range(0, 24).Select(_ => FindToolOperations.ExecuteAsync(
+            Indexer,
+            ChangeSource,
+            "F1",
+            path: _root,
+            kind: "path",
+            runtime: Runtime)).ToArray();
+        var results = await Task.WhenAll(opens);
+        Assert.Equal(24, results.Length);
+        Assert.DoesNotContain(results, r => r.StartsWith(FuseOperationalErrors.InternalErrorPrefix));
     }
 
     public Task DisposeAsync()

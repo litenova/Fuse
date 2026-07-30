@@ -129,6 +129,47 @@ public sealed class SemanticRetrievalEngineTests : IAsyncLifetime
         Assert.Contains(plan.Items, i => i.Role == "di-implementation");
     }
 
+    // Indexing is syntax-first, so the typed graph is absent until compiler analysis is requested. A named seed
+    // must still plan the declaring file rather than returning an empty payload with no explanation.
+    [Fact]
+    public async Task NamedSeedWithoutATypedGraphPlansTheDeclaringFile()
+    {
+        var syntaxDatabase = Path.Combine(
+            Path.GetTempPath(), "fuse-engine-tests", Guid.NewGuid().ToString("N"), "fuse.db");
+        await using var syntaxStore = new WorkspaceIndexStore(syntaxDatabase);
+        await syntaxStore.InitializeAsync(CancellationToken.None);
+        await syntaxStore.UpsertFilesAsync(
+            [new IndexedFileRecord("src/OrderService.cs", "src/OrderService.cs", ".cs", 120, 0, "h1")],
+            CancellationToken.None);
+        await syntaxStore.UpsertSymbolsAsync(
+            [
+                new SymbolRecord(
+                    SymbolId: "sym:OrderService",
+                    FilePath: "src/OrderService.cs",
+                    Kind: "class",
+                    Name: "OrderService",
+                    FullyQualifiedName: "Shop.OrderService",
+                    StartLine: 1,
+                    EndLine: 10,
+                    IsPublicApi: true),
+            ],
+            CancellationToken.None);
+
+        var plan = await new SemanticRetrievalEngine(syntaxStore).PlanContextAsync(
+            new ContextRequest(".", [new ContextSeed(ContextSeedKind.Symbol, "OrderService")]),
+            CancellationToken.None);
+
+        Assert.Contains("src/OrderService.cs", plan.Items.Select(item => item.Path));
+
+        try
+        {
+            Directory.Delete(Path.GetDirectoryName(syntaxDatabase)!, recursive: true);
+        }
+        catch (IOException)
+        {
+        }
+    }
+
     [Fact]
     public async Task FileSeedExpandsFromTheFilesSymbols()
     {

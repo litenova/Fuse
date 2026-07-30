@@ -130,31 +130,6 @@ public sealed class BuildCaptureClientTests
         }
     }
 
-    // C3: tier-1 build capture is default-ON; FUSE_BUILD_CAPTURE=0 (or false/no/off) opts out, and any other
-    // value (or unset) enables it. The env var is saved and restored so the mutation does not leak.
-    [Theory]
-    [InlineData(null, true)]
-    [InlineData("", true)]
-    [InlineData("0", false)]
-    [InlineData("false", false)]
-    [InlineData("off", false)]
-    [InlineData("no", false)]
-    [InlineData("1", true)]
-    [InlineData("true", true)]
-    public void BuildCaptureEnabled_is_default_on_and_opts_out_on_a_falsey_value(string? value, bool expected)
-    {
-        var original = Environment.GetEnvironmentVariable("FUSE_BUILD_CAPTURE");
-        try
-        {
-            Environment.SetEnvironmentVariable("FUSE_BUILD_CAPTURE", value);
-            Assert.Equal(expected, SemanticIndexer.BuildCaptureEnabled());
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("FUSE_BUILD_CAPTURE", original);
-        }
-    }
-
     [Fact]
     public void Unconfigured_client_is_unavailable()
         => Assert.False(new BuildCaptureClient(workerDllPath: "").IsAvailable);

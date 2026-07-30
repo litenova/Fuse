@@ -26,14 +26,14 @@ flowchart TD
 
 | Way | Tool / flag | Seeds on | Use when |
 |-----|-------------|----------|----------|
-| Localize | `fuse_find` (kind=task) / `fuse localize` | The top-ranked files and symbols for a task | You have a topic but not a name |
-| Resolve | `fuse_find` (kind=service\|request\|route\|config) / `fuse resolve` | The real target of a service, request, route, config, or symbol | The task names wiring |
+| Localize | `fuse_find` (kind=task) / `fuse find <query> --kind task` | The top-ranked files and symbols for a task | You have a topic but not a name |
+| Resolve | `fuse_find` (kind=service\|request\|route\|config) / `fuse find <query> --kind service` | The real target of a service, request, route, config, or symbol | The task names wiring |
 | Review | `fuse_review` / `fuse review --changed-since` | Files changed since a git ref, plus their blast radius | Reviewing a branch or pull request |
 
 ## Localize: Scope by Task
 
 ```text
-fuse localize ./src --task "discount calculation at checkout"
+fuse find "discount calculation at checkout" --kind task --path ./src
 ```
 
 Localization ranks candidate files and symbols for a task and returns them with reasons
@@ -83,10 +83,10 @@ in both modes, because a title that names no code can only return noise.
 ## Resolve: Scope by Wiring
 
 ```text
-fuse resolve ./src --service IOrderService
-fuse resolve ./src --request CreateOrderCommand
-fuse resolve ./src --route "POST /api/orders/{id}"
-fuse resolve ./src --config Orders
+fuse find IOrderService --kind service --path ./src
+fuse find CreateOrderCommand --kind request --path ./src
+fuse find "POST /api/orders/{id}" --kind route --path ./src
+fuse find Orders --kind config --path ./src
 ```
 
 Resolution is deterministic: it walks the graph to the real target rather than guessing
@@ -146,6 +146,6 @@ shared plan shape, centrality helpers, and packing rules are detailed in
 ## Try a Route
 
 For a branch, run `fuse review ./src --changed-since origin/main`. For a named service,
-run `fuse resolve ./src --service IOrderService`. For an open task, run
-`fuse localize ./src --task "discount calculation at checkout"` and use the returned
+run `fuse find IOrderService --kind service --path ./src`. For an open task, run
+`fuse find "discount calculation at checkout" --kind task --path ./src` and use the returned
 candidate paths as context seeds.

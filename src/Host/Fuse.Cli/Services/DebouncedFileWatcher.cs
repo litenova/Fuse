@@ -6,7 +6,8 @@ namespace Fuse.Cli.Services;
 /// </summary>
 /// <remarks>
 ///     Wraps a <see cref="FileSystemWatcher" /> over file name, last-write, and size changes. Events inside any
-///     <c>.fuse</c> directory are ignored so that Fuse's own cache and output do not retrigger fusion. Each new
+///     <c>.fuse</c> or <c>.git</c> directory are ignored. Index inventory invokes Git commands that can update Git
+///     metadata; observing those writes would schedule another index job after every completed refresh. Each new
 ///     event cancels the pending debounce timer and restarts it, so <see cref="Changed" /> fires once per quiet
 ///     interval rather than once per raw event.
 /// </remarks>
@@ -148,8 +149,13 @@ public sealed class DebouncedFileWatcher : IResidentBatchWatcher
 
     private static bool ShouldIgnorePath(string path)
     {
-        var fuseSegment = $"{Path.DirectorySeparatorChar}.fuse{Path.DirectorySeparatorChar}";
-        return path.Contains(fuseSegment, StringComparison.OrdinalIgnoreCase)
-            || path.EndsWith($"{Path.DirectorySeparatorChar}.fuse", StringComparison.OrdinalIgnoreCase);
+        return IsPathInDirectory(path, ".fuse") || IsPathInDirectory(path, ".git");
+    }
+
+    private static bool IsPathInDirectory(string path, string directoryName)
+    {
+        var segment = $"{Path.DirectorySeparatorChar}{directoryName}{Path.DirectorySeparatorChar}";
+        return path.Contains(segment, StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith($"{Path.DirectorySeparatorChar}{directoryName}", StringComparison.OrdinalIgnoreCase);
     }
 }

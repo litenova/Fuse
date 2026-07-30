@@ -18,12 +18,6 @@ namespace Fuse.Semantics;
 public sealed class DotNetWorkspaceDiscoverer
 {
 
-    /// <summary>
-    ///     Discovers the workspace under a root directory.
-    /// </summary>
-    /// <param name="root">The workspace root.</param>
-    /// <param name="cancellationToken">A token to cancel the discovery.</param>
-    /// <returns>The discovery result describing how the workspace should be loaded.</returns>
     // Path segments that mark a solution or project as a test, fixture, or sample tree rather than the repo's own
     // product surface. A solution nested under one of these must never be loaded as the repo's semantic tier ahead
     // of a root-level solution (R24): on the Fuse repo, that is why discovery once bound to tests/.../SampleShop.sln
@@ -44,12 +38,16 @@ public sealed class DotNetWorkspaceDiscoverer
         "build", "eng", "tools", "scripts",
     ];
 
-    /// <summary>The <c>fuse.json</c> key that pins the target solution or project (R24).</summary>
-    public const string SolutionConfigKey = "solution";
-
+    /// <summary>
+    ///     Discovers the workspace under <paramref name="root" />.
+    /// </summary>
+    /// <param name="root">The repository root.</param>
+    /// <param name="cancellationToken">A token that stops directory traversal.</param>
+    /// <returns>The selected workspace, project list, or syntax-only fallback.</returns>
     public Task<WorkspaceDiscoveryResult> DiscoverAsync(string root, CancellationToken cancellationToken)
     {
         var fullRoot = Path.GetFullPath(root);
+        var configuration = WorkspaceConfiguration.LoadOrThrow(fullRoot);
         var ignored = new HashSet<string>(WorkspaceExclusions.LoadDirectoryNames(fullRoot), StringComparer.OrdinalIgnoreCase);
         var solutions = new List<string>();
         var projects = new List<string>();
@@ -59,6 +57,7 @@ public sealed class DotNetWorkspaceDiscoverer
             {
                 case ".sln":
                 case ".slnx":
+                case ".slnf":
                     solutions.Add(file);
                     break;
                 case ".csproj":
@@ -70,13 +69,28 @@ public sealed class DotNetWorkspaceDiscoverer
         projects.Sort(StringComparer.OrdinalIgnoreCase);
         var uniqueSolutions = DedupeCopies(solutions);
 
-        // A fuse.json "solution" override pins the target explicitly and wins over discovery (R24).
-        var pinned = ReadPinnedSolution(fullRoot);
-        if (pinned is not null)
+        if (!string.IsNullOrWhiteSpace(configuration.Workspace))
         {
+            var pinned = WorkspaceConfiguration.ResolveWorkspacePath(fullRoot, configuration.Workspace)!;
+            if (Path.GetExtension(pinned).Equals(".csproj", StringComparison.OrdinalIgnoreCase))
+            {
+                return Task.FromResult(new WorkspaceDiscoveryResult(
+                    WorkspaceKind.Projects, null, [pinned], fullRoot, $"workspace pinned by fuse.json: {Path.GetFileName(pinned)}"));
+            }
+
             return Task.FromResult(new WorkspaceDiscoveryResult(
-                WorkspaceKind.Solution, pinned, projects, fullRoot, $"solution pinned by fuse.json: {Path.GetFileName(pinned)}"));
+                WorkspaceKind.Solution, pinned, projects, fullRoot, $"workspace pinned by fuse.json: {Path.GetFileName(pinned)}"));
         }
+
+        var rootFilters = uniqueSolutions
+            .Where(s => Path.GetExtension(s).Equals(".slnf", StringComparison.OrdinalIgnoreCase))
+            .Where(s => Tier(fullRoot, s) == ProductTier)
+            .Where(s => Depth(fullRoot, s) == 1)
+            .ToList();
+        if (rootFilters.Count == 1)
+            return Task.FromResult(new WorkspaceDiscoveryResult(WorkspaceKind.Solution, rootFilters[0], projects, fullRoot));
+        if (rootFilters.Count > 1)
+            throw AmbiguousWorkspace(fullRoot, rootFilters);
 
         // Rank solutions so the repo's own product solution wins: product code first (tier 0), then auxiliary
         // build/tooling solutions (tier 1), then test/fixture solutions last (tier 2); within a tier, shallower
@@ -112,17 +126,16 @@ public sealed class DotNetWorkspaceDiscoverer
             {
                 return Task.FromResult(new WorkspaceDiscoveryResult(
                     WorkspaceKind.Projects, null, productProjects, fullRoot,
-                    $"the only solutions found are under {treeKind} directories; loading the repo's product projects instead. Pin one with a fuse.json \"solution\" key."));
+                    $"the only solutions found are under {treeKind} directories; loading the repo's product projects instead. Pin one with the fuse.json \"workspace\" property."));
             }
 
             return Task.FromResult(new WorkspaceDiscoveryResult(
                 WorkspaceKind.Solution, best, projects, fullRoot,
-                $"selected a solution under a {treeKind} directory ({Relative(fullRoot, best)}); no product solution was found. Pin one with a fuse.json \"solution\" key."));
+                $"selected a solution under a {treeKind} directory ({Relative(fullRoot, best)}); no product solution was found. Pin one with the fuse.json \"workspace\" property."));
         }
 
-        // Ambiguity among distinct-named product solutions (same tier and depth): pick the alphabetical first by
-        // rule and surface the choice. A .sln and .slnx of the same base name are the same solution in two formats,
-        // not an ambiguity; a deprioritized build/tooling or fixture solution is not an ambiguity either.
+        // Distinct root-level product solutions need an explicit workspace. A full build is expensive, and selecting
+        // one by path order can bind a repository's tooling solution instead of its product solution.
         var topTier = ranked
             .Where(s => Tier(fullRoot, s) == ProductTier && Depth(fullRoot, s) == Depth(fullRoot, best))
             .ToList();
@@ -130,43 +143,44 @@ public sealed class DotNetWorkspaceDiscoverer
             .Select(s => Path.GetFileNameWithoutExtension(s))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-        var note = distinctNames.Count > 1
-            ? $"multiple root-level solutions found ({string.Join(", ", distinctNames)}); selected {Path.GetFileName(best)} by name order. Pin one with a fuse.json \"solution\" key."
-            : null;
+        if (distinctNames.Count > 1)
+            throw AmbiguousWorkspace(fullRoot, topTier);
 
-        return Task.FromResult(new WorkspaceDiscoveryResult(WorkspaceKind.Solution, best, projects, fullRoot, note));
+        return Task.FromResult(new WorkspaceDiscoveryResult(WorkspaceKind.Solution, best, projects, fullRoot));
     }
 
-    // Reads a fuse.json "solution" key at the root and resolves it to an existing absolute path, or null when the
-    // file, key, or target is absent. Kept dependency-light (a small JSON read) so the Core discoverer does not
-    // depend on the CLI configuration layer.
-    private static string? ReadPinnedSolution(string root)
+    /// <summary>
+    ///     Lists project files that can own a file-specific compiler request without selecting a full solution.
+    /// </summary>
+    /// <param name="root">The repository root.</param>
+    /// <param name="cancellationToken">A token that stops directory traversal.</param>
+    /// <returns>The absolute project paths, sorted by path.</returns>
+    /// <remarks>
+    ///     A pinned <c>.csproj</c> is the one explicit workspace target. A pinned solution does not narrow the
+    ///     list because this method avoids loading or parsing the solution before it identifies the project that
+    ///     includes the requested source file.
+    /// </remarks>
+    public Task<IReadOnlyList<string>> DiscoverProjectPathsAsync(string root, CancellationToken cancellationToken)
     {
-        var configPath = Path.Combine(root, "fuse.json");
-        if (!File.Exists(configPath))
-            return null;
-
-        try
+        var fullRoot = Path.GetFullPath(root);
+        var configuration = WorkspaceConfiguration.LoadOrThrow(fullRoot);
+        if (!string.IsNullOrWhiteSpace(configuration.Workspace))
         {
-            using var document = System.Text.Json.JsonDocument.Parse(File.ReadAllText(configPath));
-            foreach (var property in document.RootElement.EnumerateObject())
-            {
-                if (!property.NameEquals(SolutionConfigKey) || property.Value.ValueKind != System.Text.Json.JsonValueKind.String)
-                    continue;
-                var value = property.Value.GetString();
-                if (string.IsNullOrWhiteSpace(value))
-                    return null;
-                var resolved = Path.IsPathRooted(value) ? value : Path.GetFullPath(Path.Combine(root, value));
-                return File.Exists(resolved) ? resolved : null;
-            }
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
-        {
-            return null;
+            var pinned = WorkspaceConfiguration.ResolveWorkspacePath(fullRoot, configuration.Workspace)!;
+            if (Path.GetExtension(pinned).Equals(".csproj", StringComparison.OrdinalIgnoreCase))
+                return Task.FromResult<IReadOnlyList<string>>([pinned]);
         }
 
-        return null;
+        var ignored = new HashSet<string>(WorkspaceExclusions.LoadDirectoryNames(fullRoot), StringComparer.OrdinalIgnoreCase);
+        var projects = EnumerateFiles(fullRoot, ignored, cancellationToken)
+            .Where(file => Path.GetExtension(file).Equals(".csproj", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(file => file, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return Task.FromResult<IReadOnlyList<string>>(projects);
     }
+
+    private static WorkspaceConfigurationException AmbiguousWorkspace(string root, IReadOnlyList<string> candidates) =>
+        new($"workspace selection is ambiguous: {string.Join(", ", candidates.Select(path => Relative(root, path)))}. Set the 'workspace' property in fuse.json.");
 
     // Selection tiers, lowest wins: the repo's own product code, then auxiliary build/tooling solutions, then
     // test/fixture solutions. The tier is the primary discovery-ranking key (R24).

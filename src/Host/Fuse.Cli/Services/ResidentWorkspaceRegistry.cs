@@ -9,8 +9,8 @@ namespace Fuse.Cli.Services;
 ///     The process-wide resident-workspace provider (S1): lazily builds and caches a
 ///     <see cref="ResidentWorkspaceService" /> per repository root, so the serve/host process can answer
 ///     resident-grade reads and apply watcher batches for each root it serves. It is the non-null provider the
-///     serve/host registers on <c>FuseTools.ResidentWorkspaces</c>; the serve/host is responsible only for
-///     warming a root (<see cref="WarmAsync" />) and feeding it watcher batches (<see cref="ApplyBatch" />).
+///     serve/host registers it through dependency injection; the serve/host is responsible only for warming a
+///     root (<see cref="WarmAsync" />) and feeding it watcher batches (<see cref="ApplyBatch" />).
 /// </summary>
 /// <remarks>
 ///     Warming a root runs the repository build once with a binary log and rehydrates the compilations from it,
@@ -130,8 +130,8 @@ public sealed class ResidentWorkspaceRegistry : IResidentWorkspaceProvider, IDis
         Resolve(root)?.TryCheckOverlay(root, relativeFilePath, newContent, cancellationToken);
 
     /// <inheritdoc />
-    public IReadOnlyList<CheckDiagnostic>? TryGetCurrentDiagnostics(string root) =>
-        Resolve(root)?.TryGetCurrentDiagnostics(root);
+    public IReadOnlyList<CheckDiagnostic>? TryGetCurrentDiagnostics(string root, CancellationToken cancellationToken) =>
+        Resolve(root)?.TryGetCurrentDiagnostics(root, cancellationToken);
 
     /// <inheritdoc />
     public Task<IReadOnlyList<CheckDiagnostic>?> TryCheckOverlayAsync(

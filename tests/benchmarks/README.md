@@ -1,22 +1,26 @@
 # Fuse performance benchmarks
 
-This folder holds the reproducible benchmark suite (one C# harness driven by `fuse eval`) and the manual wall-clock timing notes described afterward. Published results and findings are on [the benchmarks page](https://fuse.codes/docs/project/benchmarks).
+This folder holds the benchmark suite source, its pinned corpus manifest, the archived scorecards, and the manual wall-clock timing notes described afterward. Published results and findings are on [the benchmarks page](https://fuse.codes/docs/project/benchmarks).
 
-## Reproducible benchmark suite (one harness, one command surface)
+## The isolated benchmark harness
 
-There is a single harness: the `Fuse.Benchmarks` C# library, invoked through `fuse eval <suite>`. It measures wiring resolution, change impact, open-ended localization, ranking, token reduction and fidelity, latency, and agent context sufficiency over a corpus of real .NET repositories pinned by commit. The legacy PowerShell layer scripts were retired in v4 (item N5); their logic is now in the C# suites (`tests/benchmarks/Fuse.Benchmarks/Suites/`) and `CorpusManager` (corpus setup and PR generation). Run a suite with:
+The harness is the `Fuse.Benchmarks` C# library in the separate `Fuse.Benchmarks.slnx` solution. It is excluded from the product solution and from the packaged CLI: Fuse 4.4 does not ship `fuse eval`, so an ordinary tool installation cannot regenerate these files, and normal release validation never runs the harness.
 
-```bash
-fuse eval semantics   # Suite A: wiring resolution vs edge gold
-fuse eval review      # Suite B: change impact over PR ground truth
-fuse eval localize    # Suite C: open-ended localization by signal bucket
-fuse eval ranking     # ranking regression: MRR, recall@k, nDCG@k
-fuse eval reduce      # Suite E: token reduction and public-API fidelity
-fuse eval performance # warm latency and cold-start timing
-fuse eval agent       # Suite D: agent context sufficiency (model-driven)
-```
+The suites measure wiring resolution, change impact, open-ended localization, ranking, token reduction and fidelity, latency, and agent context sufficiency over a corpus of real .NET repositories pinned by commit. They live in `Fuse.Benchmarks/Suites/`; corpus setup and PR generation live in `CorpusManager`. Each suite implements `IEvalSuite` and writes one scorecard JSON under `results/`:
 
-The one documented exception is the peer comparison, whose orchestration of external MCP servers (CodeGraph, Serena, coa-codesearch) stays in `harness/layer6-peers.ps1` with its shared helpers in `harness/common.ps1`. Everything else is C#.
+| Suite | Measures | Scorecard |
+|-------|----------|-----------|
+| semantics | Suite A: wiring resolution against edge gold | `semantics.json` |
+| review | Suite B: change impact over PR ground truth | `review.json` |
+| localize | Suite C: open-ended localization by signal bucket | `localize.json` |
+| ranking | Ranking regression: MRR, recall@k, nDCG@k | `ranking.json` |
+| checkgate | Check honesty: false green and false red | `checkgate.json` |
+| reduce | Suite E: token reduction and public-API fidelity | `reduce.json` |
+| performance | Warm latency and cold-start timing | `performance.json` |
+| agent | Suite D: agent context sufficiency (model-driven) | `agent.json` |
+| loop | Loop metric: true pass@1 and build round-trips | `loop.json` |
+
+To run a suite, open `Fuse.Benchmarks.slnx` and drive the suite from `Fuse.Benchmarks.Tests` or a local harness of your own; there is no shipped command. The one documented exception to the C# harness is the peer comparison, whose orchestration of external MCP servers (CodeGraph, Serena, coa-codesearch) stays in `harness/layer6-peers.ps1` with its shared helpers in `harness/common.ps1`.
 
 Layout:
 

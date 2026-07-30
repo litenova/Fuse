@@ -4,15 +4,26 @@ using Fuse.Semantics;
 namespace Fuse.Cli.Mcp;
 
 /// <summary>
-///     Opens the workspace index for MCP read tools and explicit index actions. The local implementation uses
-///     <see cref="IndexCoordinator" /> in-process; the remote implementation delegates writes to a shared
-///     <c>fuse host</c> daemon (R19) and opens the store read-only locally for queries.
+///     Opens the workspace index for MCP read tools and explicit index actions. The local implementation starts or
+///     joins the host-owned repository job manager; the remote implementation delegates that job to a shared
+///     <c>fuse host</c> daemon and opens the committed store read-only locally for queries.
 /// </summary>
 public interface IIndexAccessProvider
 {
     /// <summary>
-    ///     Opens the store for a read tool: cold build, reconcile, and background upgrade on the owning process
-    ///     (or the daemon when delegated), then returns a readable store handle.
+    ///     Starts or joins the syntax index job without waiting for a readable store. Resident compiler metadata can
+    ///     answer an exact query immediately while the repository index continues through its shared owner.
+    /// </summary>
+    /// <param name="indexer">The semantic indexer used by a local fallback.</param>
+    /// <param name="path">The workspace directory.</param>
+    /// <param name="cancellationToken">A token to cancel only the start request.</param>
+    /// <returns>The accepted job snapshot and join outcome.</returns>
+    Task<IndexJobStartResult> StartSyntaxAsync(
+        SemanticIndexer indexer, string path, CancellationToken cancellationToken);
+
+    /// <summary>
+    ///     Opens the store for a read tool: starts or joins the syntax job on the owning process (or daemon), then
+    ///     returns a readable store handle after syntax data is committed.
     /// </summary>
     /// <param name="indexer">The semantic indexer.</param>
     /// <param name="path">The workspace directory.</param>
@@ -22,7 +33,8 @@ public interface IIndexAccessProvider
         SemanticIndexer indexer, string path, CancellationToken cancellationToken);
 
     /// <summary>
-    ///     Runs an explicit index build or refresh under the coordinator lock (or the daemon RPC when delegated).
+    ///     Runs an explicit syntax index build or refresh through the repository job manager (or daemon RPC when
+    ///     delegated).
     /// </summary>
     /// <param name="indexer">The semantic indexer.</param>
     /// <param name="path">The workspace directory.</param>

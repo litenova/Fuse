@@ -3,6 +3,7 @@ using System.IO.Pipes;
 using System.Net.Sockets;
 using DotMake.CommandLine;
 using Fuse.Cli.Extensions;
+using Fuse.Cli.Mcp;
 using Fuse.Cli.Rpc;
 using Fuse.Cli.Services;
 using Fuse.Collection.FileSystem;
@@ -43,6 +44,15 @@ public sealed class HostCommand
     /// <returns>A task that completes when the host stops serving.</returns>
     public async Task RunAsync(CliContext context)
     {
+        // A spawned daemon's standard streams are pipes its launcher abandoned. Writing into them would fill the
+        // buffer and block the daemon, so a detached host reports only through its rolling file log.
+        var detached = Environment.GetEnvironmentVariable(DaemonProcessLauncher.DetachedEnvironmentVariable) == "1";
+        if (detached)
+        {
+            Console.SetOut(TextWriter.Null);
+            Console.SetError(TextWriter.Null);
+        }
+
         if (!WorkspaceIdentityResolver.TryResolveRepositoryRoot(Directory, out var root))
         {
             await Console.Error.WriteLineAsync(
@@ -64,32 +74,39 @@ public sealed class HostCommand
 
         var builder = Host.CreateApplicationBuilder();
         builder.Logging.ClearProviders();
-        builder.Logging.AddConsole(options => options.LogToStandardErrorThreshold = LogLevel.Trace);
+        if (!detached)
+            builder.Logging.AddConsole(options => options.LogToStandardErrorThreshold = LogLevel.Trace);
         builder.Logging.SetMinimumLevel(LogLevel.Information);
         builder.Services.AddSingleton<IConsoleUI, StderrConsoleUI>();
         builder.Services.AddFuse();
-        builder.Services.AddSingleton<FuseHostService>();
+        builder.Services.AddSingleton<FuseHostService>(serviceProvider => new FuseHostService(
+            serviceProvider.GetRequiredService<FuseHostRequestContext>(),
+            serviceProvider.GetRequiredService<ILogger<FuseHostService>>()));
 
         using var app = builder.Build();
         var service = app.Services.GetRequiredService<FuseHostService>();
+        var indexJobs = app.Services.GetRequiredService<IWorkspaceIndexJobManager>();
         var logger = app.Services.GetRequiredService<ILogger<HostCommand>>();
         var notifier = new HostNotifier();
 
         // Stop accepting when the client asks the host to shut down or the process is cancelled.
         using var stopCts = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken);
+        using var indexJobShutdown = stopCts.Token.Register(
+            () => _ = ShutdownIndexJobsAsync(indexJobs));
         _ = service.ShutdownRequested.ContinueWith(_ => stopCts.Cancel(), TaskScheduler.Default);
 
         // Watch the source tree and push a fuse/invalidated notification to every connected editor when files
         // change, so the extension refreshes its index, diagnostics, and graph without polling. The .fuse cache
         // directory is ignored by the watcher, so the host's own writes do not retrigger.
         using var watcher = new Services.DebouncedFileWatcher(root, recursive: true, cancellationToken: stopCts.Token);
-        using var warmSolutionWatcher = WarmSolutionCache.Shared.AttachWatcher(root);
+        var warmSolutions = app.Services.GetRequiredService<WarmSolutionCache>();
+        using var warmSolutionWatcher = warmSolutions.AttachWatcher(root);
         watcher.BatchChanged += (batch, _) =>
         {
             // R54: the fallback signature tracks C# sources only. Matching that scope prevents MSBuild's bin/obj
             // outputs from evicting a still-fresh snapshot after every live doctor or refactor call.
             if (batch.Any(change => WarmSolutionCache.IsTrackedSourceFile(root, change.FullPath)))
-                WarmSolutionCache.Shared.InvalidateWatcherRoot(root);
+                warmSolutions.InvalidateWatcherRoot(root);
             return Task.CompletedTask;
         };
         watcher.Changed += async _ =>
@@ -102,28 +119,28 @@ public sealed class HostCommand
         // drive it from the same watcher's coalesced batches, so fuse_check answers resident-grade without a
         // rebuild. Off by default keeps the host path byte-identical until the S1 latency gate promotes it.
         using var resident = Services.ResidentWorkspaceHosting.OptIn()
-            ? Services.ResidentWorkspaceHosting.Enable(root, watcher, app.Services.GetRequiredService<SemanticIndexer>(), message => logger.LogInformation("{Message}", message), stopCts.Token)
+            ? Services.ResidentWorkspaceHosting.Enable(
+                root,
+                watcher,
+                app.Services.GetRequiredService<ResidentWorkspaceRegistry>(),
+                indexJobs,
+                message => logger.LogInformation("{Message}", message),
+                stopCts.Token)
             : null;
         if (resident is not null)
             service.ActivateResidentBudget(root);
 
-        // R39: keep the index live. On a debounced change (including .git/HEAD and .git/index, so branch switches
-        // and pulls are caught), reconcile the changed files into the store through the single-writer coordinator,
-        // so reads are fresh with no per-read reconcile cost. A periodic safety reconcile catches dropped events;
-        // on-read reconcile remains the backstop. Default-on; opt out with FUSE_WATCH=0.
-        var liveIndexer = app.Services.GetRequiredService<SemanticIndexer>();
+        // Keep the index live through the same observable repository job as every other index entry point. A
+        // debounced source change requests a syntax refresh; concurrent watcher events join that job rather than
+        // issuing raw SQLite writes. The periodic safety request catches watcher events that a network drive drops.
         using var liveIndex = Services.LiveIndexWatcher.Attach(
             watcher,
-            ct => Mcp.IndexCoordinator.Default.ExecuteWriteAsync(
-                root,
-                async (store, c) =>
-                {
-                    var freshness = await liveIndexer.ReconcileDirtyFilesAsync(root, store, c);
-                    if (freshness.Stamped)
-                        await liveIndexer.IndexAsync(root, store, c);
-                    return 0;
-                },
-                ct),
+            async ct =>
+            {
+                await indexJobs.StartOrJoinAsync(
+                    new IndexJobRequest(root, IndexDepth.Syntax, Force: false, CaptureBundlePath: null),
+                    ct);
+            },
             safetyInterval: TimeSpan.FromMinutes(5),
             stopCts.Token);
 
@@ -144,15 +161,8 @@ public sealed class HostCommand
         DaemonRegistry.Register(root, FuseHostService.HostVersion, DateTimeOffset.UtcNow.ToString("O"));
         RollingFileLog.Write($"host {FuseHostService.HostVersion} serving {root}"); // R37: rotating daemon log.
 
-        // R38: eager warm-on-start. The daemon owns index writes (R19), so it warms the served root's index in
-        // the background the moment it starts serving, before any client call, so the first read hits a warm or
-        // bounded-building index. Fire-and-forget and best-effort; opt out with FUSE_EAGER_INDEX=0.
-        _ = Mcp.EagerIndex.Start(app.Services.GetRequiredService<SemanticIndexer>(), root);
-
-        // R44: warm the MSBuild toolchain (locator + first solution load into the R42 warm-solution cache) in the
-        // background at startup, so the first fuse_refactor / fuse_workspace doctor of a session does not pay the
-        // multi-second locator-plus-first-load warmup. Fire-and-forget; opt out with FUSE_MSBUILD_WARMUP=0.
-        _ = Mcp.MsBuildToolchainWarmer.Start(root, log: message => logger.LogInformation("{Message}", message), cancellationToken: stopCts.Token);
+        // Eager syntax warming enters the same visible and cancellable repository job as explicit indexing.
+        _ = app.Services.GetRequiredService<EagerIndex>().Start(root, stopCts.Token);
 
         try
         {
@@ -173,6 +183,19 @@ public sealed class HostCommand
         await idleTask; // let the idle monitor observe cancellation and stop cleanly
         RollingFileLog.Write($"host stopped ({root})"); // R37: rotating daemon log.
         logger.LogInformation("Fuse host stopped.");
+    }
+
+    private static async Task ShutdownIndexJobsAsync(IWorkspaceIndexJobManager jobs)
+    {
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await jobs.ShutdownAsync(timeout.Token);
+        }
+        catch (ObjectDisposedException)
+        {
+            // The host container reached disposal before its cancellation callback ran.
+        }
     }
 
     // The idle-shutdown window from FUSE_DAEMON_IDLE_MINUTES (minutes); zero, unset, or unparseable disables it.

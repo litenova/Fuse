@@ -28,12 +28,13 @@ public sealed class ReviewCommand
     private readonly IChangeSource _changeSource;
     private readonly ContentReductionPipeline _reductionPipeline;
     private readonly SemanticIndexer _indexer;
+    private readonly FuseMcpRuntime _runtime;
 
     /// <summary>
     ///     Initializes a new instance of the <see cref="ReviewCommand" /> class for CLI option binding only.
     /// </summary>
     /// <remarks>Used by DotMake.CommandLine to bind options; the dependencies are null, so this instance must not run.</remarks>
-    public ReviewCommand() : this(null!, null!, null!, null!)
+    public ReviewCommand() : this(null!, null!, null!, null!, null!)
     {
     }
 
@@ -44,12 +45,19 @@ public sealed class ReviewCommand
     /// <param name="changeSource">The change source for resolving the git base ref.</param>
     /// <param name="reductionPipeline">The reduction pipeline used to render file bodies.</param>
     /// <param name="indexer">The semantic indexer (opens the store for the handoff packet).</param>
-    public ReviewCommand(IConsoleUI consoleUI, IChangeSource changeSource, ContentReductionPipeline reductionPipeline, SemanticIndexer indexer)
+    /// <param name="runtime">The process-owned MCP runtime used for shared index access.</param>
+    public ReviewCommand(
+        IConsoleUI consoleUI,
+        IChangeSource changeSource,
+        ContentReductionPipeline reductionPipeline,
+        SemanticIndexer indexer,
+        FuseMcpRuntime runtime)
     {
         _consoleUI = consoleUI;
         _changeSource = changeSource;
         _reductionPipeline = reductionPipeline;
         _indexer = indexer;
+        _runtime = runtime;
     }
 
     /// <summary>The workspace directory. Defaults to the current directory.</summary>
@@ -97,7 +105,14 @@ public sealed class ReviewCommand
         // gated by the check session's red state. It opens the index itself, so it does not need a prior index.
         if (Handoff)
         {
-            var handoff = await FuseTools.BuildHandoffAsync(_indexer, _changeSource, root, ChangedSince, CheckSession, context.CancellationToken);
+            var handoff = await ReviewToolOperations.BuildHandoffAsync(
+                _indexer,
+                _changeSource,
+                root,
+                ChangedSince,
+                CheckSession,
+                context.CancellationToken,
+                runtime: _runtime);
             _consoleUI.WriteResult(handoff);
             return;
         }

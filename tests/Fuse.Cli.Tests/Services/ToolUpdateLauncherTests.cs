@@ -103,6 +103,21 @@ public sealed class ToolUpdateLauncherTests
         Assert.Empty(stopped);
     }
 
+    [Fact]
+    public void Launch_Uses_the_injected_detached_process_launcher()
+    {
+        var processLauncher = new RecordingProcessLauncher();
+        var launcher = new ToolUpdateLauncher(
+            new DelegateFusePeerDiscovery(() => []),
+            processLauncher);
+
+        var result = launcher.Launch(version: "4.4.0", stopOtherHosts: false);
+
+        Assert.True(result.Launched);
+        Assert.NotNull(processLauncher.ScriptPath);
+        Assert.Equal(OperatingSystem.IsWindows(), processLauncher.IsWindows);
+    }
+
     // Holds a named mutex on a dedicated thread so a check on any other thread sees it held by another owner
     // (a Windows named mutex is owned per thread; a same-thread reacquire is reentrant and would read as free).
     private sealed class ForeignMutexHolder : IDisposable
@@ -135,6 +150,19 @@ public sealed class ToolUpdateLauncherTests
             _thread.Join(TimeSpan.FromSeconds(5));
             _acquired.Dispose();
             _release.Dispose();
+        }
+    }
+
+    private sealed class RecordingProcessLauncher : IDetachedUpdateProcessLauncher
+    {
+        public string? ScriptPath { get; private set; }
+
+        public bool? IsWindows { get; private set; }
+
+        public void Launch(string scriptPath, bool isWindows)
+        {
+            ScriptPath = scriptPath;
+            IsWindows = isWindows;
         }
     }
 }

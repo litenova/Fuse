@@ -1,4 +1,5 @@
 using System.IO.Hashing;
+using System.Security.Cryptography;
 
 namespace Fuse.Indexing;
 
@@ -29,5 +30,38 @@ public sealed class FileHashService
     {
         var bytes = await File.ReadAllBytesAsync(path, cancellationToken);
         return ComputeHash(bytes);
+    }
+
+    /// <summary>
+    ///     Streams a SHA-256 hash for a working-tree file.
+    /// </summary>
+    /// <param name="path">The absolute file path.</param>
+    /// <param name="cancellationToken">A token to cancel the stream read.</param>
+    /// <returns>A lowercase SHA-256 identity prefixed with <c>sha256:</c>.</returns>
+    /// <remarks>
+    ///     The workspace inventory uses Git blob ids for clean tracked files. Dirty and untracked files have no
+    ///     usable blob id, so this method hashes their on-disk bytes without retaining the complete source in memory.
+    /// </remarks>
+    public async Task<string> ComputeSha256FileAsync(string path, CancellationToken cancellationToken)
+    {
+        const int bufferSize = 64 * 1024;
+        var buffer = new byte[bufferSize];
+        await using var stream = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            bufferSize,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        while (true)
+        {
+            var read = await stream.ReadAsync(buffer.AsMemory(), cancellationToken);
+            if (read == 0)
+                break;
+            hash.AppendData(buffer, 0, read);
+        }
+
+        return "sha256:" + Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
     }
 }

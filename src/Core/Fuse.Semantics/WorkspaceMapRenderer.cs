@@ -12,13 +12,19 @@ namespace Fuse.Semantics;
 /// </remarks>
 public sealed class WorkspaceMapRenderer
 {
-    private readonly IWorkspaceIndexStore _store;
+    private readonly IWorkspaceIndexLifecycleStore _lifecycleStore;
+    private readonly IWorkspaceIndexQueryStore _queryStore;
 
     /// <summary>
     ///     Initializes a new instance of the <see cref="WorkspaceMapRenderer" /> class.
     /// </summary>
-    /// <param name="store">The index store to read from.</param>
-    public WorkspaceMapRenderer(IWorkspaceIndexStore store) => _store = store;
+    /// <param name="lifecycleStore">The index store lifecycle reader.</param>
+    /// <param name="queryStore">The index store query reader.</param>
+    public WorkspaceMapRenderer(IWorkspaceIndexLifecycleStore lifecycleStore, IWorkspaceIndexQueryStore queryStore)
+    {
+        _lifecycleStore = lifecycleStore;
+        _queryStore = queryStore;
+    }
 
     /// <summary>
     ///     Renders the workspace map at the requested detail level.
@@ -29,7 +35,7 @@ public sealed class WorkspaceMapRenderer
     /// <returns>A plain-text map.</returns>
     public async Task<string> RenderAsync(MapDetail detail, int maxRows, CancellationToken cancellationToken)
     {
-        var state = await _store.GetStateAsync(cancellationToken);
+        var state = await _lifecycleStore.GetStateAsync(cancellationToken);
         var builder = new StringBuilder();
         builder.AppendLine("workspace map");
         builder.AppendLine($"status: {state.Status}  files: {state.FileCount}  symbols: {state.SymbolCount}");
@@ -46,7 +52,7 @@ public sealed class WorkspaceMapRenderer
 
     private async Task RenderSymbolsAsync(StringBuilder builder, int maxRows, CancellationToken cancellationToken)
     {
-        var symbols = await _store.ListSymbolsAsync(maxRows, cancellationToken);
+        var symbols = await _queryStore.ListSymbolsAsync(maxRows, cancellationToken);
         builder.AppendLine($"symbols ({symbols.Count})");
         foreach (var symbol in symbols)
         {
@@ -59,7 +65,7 @@ public sealed class WorkspaceMapRenderer
 
     private async Task RenderRoutesAsync(StringBuilder builder, int maxRows, CancellationToken cancellationToken)
     {
-        var routes = await _store.ListRoutesAsync(maxRows, cancellationToken);
+        var routes = await _queryStore.ListRoutesAsync(maxRows, cancellationToken);
         builder.AppendLine($"routes ({routes.Count})");
         foreach (var route in routes)
             builder.AppendLine($"  {route.HttpMethod,-6} {route.RoutePattern}  ({route.FilePath}:{route.StartLine})");

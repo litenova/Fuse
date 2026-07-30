@@ -1,5 +1,5 @@
 PackageIdentifier: Litenova.Fuse
-PackageVersion: 4.3.0
+PackageVersion: 4.4.0
 InstallerLocale: en-US
 InstallerType: inno
 Scope: user
@@ -9,7 +9,7 @@ InstallModes:
 UpgradeBehavior: install
 Installers:
   - Architecture: x64
-    InstallerUrl: https://github.com/Litenova-Solutions/Fuse/releases/download/v4.3.0/fuse-4.3.0-setup.exe
+    InstallerUrl: https://github.com/Litenova-Solutions/Fuse/releases/download/v4.4.0/fuse-4.4.0-setup.exe
     InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
     AppsAndFeaturesEntries:
       - ProductCode: '{A3F1E2D4-7C5B-4A9E-B8D6-2F0C3E1A4B7D}_is1'

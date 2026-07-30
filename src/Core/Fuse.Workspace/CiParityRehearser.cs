@@ -7,7 +7,7 @@ namespace Fuse.Workspace;
 ///     emulation: nothing is silently skipped, so a "local green, CI red" surprise has a named reason here first.
 /// </summary>
 /// <remarks>
-///     Execution is opt-in (<paramref name="run" />) because a real CI build sequence costs minutes; the report
+///     Execution is opt-in (<c>run</c>) because a real CI build sequence costs minutes; the report
 ///     (what will run, what cannot be rehearsed) is always produced and is the primary deliverable. Only a clean
 ///     leading-<c>dotnet</c> command is executed; a dotnet invocation embedded in another tool (a coverage
 ///     wrapper) is reported as rehearsable but not auto-run, so the executor is never handed a non-dotnet program.

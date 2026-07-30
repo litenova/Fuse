@@ -31,9 +31,9 @@ public sealed class CodeFixApplier
     /// </summary>
     /// <param name="cache">
     ///     The warm-solution cache (R42) the fix loads through; defaults to the process-wide
-    ///     <see cref="WarmSolutionCache.Shared" />.
+    ///     the supplied host-owned <see cref="WarmSolutionCache" />.
     /// </param>
-    public CodeFixApplier(WarmSolutionCache? cache = null) => _cache = cache ?? WarmSolutionCache.Shared;
+    public CodeFixApplier(WarmSolutionCache? cache = null) => _cache = cache ?? new WarmSolutionCache();
 
     /// <summary>
     ///     Loads the workspace, discovers the analyzers and code fix providers the project's analyzer references
@@ -50,13 +50,14 @@ public sealed class CodeFixApplier
         if (string.IsNullOrWhiteSpace(diagnosticId) || string.IsNullOrWhiteSpace(file))
             return CodeFixResult.Abstain("provide a diagnostic id and a file to fix");
 
-        try { MsBuildLocatorRegistration.EnsureRegistered(); }
-        catch (Exception ex) { return CodeFixResult.Abstain($"no MSBuild/SDK found ({ex.Message}); cannot apply the fix"); }
-
         CachedSolution loaded;
         try
         {
             loaded = await _cache.OpenAsync(solutionOrProjectPath, cancellationToken);
+        }
+        catch (MsBuildLocatorUnavailableException ex)
+        {
+            return CodeFixResult.Abstain($"no MSBuild/SDK found ({ex.Message}); cannot apply the fix");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

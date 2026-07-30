@@ -21,7 +21,6 @@ using Fuse.Reduction.Caching;
 using Fuse.Reduction.Security;
 using Fuse.Reduction.Tokenization;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 
 namespace Fuse.Fusion.Extensions;
 
@@ -31,7 +30,7 @@ namespace Fuse.Fusion.Extensions;
 public static class ServiceCollectionExtensions
 {
     /// <summary>
-    ///     Registers stage pipelines, capability registries, and the SQLite store factory.
+    ///     Registers stage pipelines, capability registries, and the bounded memory cache factory.
     /// </summary>
     /// <param name="services">The service collection to add registrations to.</param>
     /// <returns>The same <paramref name="services" /> instance, to allow chaining.</returns>
@@ -88,8 +87,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<Session.ISessionTracker, Session.InMemorySessionTracker>();
         services.AddSingleton<IChangeDetector, GitChangeDetector>();
         services.AddSingleton<IGitStatsProvider, GitStatsProvider>();
-        services.AddSingleton<IFuseStoreFactory>(sp =>
-            new FuseStoreFactory(sp.GetService<ILogger<SqliteKeyValueStore>>()));
+        services.AddSingleton<IWorkspaceMemoryStoreFactory, MemoryStoreFactory>();
 
         RegisterFileFilters(services);
         RegisterProjectTemplates(services);

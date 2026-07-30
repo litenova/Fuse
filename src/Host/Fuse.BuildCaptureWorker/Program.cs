@@ -11,6 +11,13 @@ using Fuse.Indexing;
 // Output is a single JSON object on stdout: { "succeeded": bool, "reason": string?, "projects": [...] }.
 // Exit code 0 on a successful capture, 1 otherwise; diagnostics go to stderr so stdout stays pure JSON.
 
+using var workerCancellation = new CancellationTokenSource();
+Console.CancelKeyPress += (_, eventArgs) =>
+{
+    eventArgs.Cancel = true;
+    workerCancellation.Cancel();
+};
+var cancellationToken = workerCancellation.Token;
 var rehydrator = new BuildCaptureRehydrator();
 
 // Optional --root <path>: the workspace root the parent indexes against. Extracted file paths are made relative to
@@ -36,8 +43,8 @@ if (args.Length == 4 && args[0] == "--check")
     CheckResult check;
     try
     {
-        var newContent = await File.ReadAllTextAsync(args[3]);
-        check = await rehydrator.CheckAsync(args[1], args[2], newContent, TimeSpan.FromMinutes(10), CancellationToken.None);
+        var newContent = await File.ReadAllTextAsync(args[3], cancellationToken);
+        check = await rehydrator.CheckAsync(args[1], args[2], newContent, TimeSpan.FromMinutes(10), cancellationToken);
     }
     catch (Exception ex)
     {
@@ -56,8 +63,8 @@ if (args.Length == 4 && args[0] == "--check-complog")
     CheckResult check;
     try
     {
-        var newContent = await File.ReadAllTextAsync(args[3]);
-        check = rehydrator.CheckFromLog(args[1], args[2], newContent, CancellationToken.None);
+        var newContent = await File.ReadAllTextAsync(args[3], cancellationToken);
+        check = rehydrator.CheckFromLog(args[1], args[2], newContent, cancellationToken);
     }
     catch (Exception ex)
     {
@@ -77,7 +84,7 @@ if (args.Length == 2 && args[0] == "--serve-check")
     LazyHeldComplog held;
     try
     {
-        held = rehydrator.RehydrateLazyHeld(args[1], CancellationToken.None);
+        held = rehydrator.RehydrateLazyHeld(args[1], cancellationToken);
     }
     catch (Exception ex)
     {
@@ -107,8 +114,8 @@ if (args.Length == 2 && args[0] == "--serve-check")
                 }
                 else
                 {
-                    var newContent = await File.ReadAllTextAsync(request.ContentPath);
-                    check = rehydrator.CheckLazyHeld(held, request.File, newContent, CancellationToken.None);
+                    var newContent = await File.ReadAllTextAsync(request.ContentPath, cancellationToken);
+                    check = rehydrator.CheckLazyHeld(held, request.File, newContent, cancellationToken);
                 }
             }
             catch (Exception ex)
@@ -135,7 +142,7 @@ if (args.Length == 3 && args[0] == "--merge")
     CaptureResult merged;
     try
     {
-        merged = rehydrator.MergeFragmentsToBundle(args[1], args[2], CancellationToken.None, workspaceRoot);
+        merged = rehydrator.MergeFragmentsToBundle(args[1], args[2], cancellationToken, workspaceRoot);
     }
     catch (Exception ex)
     {
@@ -153,7 +160,7 @@ if (args.Length == 3 && args[0] == "--capture-bundle")
     CaptureResult bundle;
     try
     {
-        bundle = await rehydrator.ExportCompilerLogAsync(args[1], args[2], TimeSpan.FromMinutes(10), CancellationToken.None, workspaceRoot);
+        bundle = await rehydrator.ExportCompilerLogAsync(args[1], args[2], TimeSpan.FromMinutes(10), cancellationToken, workspaceRoot);
     }
     catch (Exception ex)
     {
@@ -174,8 +181,8 @@ CaptureResult result;
 try
 {
     result = args[0] == "--build"
-        ? await rehydrator.CaptureAsync(args[1], TimeSpan.FromMinutes(10), CancellationToken.None, workspaceRoot)
-        : rehydrator.RehydrateFromBinlog(args[1], workspaceRoot, CancellationToken.None);
+        ? await rehydrator.CaptureAsync(args[1], TimeSpan.FromMinutes(10), cancellationToken, workspaceRoot)
+        : rehydrator.RehydrateFromBinlog(args[1], workspaceRoot, cancellationToken);
 }
 catch (Exception ex)
 {

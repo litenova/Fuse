@@ -13,7 +13,7 @@ namespace Fuse.Semantics;
 ///     public) and emits a member only when its whole containing-type chain is itself on the public surface, so a
 ///     public method of an internal class is not reported as public API. Member signatures and fully qualified
 ///     names are normalized (bodies stripped, parameter types included in the name so overloads stay distinct) for
-///     a stable before/after comparison by <see cref="PublicApiDelta" />.
+///     a stable before/after comparison by <c>PublicApiDelta</c>.
 /// </summary>
 /// <remarks>
 ///     Syntax-only, so it works from any checkout state (the base side is read from the git base ref). A member

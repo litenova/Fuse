@@ -2,6 +2,7 @@ using System.IO.Pipelines;
 using System.IO.Pipes;
 using System.Net.Sockets;
 using Fuse.Cli.Rpc;
+using Fuse.Cli.Mcp;
 using Fuse.Plugins.Abstractions.Reducers;
 using Fuse.Reduction;
 using Fuse.Reduction.Security;
@@ -15,23 +16,26 @@ namespace Fuse.Cli.Tests;
 // S3: FuseHostClient connects to a running host over the real UI transport (named pipe on Windows, Unix socket
 // elsewhere), handshakes, and invokes fuse/check. With no host it returns null (the hook stays silent). These
 // exercise the actual transport, not the in-memory pipe pair the RPC tests use.
-[Collection("FuseToolsResidentProvider")]
 public sealed class FuseHostClientTests : IDisposable
 {
     private readonly ServiceProvider _provider = new ServiceCollection().AddFuseForTests().BuildServiceProvider();
 
-    private FuseHostService NewService() => new(
-        _provider.GetRequiredService<SemanticIndexer>(),
-        _provider.GetRequiredService<IChangeSource>(),
-        _provider.GetRequiredService<ContentReductionPipeline>(),
-        _provider.GetRequiredService<ISecretRedactor>(),
-        _provider.GetRequiredService<IGeneratedCodeDetector>(),
-        NullLogger<FuseHostService>.Instance);
+    private FuseHostService NewService()
+    {
+        var context = new FuseHostRequestContext(
+            _provider.GetRequiredService<SemanticIndexer>(),
+            _provider.GetRequiredService<IChangeSource>(),
+            _provider.GetRequiredService<ContentReductionPipeline>(),
+            _provider.GetRequiredService<ISecretRedactor>(),
+            _provider.GetRequiredService<IGeneratedCodeDetector>(),
+            _provider.GetRequiredService<IndexCoordinator>(),
+            _provider.GetRequiredService<IWorkspaceIndexJobManager>());
+        return new FuseHostService(context, NullLogger<FuseHostService>.Instance);
+    }
 
     [Fact]
     public async Task No_host_serving_the_root_returns_null()
     {
-        Fuse.Cli.Mcp.FuseTools.ResidentWorkspaces = Fuse.Workspace.NullResidentWorkspaceProvider.Instance;
         // A root no host is serving: the client probes the endpoint, finds nothing, and returns null quickly.
         var root = Path.Combine(Path.GetTempPath(), "fuse-client-nohost", Guid.NewGuid().ToString("N"));
 
@@ -43,7 +47,6 @@ public sealed class FuseHostClientTests : IDisposable
     [Fact]
     public async Task TryStatsAsync_over_real_transport_reports_host_version_and_working_set()
     {
-        Fuse.Cli.Mcp.FuseTools.ResidentWorkspaces = Fuse.Workspace.NullResidentWorkspaceProvider.Instance;
         var root = Path.Combine(Path.GetTempPath(), "fuse-client-stats", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -71,7 +74,6 @@ public sealed class FuseHostClientTests : IDisposable
     [Fact]
     public async Task Connects_to_a_running_host_and_gets_the_delta()
     {
-        Fuse.Cli.Mcp.FuseTools.ResidentWorkspaces = Fuse.Workspace.NullResidentWorkspaceProvider.Instance;
         var root = Path.Combine(Path.GetTempPath(), "fuse-client-host", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -146,7 +148,6 @@ public sealed class FuseHostClientTests : IDisposable
 
     public void Dispose()
     {
-        Fuse.Cli.Mcp.FuseTools.ResidentWorkspaces = Fuse.Workspace.NullResidentWorkspaceProvider.Instance;
         _provider.Dispose();
     }
 }

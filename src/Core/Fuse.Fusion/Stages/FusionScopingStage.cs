@@ -57,7 +57,7 @@ public sealed class FusionScopingStage
     /// <param name="request">The fusion request whose focus or change options drive scoping.</param>
     /// <param name="files">The collected candidate files.</param>
     /// <param name="parallelism">Maximum degree of parallelism for graph construction.</param>
-    /// <param name="index">Optional persistent analysis index for dependency extraction.</param>
+    /// <param name="index">Optional host-memory analysis index for dependency extraction.</param>
     /// <param name="contentProvider">Run-scoped content provider for seed resolution and graph building.</param>
     /// <param name="experimental">Resolved experimental options for the run.</param>
     /// <param name="cancellationToken">Token used to cancel scoping work.</param>

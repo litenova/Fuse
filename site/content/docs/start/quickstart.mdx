@@ -7,23 +7,22 @@ Install Fuse and connect it to the coding agent for the current .NET project:
 
 ```bash
 dotnet tool install -g Fuse
-fuse mcp install --rules
+fuse mcp install
 ```
 
 No client environment variables are required. `fuse mcp serve` defaults to a shared
-`fuse host` daemon per repository, syntax-first indexing with background semantic upgrade,
-build capture, and auto-update between sessions.
+`fuse host` daemon per repository, syntax-first indexing, and auto-update between sessions.
 
-The shared daemon starts warming the repository when the MCP server starts. Run an explicit
-index when you want the complete semantic index ready before reloading the client:
+The shared daemon can start warming the repository when the MCP server starts. Run an explicit
+syntax index when you want the repository index ready before reloading the client:
 
 ```bash
 fuse index
 ```
 
-This command waits for the semantic index at `.fuse/fuse.db`. It is optional for normal MCP
-use: eager warm-on-start, syntax-first serving, background semantic upgrade, and incremental
-file updates are enabled by default.
+This command waits for the syntax index at `.fuse/fuse.db`. It is optional for normal MCP
+use: eager warm-on-start, syntax-first serving, and incremental file updates are enabled by
+default. Use `fuse index --semantic` only when you need a workspace-wide compiler pass.
 
 Reload your MCP client, then ask:
 
@@ -49,8 +48,9 @@ that Fuse is available does not.
 
 If you ran `fuse index` above, this call reads the completed index. If you skipped it, the
 daemon may still be warming the repository. A cold read waits only for the bounded
-syntax-first deadline and reports `building_syntax` or `upgrade_pending` when more work is
-running. Later calls reuse the local store. If a tool returns `index_rebuilding:` after an
+syntax-first deadline and reports `building_syntax` while that job is running. An explicit
+semantic request can report `upgrade_pending` while syntax facts remain readable. Later calls
+reuse the local store. If a tool returns `index_rebuilding:` after an
 upgrade or corrupt recovery, retry after a few seconds or call `fuse_workspace` with
 `action=index`.
 
@@ -109,18 +109,17 @@ fuse index ./src
 fuse review ./src --changed-since origin/main --max-tokens 25000
 ```
 
-Fuse loads the workspace through MSBuild and Roslyn when it can, and falls back to
-syntax-level indexing otherwise. The index lives in a single SQLite file at
-`.fuse/fuse.db`. MCP serving starts an eager background warm by default. `fuse index` is the
-synchronous CLI path when a script or developer needs to wait for completion. Fuse keeps
-the index fresh automatically as files change.
+Fuse starts with syntax indexing. `fuse index --semantic` adds compiler analysis when a
+selected workspace needs it. The index lives in a single SQLite file at `.fuse/fuse.db`.
+`fuse index` waits for the repository job and renders progress while it runs. Fuse keeps
+the index fresh as files change.
 
 You can also resolve .NET wiring directly:
 
 ```bash
-fuse resolve ./src --service IOrderService
-fuse resolve ./src --request CreateOrderCommand
-fuse resolve ./src --route "POST /api/orders/{id}"
+fuse find IOrderService --kind service --path ./src
+fuse find CreateOrderCommand --kind request --path ./src
+fuse find "POST /api/orders/{id}" --kind route --path ./src
 ```
 
 ## Set Project Defaults

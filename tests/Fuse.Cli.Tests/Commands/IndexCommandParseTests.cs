@@ -54,4 +54,29 @@ public sealed class IndexCommandParseTests
     [Fact]
     public void Index_with_from_capture_parses_without_errors()
         => Assert.Empty(ParseErrors("index", "some/workspace", "--from-capture", "some/bundle"));
+
+    [Fact]
+    public void Index_with_semantic_and_json_parses_without_errors()
+        => Assert.Empty(ParseErrors("index", "some/workspace", "--semantic", "--json"));
+
+    [Theory]
+    [InlineData("status")]
+    [InlineData("cancel")]
+    [InlineData("clean", "--yes")]
+    public void Index_lifecycle_subcommand_parses_without_errors(params string[] arguments)
+        => Assert.Empty(ParseErrors(["index", .. arguments]));
+
+    [Theory]
+    [InlineData("IOrderService", "--kind", "service")]
+    [InlineData("billing endpoint", "--kind", "task", "--strict")]
+    [InlineData("OrderService", "--kind", "signatures")]
+    [InlineData("OrderService", "--kind", "neighbors", "--max-candidates", "10")]
+    public void Find_union_kinds_parse_without_errors(params string[] arguments)
+        => Assert.Empty(ParseErrors(["find", .. arguments]));
+
+    [Theory]
+    [InlineData("resolve", ".", "--service", "IOrderService")]
+    [InlineData("localize", ".", "--task", "billing endpoint")]
+    public void Removed_discovery_commands_do_not_parse(params string[] arguments)
+        => Assert.NotEmpty(ParseErrors(arguments));
 }

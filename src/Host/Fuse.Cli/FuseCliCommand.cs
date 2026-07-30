@@ -38,8 +38,8 @@ public class FuseCliCommand
 
             Install and connect:
               dotnet tool install -g Fuse                 Install the global tool.
-              fuse mcp install --client codex --rules     Connect Codex for this project.
-              fuse mcp install --client all --rules       Connect all supported clients.
+              fuse mcp install --client codex             Connect Codex for this project.
+              fuse mcp install --client all               Connect all supported clients.
 
             Agent outcomes:
               fuse_check       Typecheck a proposed edit: oracle, local build, or abstain.
@@ -55,8 +55,8 @@ public class FuseCliCommand
               fuse review --changed-since <ref>  Review a change since a git ref.
 
             Context infrastructure:
-              fuse index [path]                  Build the persistent semantic index.
-              fuse find <query>                  Find symbols, wiring, paths, or text.
+              fuse index [path]                  Build the persistent syntax index.
+              fuse find <query> --kind <kind>    Find symbols, wiring, paths, or tasks.
               fuse context --seed <symbol>       Emit scoped, reduced source context.
               fuse map [path]                    Print symbols, routes, and counts.
 

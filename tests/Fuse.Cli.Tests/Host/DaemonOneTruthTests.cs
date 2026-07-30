@@ -41,6 +41,7 @@ public sealed class DaemonOneTruthTests
     {
         var fuseDll = FuseDll();
         RequiresSdkIntegration.RequireArtifact(fuseDll, "fuse.dll");
+        var executable = fuseDll!;
 
         var work = Path.Combine(Path.GetTempPath(), "fuse-onetruth-it", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(work);
@@ -59,12 +60,11 @@ public sealed class DaemonOneTruthTests
             CreateNoWindow = true,
             WorkingDirectory = work,
         };
-        psi.ArgumentList.Add(fuseDll);
+        psi.ArgumentList.Add(executable);
         psi.ArgumentList.Add("host");
         psi.ArgumentList.Add("--directory");
         psi.ArgumentList.Add(work);
         psi.Environment["FUSE_RESIDENT"] = "1";
-        psi.Environment["FUSE_BUILD_CAPTURE"] = "1";
 
         Process? daemon = null;
         try
@@ -113,6 +113,7 @@ public sealed class DaemonOneTruthTests
     {
         var fuseDll = FuseDll();
         RequiresSdkIntegration.RequireArtifact(fuseDll, "fuse.dll");
+        var executable = fuseDll!;
 
         var work = Path.Combine(Path.GetTempPath(), "fuse-index-onetruth-it", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(work);
@@ -131,14 +132,13 @@ public sealed class DaemonOneTruthTests
             CreateNoWindow = true,
             WorkingDirectory = work,
         };
-        psi.ArgumentList.Add(fuseDll);
+        psi.ArgumentList.Add(executable);
         psi.ArgumentList.Add("host");
         psi.ArgumentList.Add("--directory");
         psi.ArgumentList.Add(work);
         // A first open below owns the full index synchronously. Do not also start the eager syntax pass, because
         // its background upgrade can hold the single writer while the two-client assertion is trying to read it.
         psi.Environment["FUSE_EAGER_INDEX"] = "0";
-        psi.Environment["FUSE_BG_UPGRADE"] = "0";
 
         Process? daemon = null;
         try

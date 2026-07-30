@@ -63,7 +63,7 @@ public static class WorkspaceExclusions
 
     /// <summary>
     ///     Returns the default excluded directory names plus any listed in a <c>.fuseignore</c> file or the
-    ///     <c>ignore</c> array of a <c>fuse.json</c> at the root.
+    ///     <c>ignore</c> array of the root <c>fuse.json</c>.
     /// </summary>
     /// <param name="rootDirectory">The workspace root that may contain a <c>.fuseignore</c> or <c>fuse.json</c> file.</param>
     /// <returns>The merged, de-duplicated (case-insensitive) set of directory names to prune.</returns>
@@ -77,60 +77,19 @@ public static class WorkspaceExclusions
     {
         var names = new List<string>(DefaultDirectoryNames);
         names.AddRange(ReadFuseIgnoreNames(rootDirectory));
-        names.AddRange(ReadFuseJsonIgnoreNames(rootDirectory));
+        names.AddRange(WorkspaceConfiguration.LoadOrThrow(rootDirectory).Ignore.SelectMany(ToDirectoryNames));
         return names.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
     /// <summary>The <c>fuse.json</c> key holding an array of extra directory names to exclude from indexing.</summary>
     public const string IgnoreConfigKey = "ignore";
 
-    // Reads the fuse.json "ignore" array (directory names) at the root. Accepts an array of strings or a single
-    // string; a trailing slash or path is reduced to its final segment. A missing, unreadable, or malformed file
-    // yields no additions rather than failing the scan, matching the .fuseignore contract.
-    private static IEnumerable<string> ReadFuseJsonIgnoreNames(string rootDirectory)
-    {
-        var path = Path.Combine(rootDirectory, "fuse.json");
-        if (!File.Exists(path))
-            return [];
-
-        var names = new List<string>();
-        try
-        {
-            using var document = System.Text.Json.JsonDocument.Parse(File.ReadAllText(path));
-            foreach (var property in document.RootElement.EnumerateObject())
-            {
-                if (!property.NameEquals(IgnoreConfigKey))
-                    continue;
-
-                if (property.Value.ValueKind == System.Text.Json.JsonValueKind.Array)
-                {
-                    foreach (var element in property.Value.EnumerateArray())
-                    {
-                        if (element.ValueKind == System.Text.Json.JsonValueKind.String)
-                            AddName(names, element.GetString());
-                    }
-                }
-                else if (property.Value.ValueKind == System.Text.Json.JsonValueKind.String)
-                {
-                    AddName(names, property.Value.GetString());
-                }
-            }
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
-        {
-            return [];
-        }
-
-        return names;
-    }
-
-    private static void AddName(List<string> names, string? raw)
+    private static IEnumerable<string> ToDirectoryNames(string raw)
     {
         if (string.IsNullOrWhiteSpace(raw))
-            return;
+            return [];
         var name = raw.Trim().TrimEnd('/', '\\').Split('/', '\\').LastOrDefault();
-        if (!string.IsNullOrEmpty(name))
-            names.Add(name);
+        return string.IsNullOrEmpty(name) ? [] : [name];
     }
 
     // Reads directory names from a root .fuseignore. Each non-comment line is a directory name; a trailing slash

@@ -1,5 +1,7 @@
 using System.Text.Json;
+using Fuse.Cli.Mcp;
 using Fuse.Cli.Rpc;
+using Fuse.Cli.Serialization;
 
 namespace Fuse.Cli.Tests;
 
@@ -37,6 +39,38 @@ public sealed class FuseHostContractTests
         Assert.Contains("\"fullTextSearch\":true", json);
         Assert.Contains("\"fuseVersion\":\"3.2.0\"", json);
         Assert.Contains("\"languages\":[{\"language\":\"csharp\",\"count\":120}", json);
+    }
+
+    [Fact]
+    public void IndexJobSnapshot_SerializesNamedLifecycleEnumsAcrossPublicContexts()
+    {
+        var snapshot = new IndexJobSnapshot(
+            "job-1",
+            "C:/repo",
+            IndexJobState.Running,
+            IndexPhase.SyntaxExtraction,
+            2,
+            4,
+            4,
+            10,
+            40,
+            null,
+            "src/Widget.cs",
+            DateTimeOffset.UtcNow,
+            TimeSpan.FromSeconds(1),
+            IndexCountSnapshot.Empty,
+            IndexStorageSnapshot.Empty,
+            [],
+            null,
+            null);
+
+        var cli = JsonSerializer.Serialize(snapshot, IndexCliJsonContext.Default.IndexJobSnapshot);
+        var host = JsonSerializer.Serialize(snapshot, FuseHostJsonContext.Default.IndexJobSnapshot);
+
+        Assert.Contains("\"state\":\"Running\"", cli, StringComparison.Ordinal);
+        Assert.Contains("\"phase\":\"SyntaxExtraction\"", cli, StringComparison.Ordinal);
+        Assert.Contains("\"state\":\"Running\"", host, StringComparison.Ordinal);
+        Assert.Contains("\"phase\":\"SyntaxExtraction\"", host, StringComparison.Ordinal);
     }
 
     [Fact]

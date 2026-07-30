@@ -1,130 +1,87 @@
 ---
-title: Configuration Keys
-description: The keys Fuse reads from fuse.json or .fuserc, their discovery order, and how they combine with command-line flags.
+title: Workspace configuration
+description: The root-only fuse.json and .fuseignore contract used by Fuse 4.4.
 ---
 
-`fuse.json` and `.fuserc` configure the legacy directory-fusion pipeline. Current index, retrieval, verification, review, and `fuse reduce` commands do not consume these keys. Environment variables in this page apply to the current MCP and indexing paths where stated.
+Fuse reads workspace configuration only from the repository root. The supported files are
+`fuse.json` and `.fuseignore`. Fuse does not read `.fuserc`, parent-directory configuration,
+or legacy emission, tokenizer, cache, and `solution` settings.
 
-This page is for engineers setting project defaults and for maintainers who need the exact discovery and precedence rules. The [Quickstart](/docs/start/quickstart) shows `fuse init` scaffolding a file in context.
+## fuse.json
 
-## Purpose and Scope
-
-The file keys below remain for legacy pipeline commands and `fuse init` compatibility. Do not treat them as defaults for `fuse context`, `fuse review`, or `fuse reduce`. All keys are optional.
-
-## Discovery
-
-Fuse searches for a configuration file starting in the working directory and walking up through parent directories to the filesystem root. The first match wins. Within a single directory, `fuse.json` takes precedence over `.fuserc`. A file that fails to parse is ignored silently: Fuse continues as if no configuration file were present, falling back to flags and built-in defaults.
-
-## Precedence
-
-For any setting, Fuse resolves the value in this order, highest first:
-
-1. An explicit command-line flag.
-2. The value from the discovered configuration file.
-3. The built-in default.
-
-An explicit flag always overrides the configuration file, and the configuration file overrides the built-in default. A key omitted from the file leaves the flag or default in effect.
-
-## Legacy Pipeline Keys
-
-| Key | Type | Maps to flag | Description |
-|-----|------|--------------|-------------|
-| `directory` | string | `--directory` | Source directory to fuse. |
-| `output` | string | `--output` | Output directory for fused files. |
-| `name` | string | `--name` | Output file name without extension. |
-| `format` | xml \| markdown \| json | `--format` | Output format. |
-| `tokenizer` | string | `--tokenizer` | Tokenizer model or encoding name. |
-| `noManifest` | bool | `--no-manifest` | Omit the manifest header when `true`. |
-| `provenance` | bool | `--provenance` | Enable dependency inclusion provenance annotations. |
-| `gitStats` | bool | `--git-stats` | Include git churn and last-modified statistics in the manifest. |
-| `maxTokens` | int | `--max-tokens` | Hard token limit. |
-| `splitTokens` | int | `--split-tokens` | Per-part split threshold in tokens. |
-| `recursive` | bool | `--recursive` | Search subdirectories recursively. |
-| `includeMetadata` | bool | `--include-metadata` | Include file metadata in output entries. |
-
-The mapped flags are legacy pipeline-only. They are not accepted by current commands unless the command declaration explicitly lists them.
-
-## Semantic index keys
-
-These `fuse.json` keys are read by the current indexing path (unlike the legacy keys above).
-
-| Key | Type | Description |
-|-----|------|-------------|
-| `solution` | string | Pins the .NET solution (or a project) that the semantic (typed-graph) tier loads, relative to the repository root or absolute. Use it when a repo has more than one solution and discovery would otherwise pick the wrong one. When set and the target exists, it overrides discovery; `fuse_workspace action=doctor` reports it as `solution pinned by fuse.json`. |
-| `ignore` | string or string[] | Extra directory names to exclude from indexing, beyond the built-in defaults (`node_modules`, `bin`, `obj`, `.git`, `.fuse`, and the rest). A trailing slash or path is reduced to its final segment, so `"gen/output/"` excludes any directory named `output`. Merged with `.fuseignore` entries. |
-
-Workspace scope: every MCP tool except `fuse_reduce` first resolves the nearest enclosing `.git` directory or file. Indexed tools use that normalized repository root for scanning, the daemon, the writer lock, and `.fuse/fuse.db`. A nested request never changes the scan root. A folder outside Git returns `workspace_identity_unresolved:` before any workspace operation; `fuse_reduce` remains available because it is not indexed. One-shot non-MCP indexing paths can still walk a non-Git directory.
-
-Within the resolved root, Fuse indexes tracked and untracked-not-ignored source. In a Git work tree it uses `git ls-files --exclude-standard`, so `.gitignore` is honored by construction; a non-Git one-shot path walks the tree. Both paths prune the default excluded directory names, any directory that is a nested version-control root (a vendored checkout, worktree, or submodule with its own `.git`), and the `ignore` additions above. There is no silent file cap: the indexed file and symbol counts reported by `fuse_workspace action=status` reflect the real source set, rather than a truncated subset.
-
-Without a `solution` key, discovery prefers a solution at or near the repository root over one nested under a test, fixture, or sample directory. When several distinct root-level solutions exist, it selects the first by name order and surfaces the choice in `doctor`; if the only solutions live under fixture directories but the repo has real projects, those projects are loaded instead of the fixture solution. `doctor` always names the selected solution, so a wrong or ambiguous selection is visible rather than silent.
-
-## Environment Variables
-
-A few behaviors are controlled by environment variables rather than the config file or a flag:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `FUSE_USER_DATA` | `~/.fuse` | Base directory for machine-wide Fuse data. A one-shot non-Git store is `{FUSE_USER_DATA}/roots/{hash}/fuse.db`; workspace-scoped MCP tools refuse non-Git folders. Inside a Git repo the store stays at `{repoRoot}/.fuse/fuse.db` regardless of this variable. |
-| `FUSE_CENTRALITY_WEIGHT` | `0.15` | Weight of the query-independent graph-centrality prior blended into focus and query ranking, so at equal relevance the more depended-upon file ranks earlier. Set to `0` to disable the prior and reproduce the pre-centrality ordering exactly. |
-| `FUSE_HOP_DECAY` | `0.5` | The factor by which a dependency-expanded neighbour's score decays per hop from its seed, in the range (0, 1]. Lower values rank distant files further below the seeds so the budget drops them first; higher values keep more of the neighbourhood. An admission-tuning scalar; values outside (0, 1] are ignored. |
-| `FUSE_EXPANSION_WEIGHT` | `0.2` | The per-term weight of a pseudo-relevance-feedback expansion term relative to an original query term (weight `1.0`), used when query expansion is on. Higher values lean harder on co-occurring concept terms. An admission-tuning scalar. |
-| `FUSE_QUERY_EXPANSION` | `1` (on) | Pseudo-relevance feedback query expansion: a second ranking pass seeded with recurring declared-symbol terms from the first pass's top files, rewriting a sparse query in the codebase's vocabulary. Set to `0` (also `off` or `false`) to disable and reproduce the single-pass BM25F ordering exactly. |
-| `FUSE_BUDGET_EXPANSION` | `1` (on) | Budget-aware dependency expansion on the query path: when a token ceiling is set, the graph admits neighbours highest-score first only while their estimated reduced cost fits the budget, instead of admitting the whole neighbourhood and leaving the packer to cut it. The estimate uses the level each file will emit at (skeleton for neighbours when tiered emission is on). Seeds are always admitted, so this is a cost gate that mirrors the packer, not a recall lever. Set to `0` (also `off` or `false`) to disable and reproduce the unbounded expansion. |
-| `FUSE_BG_UPGRADE` | `1` (on) | Syntax-first serving for `fuse mcp serve`. The first cold read can return the syntax tier while a supervised semantic upgrade runs in the background. Set to `0`, `false`, `no`, or `off` for synchronous first-read indexing. `fuse index` is always synchronous. |
-| `FUSE_BUILD_CAPTURE` | `1` (on) | Build capture: build the workspace once (through the bundled out-of-process worker) and rehydrate the exact Roslyn compilation, so `fuse_check` answers oracle-grade and the extracted graph is build-exact. On by default; it degrades cleanly to the MSBuild and syntax tiers when no build target exists or a build fails. Set to `0` (also `off`, `no`, or `false`) to skip build capture entirely. |
-| `FUSE_BUILD_CAPTURE_WORKER` | bundled | Absolute path to the build-capture worker (`fuse-build-capture.dll`). An override: by default the worker ships inside the tool (under `build-capture/` beside `fuse`) and is discovered with no configuration. Set this only to point at a worker outside the install (for example a development build). |
-| `FUSE_RESIDENT` | `0` (off) | Hold rehydrated Roslyn compilations live for low-latency overlay checks and watcher-driven updates. This path is opt-in; set to `1` (also `on` or `true`) on `fuse mcp serve` or `fuse host`. With it off, reads use the persistent store and `fuse_check` uses the available build-capture or build-grade path. When the shared daemon is active (the default for `mcp serve`), resident state lives in `fuse host` instead. |
-| `FUSE_DAEMON` | `1` (on) | Shared daemon: in `mcp serve`, delegate the resident workspace to one shared `fuse host` daemon per repository (spawned on demand) instead of holding an in-process one, so multiple sessions share one warm compilation. On by default for `mcp serve`. Set to `0` (also `off`, `false`, or `no`) to serve in-process. Falls back to an in-process workspace when a daemon cannot start. The single-instance daemon lock and idle shutdown are always on for `fuse host` regardless of this flag. |
-| `FUSE_DAEMON_IDLE_MINUTES` | `0` (never) | The idle-shutdown window for a `fuse host` daemon: after this many minutes with no connected client it stops itself, so a daemon spawned on demand does not linger holding a workspace. Zero (the default for a manually run host) disables idle shutdown; a daemon spawned by `mcp serve` sets a window. |
-| `FUSE_AUTO_UPDATE` | `1` (on for `mcp serve`) | Background auto-update between MCP sessions: when a newer Fuse is available on NuGet, `mcp serve` launches the detached updater after the current session exits (without stopping sibling sessions). On by default for `mcp serve`; set to `0` (also `off`, `false`, or `no`) to opt out. Other entry points show a notice only unless explicitly enabled. |
-| `FUSE_LEXICAL_FALLBACK` | `0` (off) | Opt-in inline lexical fallback (R30): when the index is not semantic-ready (cold/building/rebuilding) and there is no native search to defer to (a fuse-only or CLI setup), `fuse_find` serves a scoped, ranked raw-text result graded `lexical-fallback` instead of the bare deferral signal. Default off, because the abstain-and-defer default (return a fast `deferred` signal and let the agent use its own search) is better when a native search exists. Honest bound: this does not out-scan ripgrep at raw bytes; its win is scope (the repo's own source minus the ignores) plus answer shape. Set to `1` (also `true`, `yes`, `on`) to enable. |
-| `FUSE_COCHANGE` | `0` (off) | Git co-change collection at index time (R41). The git co-change prior is off in the shipping ranking (Decision D6, net-negative on the corpus), so mining and storing co-change on every index is wasted work - the `git log` walk was a large share of the index hot path. Off by default, so the default index path no longer runs the collector. Set to `1` (also `true`, `yes`, `on`) to collect (the ranking diagnostic that enables the prior sets this to gather the data it measures). |
-| `FUSE_WATCH` | `1` (on) | Live incremental index (R39): when the daemon is active, a debounced file-system watcher over the served root (including `.git/HEAD` and `.git/index`, so branch switches and pulls are caught) reconciles changed files into the index through the single-writer coordinator, so reads are fresh with no per-read reconcile cost. A periodic safety reconcile catches dropped events, and on-read reconcile remains the backstop. Set to `0` (also `false`, `no`, `off`) to opt out and rely on on-read reconcile only. |
-| `FUSE_EAGER_INDEX` | `1` (on) | Eager warm-on-start indexing (R38): after a Git repository identity resolves, `fuse mcp serve` in-process or `fuse host` starts a background syntax-first index before the first tool call. No eager task starts outside Git. Set to `0` (also `false`, `no`, `off`) to opt out; the first eligible read then builds on demand (still bounded, R27). `fuse warm <path>` warms an identified repository explicitly regardless of this flag. |
-| `FUSE_WARM_SOLUTION_CAP` | `3` | The maximum number of MSBuild-loaded Roslyn solutions the daemon-held warm-solution cache (R42) keeps at once, one per repository root. `fuse_refactor` and `fuse_workspace action=doctor`'s live load reuse a held solution so a second call in a session skips the full design-time load. Each held solution is a full Roslyn compilation set (hundreds of MB on a large repo), so the cache is a hard LRU: the least-recently-used root beyond this cap is evicted and its workspace disposed. A freshness check (a pruned `.cs` file scan) forces a fresh load when the source changed, so a reused solution always matches a cold load. |
-| `FUSE_WARM_SOLUTION_IDLE_MINUTES` | `30` | The idle window for the warm-solution cache (R42): a root not accessed within this many minutes is evicted on the next cache access and its workspace disposed, so a solution held for a repo that stopped being worked on does not pin memory for the daemon's lifetime. |
-| `FUSE_CHECK_WORKER_CAP` | `2` | The maximum number of live pooled build-capture check workers (R48), one per captured compiler log. Without a resident workspace, an oracle `fuse_check` otherwise spawns a fresh worker that rehydrates the complog, checks one file, and exits on every edit; the pool keeps a worker alive per complog so the second and later checks in a session skip the rehydrate. Each held worker holds a rehydrated compilation set, so the pool is a hard LRU: the least-recently-used worker beyond this cap is stopped. A cold or absent worker falls back to the spawn-per-call path. |
-| `FUSE_CHECK_WORKER_IDLE_MINUTES` | `30` | The idle window for the pooled check workers (R48): a worker not used within this many minutes is stopped on the next pool access, so a worker for a complog that stopped being checked does not pin memory for the daemon's lifetime. |
-| `FUSE_COMPILER_STATE_CAP` | `1` | Per-root host compiler-state budget (R61). At the default of one, activating a resident workspace, a held warm MSBuild solution, or a pooled capture-check worker releases the other held compiler state for that root. A higher value permits the independently bounded caches to coexist. Daemon-less paths retain their existing local fallback behavior. |
-| `FUSE_MSBUILD_WARMUP` | `1` (on) | Warm the MSBuild toolchain at daemon/serve start (R44): in the background, register the MSBuild locator and prime the served root's solution into the warm-solution cache (R42), so the first `fuse_refactor` or `fuse_workspace doctor` of a session does not pay the multi-second locator-plus-first-load warmup. Fire-and-forget and best-effort, so it never blocks startup; deduped with the first real load by the cache. Set to `0` (also `false`, `no`, `off`) to opt out; the first refactor/doctor then pays the cold load as before. |
-| `FUSE_MAX_FILE_BYTES` | `5242880` (5 MB) | The per-file size cap for indexing (R35): a file larger than this is skipped with a recorded reason (a generated giant or a mislabeled binary costs memory and time for no signal) rather than read into the index. Skipped files are recorded under `skipped_files` in `index_meta` and shown by `fuse_workspace action=doctor`. A non-positive value disables the cap. |
-| `FUSE_COLD_READ_DEADLINE_MS` | `2500` | How long the first read on a cold repo waits for the background syntax-first index build before returning a bounded `index_state: building_syntax` header (with `files_indexed`) instead of blocking (R27). The build continues in the background and the next read serves the warming index. A small repo whose syntax build finishes within the deadline serves results on the first read. Applies to the syntax-first serve path (`fuse mcp serve` / `fuse host`); a synchronous in-process caller is unaffected. |
-| `FUSE_REVIEW_MAX_CHANGED_FILES` | `150` | The changed-file cap for `fuse_review` before it returns a bounded partial (the changed-file list plus a narrow-the-base-ref note) instead of running blast-radius resolution over a huge diff. The `maxChangedFiles` tool parameter overrides it per call. `maxTokens` bounds output; this bounds the graph work. |
-| `FUSE_HOOK_VERBOSE` | `0` (off) | Hook RPC failure logging: when `fuse check --delta` or `fuse gate` cannot reach a compatible host, logs one stderr line per swallowed failure naming the RPC method and error code (`no_host`, `protocol_mismatch`, or `rpc_error`). Off by default so hooks stay silent when no host is serving. Set to `1` (also `on` or `true`) to debug hook wiring. |
-| `FUSE_HOST_RESTRICT_PIPE` | `0` (off) | Windows named-pipe ACL for `fuse host`: when `1` (also `on`, `true`, or `yes`), the pipe security descriptor grants read/write only to the current user SID instead of the platform default that allows any same-session client. Off by default so behavior matches prior releases; has no effect on Linux or macOS (Unix domain sockets use filesystem permissions). |
-| `FUSE_GIT_CHURN_WEIGHT` | `0` (off) | Weight of a git churn and recency prior multiplied into the query candidate scores, so a recently and frequently changed file ranks a little higher. A production-routing lever, off by default. The pinned benchmark cannot validate it (its worktrees are historical checkouts, so recent churn is empty, and a date-relative churn would leak because the changed files are the most recently changed by construction), so any value here is for real-world routing, not benchmark recall. A conservative value such as `0.15` is reasonable. |
-| Git co-change prior | off | Disabled in the shipping ranking after the corpus gate measured lower MRR and recall@10 with it enabled. It remains available only through the ranking diagnostic configuration; there is no public configuration key. |
-| `FUSE_SKETCH_HUGE` | `0` (off) | Replace a file still very large after reduction (over roughly 6,000 tokens) with a compact structural sketch (its type and member names, no bodies), so it keeps presence and navigation instead of consuming the budget several smaller files need. Off by default and leaves the default output unchanged; the corpus failure mode is multi-file truncation rather than single-giant-file pack-outs. Set to `1` (also `on` or `true`) to enable. |
-| `FUSE_MEMBER_LEVEL` | `0` (off) | Member-level retrieval on the query path: index each declared member as its own document, roll the scores up to a file score, and add a file the member pass surfaces (a match concentrated in one member of a large file) as an extra seed. Off by default because it re-parses files for member chunks every query and roughly doubles to triples warm latency; it trades latency for recall. Set to `1` (also `on` or `true`). |
-| `FUSE_PROJECT_GRAPH` | `0` (off) | Coarse project-reference graph expansion: parse `.csproj` `ProjectReference` elements into a coarse inter-project graph and link each candidate to the files in the projects its owning project references or is referenced by, bounded per file and followed at the same decayed weight as the proximity edges. A seed can then reach a related file across an assembly boundary (such as a changed library file and an integration test that does not name its type) that the intra-project type-reference graph misses. Off by default because the lift was within noise on the benchmark and it adds a `.csproj` disk scan per query; set to `1` (also `on` or `true`) to enable on the query and focus paths. |
-| `FUSE_DOWNGRADE_DROP` | `1` (on) | Replace eligible lower-ranked files with structural sketches before dropping them under a query or focus budget. This preserves more file presence at the cost of body detail. It does not guarantee recall or semantic completeness. Set to `0`, `off`, or `false` for drop-only packing. |
-| `FUSE_QUERY_REWRITE` | `0` (off) | Rules-based, no-model query rewrite: the compound PascalCase identifiers in a query are emphasized over plain words via weighted-term ranking, so a query that names a type leans toward the file that declares it. An LLM-backed rewrite is a separate opt-in. Off by default because it measured neutral on the benchmark, where titles are identifier-rich and the symbol field is already weighted highly. Set to `1` (also `on` or `true`) to enable; it may help a deployment with prose queries. |
-| `FUSE_FIELDED_COMMENTS` | `0` (off) | Index comments and documentation comments as their own weighted BM25F field, above the body but below symbols and path, so a query term documented in a file's comments contributes a deliberate signal instead of being diluted in the body. Fully lexical, no model. Off by default because comments overlap the body and it measured neutral on the benchmark. Set to `1` (also `on` or `true`) to enable; it may help a deployment whose queries are prose. |
-
-Fuse has no embedding setting. The dense channel was retired; the tool does not fetch or ship an embedding model.
-
-## The Scaffold from `fuse init`
-
-Running `fuse init` writes the following `fuse.json` to the current directory when one is absent:
+`fuse init` creates a root `fuse.json` using this schema:
 
 ```json
 {
-  "directory": ".",
-  "output": "./fuse-output",
-  "format": "xml",
-  "tokenizer": "o200k_base",
-  "noManifest": false,
-  "provenance": false
+  "$schema": "https://fuse.codes/schema/v4.4/fuse.schema.json",
+  "workspace": "src/Product.slnf",
+  "ignore": [
+    "vendor"
+  ]
 }
 ```
 
-These values scaffold the legacy pipeline configuration. They do not alter current semantic CLI or MCP commands.
+Both properties are optional. `fuse init` writes `workspace` only when it finds one
+unambiguous product target. Otherwise it prints the candidates and leaves the property out.
 
-## What This Does Not Cover
+| Key | Type | Meaning |
+|-----|------|---------|
+| `$schema` | string | The v4.4 schema identifier. It is informational and lets editors validate the file. |
+| `workspace` | string | An in-repository `.sln`, `.slnx`, `.slnf`, or `.csproj` used by explicit semantic indexing and compiler-backed requests. Relative paths resolve from the repository root and must not escape it. |
+| `ignore` | array of strings | Extra directory names or paths to exclude from inventory. Entries are combined with `.fuseignore` and the built-in exclusions. |
 
-This page does not document the flags' full semantics (see [Options reference](/docs/reference/options)), the `fuse init` command (see [Commands](/docs/reference/commands)), or the output formats (see [Output Specification](/docs/reference/output-specification)).
+Unknown keys produce a visible warning. Wrong property types, malformed JSON, an unsupported
+workspace extension, or a workspace path outside the repository fail the request and name the
+property that needs correction. Fuse never silently selects an ambiguous full solution by path
+order.
+
+Workspace selection uses this order:
+
+1. The `workspace` value in `fuse.json`.
+2. One root product `.slnf`.
+3. One root product `.slnx` or `.sln`.
+4. The owning `.csproj` for a file-specific compiler request.
+5. An actionable ambiguity response that lists candidates and tells you to set `workspace`.
+
+All indexed MCP tools except `fuse_reduce` resolve the nearest enclosing Git repository first.
+That normalized repository root owns the daemon, job manager, index file, and configuration.
+A nested request does not change the scan root. A folder outside Git returns
+`workspace_identity_unresolved:` before Fuse starts an index or writes data.
+
+## .fuseignore
+
+`.fuseignore` is a root-only line-oriented list of additional paths or directory names to
+exclude. Blank lines and lines beginning with `#` are ignored. It complements `ignore`; it
+does not replace built-in exclusions such as `.git`, `.fuse`, `bin`, `obj`, and
+`node_modules`.
+
+Use `fuse.json` for shared, editor-validated workspace intent and `.fuseignore` for a short
+repository-specific exclusion list.
+
+## Runtime environment
+
+Environment variables configure runtime behavior, not `fuse.json` parsing:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `FUSE_DAEMON` | `1` for `mcp serve` | Set to `0` to run the same job and compiler services in process instead of delegating to the shared host daemon. |
+| `FUSE_EAGER_INDEX` | `1` | Set to `0` to skip the optional eager syntax job at daemon or MCP startup. The first eligible read still starts or joins the syntax job. |
+| `FUSE_COLD_READ_DEADLINE_MS` | `2500` | The maximum cold-read wait for syntax rows before Fuse returns a bounded job header. |
+| `FUSE_MAX_FILE_BYTES` | `5242880` | Files larger than this retain inventory metadata with `index_detail=inventory_only`. A non-positive value disables the cap. |
+| `FUSE_RESIDENT` | `0` | Set to `1` to hold resident compiler state for low-latency overlay checks. |
+| `FUSE_WARM_SOLUTION_CAP` | `3` | Maximum held MSBuild solution states per host root. |
+| `FUSE_WARM_SOLUTION_IDLE_MINUTES` | `30` | Idle eviction window for held MSBuild solutions. |
+| `FUSE_CHECK_WORKER_CAP` | `2` | Maximum pooled capture-check workers per host root. |
+| `FUSE_CHECK_WORKER_IDLE_MINUTES` | `30` | Idle eviction window for capture-check workers. |
+| `FUSE_COMPILER_STATE_CAP` | `1` | Per-root budget shared by resident, warm-solution, and capture-worker compiler state. |
+| `FUSE_WATCH` | `1` | Set to `0` to disable watcher-triggered refresh jobs; read-time reconcile remains the backstop. |
+| `FUSE_UPDATE_CHECK` | `1` | Set to `0` to disable update notices. |
+
+`FUSE_BG_UPGRADE` is removed. Fuse does not run a background workspace-wide compiler pass
+after syntax indexing. Use `fuse index --semantic` when that work is wanted.
 
 ## Next
 
-Continue to the [Options reference](/docs/reference/options) for full flag semantics, or the [Quickstart](/docs/start/quickstart) for `fuse init` in context.
+Use [Commands](/docs/reference/commands) for `fuse init`, index lifecycle, and cleanup.
+Read [Connect your coding agent](/docs/start/connect-your-ai) for MCP installation and
+[Shared daemon](/docs/internals/daemon) for job ownership.

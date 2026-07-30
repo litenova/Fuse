@@ -40,7 +40,7 @@ public sealed class FusionOrchestrator
     private readonly IFileSystem _fileSystem;
     private readonly Func<ISourceContentProvider> _contentProviderFactory;
     private readonly CapabilityRegistry<ISymbolOutlineExtractor> _outlineExtractors;
-    private readonly IFuseStoreFactory _fuseStoreFactory;
+    private readonly IWorkspaceMemoryStoreFactory _memoryStoreFactory;
     private readonly ILogger<FusionOrchestrator> _logger;
 
     /// <summary>
@@ -56,7 +56,7 @@ public sealed class FusionOrchestrator
     /// <param name="fileSystem">File system abstraction.</param>
     /// <param name="contentProviderFactory">Per-run content provider factory.</param>
     /// <param name="outlineExtractors">Outline extractors used when building table-of-contents symbol maps.</param>
-    /// <param name="fuseStoreFactory">Persistent store factory.</param>
+    /// <param name="memoryStoreFactory">Host-owned repository memory cache factory.</param>
     /// <param name="logger">Optional logger.</param>
     public FusionOrchestrator(
         FusionValidator validator,
@@ -69,7 +69,7 @@ public sealed class FusionOrchestrator
         IFileSystem fileSystem,
         Func<ISourceContentProvider> contentProviderFactory,
         CapabilityRegistry<ISymbolOutlineExtractor> outlineExtractors,
-        IFuseStoreFactory fuseStoreFactory,
+        IWorkspaceMemoryStoreFactory memoryStoreFactory,
         ILogger<FusionOrchestrator>? logger = null)
     {
         _validator = validator;
@@ -82,7 +82,7 @@ public sealed class FusionOrchestrator
         _fileSystem = fileSystem;
         _contentProviderFactory = contentProviderFactory;
         _outlineExtractors = outlineExtractors;
-        _fuseStoreFactory = fuseStoreFactory;
+        _memoryStoreFactory = memoryStoreFactory;
         _logger = logger ?? NullLogger<FusionOrchestrator>.Instance;
     }
 
@@ -108,12 +108,12 @@ public sealed class FusionOrchestrator
     ///     <list type="number">
     ///         <item><description>Collection: discover and filter candidate files via the collection pipeline.</description></item>
     ///         <item><description>Optional filtering/scoping: narrow the set by focus or git changes. These two scoping modes are mutually exclusive.</description></item>
-    ///         <item><description>Reduction: apply per-file content reduction, optionally cached on disk.</description></item>
+    ///         <item><description>Reduction: apply per-file content reduction, optionally cached in host memory.</description></item>
     ///         <item><description>Emission: format and write output, then append optional route maps, project graphs, redaction reports, and pattern summaries.</description></item>
     ///     </list>
     ///     The request is validated through <see cref="FusionValidator.ValidateOrThrow" /> before any stage runs.
-    ///     Every run constructs its own content cache and relevance index, so concurrent runs against different
-    ///     (or the same) directories are fully isolated and scale toward the core count with no process-wide gate.
+    ///     Every run constructs its own content cache. Optional reduction and analysis entries use a shared,
+    ///     repository-scoped host-memory cache, so concurrent requests do not create another SQLite database.
     /// </remarks>
     public async Task<FusionResult> FuseAsync(FusionRequest request, CancellationToken cancellationToken = default)
     {
@@ -127,20 +127,20 @@ public sealed class FusionOrchestrator
         var tokenCounter = _tokenizerFactory.GetCounter(request.Emission.TokenizerModel);
         var entryFormatter = EntryFormatterFactory.Create(request.Emission.Format);
 
-        IKeyValueStore? fuseStore = null;
+        IKeyValueStore? memoryStore = null;
         IReductionCache? reductionCache = null;
         Indexing.IAnalysisIndex? analysisIndex = null;
 
-        if (request.UseReductionCache || request.UsePersistentIndex)
+        if (request.UseReductionCache || request.UseAnalysisCache)
         {
-            fuseStore = _fuseStoreFactory.Open(request.Collection.SourceDirectory);
+            memoryStore = _memoryStoreFactory.Open(request.Collection.SourceDirectory);
 
-            if (request.UsePersistentIndex)
-                analysisIndex = new Indexing.SqliteAnalysisIndex(fuseStore);
+            if (request.UseAnalysisCache)
+                analysisIndex = new Indexing.MemoryAnalysisIndex(memoryStore);
 
             if (request.UseReductionCache)
             {
-                reductionCache = new SqliteReductionCache(fuseStore);
+                reductionCache = new MemoryReductionCache(memoryStore);
                 if (request.ClearReductionCache)
                     reductionCache.Clear();
             }
@@ -254,8 +254,8 @@ public sealed class FusionOrchestrator
         }
         finally
         {
-            if (fuseStore is not null)
-                await fuseStore.DisposeAsync();
+            if (memoryStore is not null)
+                await memoryStore.DisposeAsync();
         }
     }
 

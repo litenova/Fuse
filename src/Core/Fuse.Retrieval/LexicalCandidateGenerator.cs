@@ -33,13 +33,13 @@ public sealed class LexicalCandidateGenerator : ICandidateGenerator
     // The weakest in-pool hit keeps this fraction of its band ceiling, so rank decay never zeroes a real match.
     private const double RankFloor = 0.35;
 
-    private readonly IWorkspaceIndexStore _store;
+    private readonly IWorkspaceIndexQueryStore _store;
 
     /// <summary>
     ///     Initializes a new instance of the <see cref="LexicalCandidateGenerator" /> class.
     /// </summary>
     /// <param name="store">The index store to query.</param>
-    public LexicalCandidateGenerator(IWorkspaceIndexStore store) => _store = store;
+    public LexicalCandidateGenerator(IWorkspaceIndexQueryStore store) => _store = store;
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<CandidateNode>> GenerateAsync(LocalizationRequest request, CancellationToken cancellationToken)

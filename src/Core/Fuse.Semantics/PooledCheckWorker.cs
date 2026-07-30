@@ -53,9 +53,6 @@ public sealed class PooledCheckWorker : IDisposable
         _workerDllPath = channelFactory is null ? BuildCaptureClient.ResolveWorkerPath() : "injected";
     }
 
-    /// <summary>The process-wide shared pool the check path uses by default.</summary>
-    public static PooledCheckWorker Shared { get; set; } = new();
-
     /// <summary>Whether a worker can be started (a worker dll is configured, or a channel factory is injected).</summary>
     public bool IsAvailable => _channelFactory is not null || (!string.IsNullOrWhiteSpace(_workerDllPath) && File.Exists(_workerDllPath));
 
@@ -344,15 +341,26 @@ internal sealed class ProcessCheckWorkerChannel(string workerDllPath, string com
         psi.ArgumentList.Add(complogPath);
 
         var process = new Process { StartInfo = psi };
-        process.Start();
-        _process = process;
-        _ = process.StandardError.ReadToEndAsync(cancellationToken); // drain stderr so the child never blocks.
+        try
+        {
+            process.Start();
+            _process = process;
+            _ = process.StandardError.ReadToEndAsync(cancellationToken); // drain stderr so the child never blocks.
 
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(ReadyTimeout);
-        var ready = await process.StandardOutput.ReadLineAsync(timeoutCts.Token);
-        if (ready is null || !ready.Contains("\"ready\""))
-            throw new InvalidOperationException("build-capture check worker did not report ready");
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(ReadyTimeout);
+            var ready = await process.StandardOutput.ReadLineAsync(timeoutCts.Token);
+            if (ready is null || !ready.Contains("\"ready\""))
+                throw new InvalidOperationException("build-capture check worker did not report ready");
+        }
+        catch
+        {
+            StopOwnedProcess(process);
+            if (ReferenceEquals(_process, process))
+                _process = null;
+            process.Dispose();
+            throw;
+        }
     }
 
     public async Task<string> RequestAsync(string requestLine, CancellationToken cancellationToken)
@@ -379,7 +387,7 @@ internal sealed class ProcessCheckWorkerChannel(string workerDllPath, string com
             {
                 try { _process.StandardInput.WriteLine("quit"); _process.StandardInput.Flush(); } catch (IOException) { }
                 if (!_process.WaitForExit(2000))
-                    _process.Kill(entireProcessTree: true);
+                    StopOwnedProcess(_process);
             }
         }
         catch (Exception ex) when (ex is InvalidOperationException or IOException)
@@ -389,6 +397,23 @@ internal sealed class ProcessCheckWorkerChannel(string workerDllPath, string com
         {
             _process.Dispose();
             _process = null;
+        }
+    }
+
+    private static void StopOwnedProcess(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+        }
+        catch (InvalidOperationException)
+        {
+            // The worker exited while the channel was shutting down.
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            // The operating system released the process before the channel could stop it.
         }
     }
 }

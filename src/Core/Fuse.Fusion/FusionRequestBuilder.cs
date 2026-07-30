@@ -50,7 +50,7 @@ public sealed class FusionRequestBuilder
     private int _parallelism = Environment.ProcessorCount;
     private bool _useReductionCache = true;
     private bool _clearReductionCache = false;
-    private bool _usePersistentIndex = false;
+    private bool _useAnalysisCache = false;
     private List<string>? _explicitFiles;
     private ExperimentalOptions? _experimental;
 
@@ -313,8 +313,8 @@ public sealed class FusionRequestBuilder
     /// <summary>
     ///     Sets reduction cache behavior for the fusion run.
     /// </summary>
-    /// <param name="useCache">Whether to read and write reduction cache entries in <c>.fuse/fuse.db</c>.</param>
-    /// <param name="clearCache">Whether to clear cached reduction entries in <c>.fuse/fuse.db</c> before fusion runs.</param>
+    /// <param name="useCache">Whether to read and write reduction cache entries in host memory.</param>
+    /// <param name="clearCache">Whether to clear cached reduction entries for the source repository before fusion runs.</param>
     /// <returns>The current builder instance.</returns>
     public FusionRequestBuilder WithReductionCacheOptions(bool useCache, bool clearCache = false)
     {
@@ -324,13 +324,13 @@ public sealed class FusionRequestBuilder
     }
 
     /// <summary>
-    ///     Enables or disables the persistent analysis index stored in <c>.fuse/fuse.db</c>.
+    ///     Enables or disables the host-memory analysis cache.
     /// </summary>
-    /// <param name="usePersistentIndex">Whether to cache per-file dependency and symbol analysis on disk.</param>
+    /// <param name="useAnalysisCache">Whether to cache per-file dependency and symbol analysis in host memory.</param>
     /// <returns>The current builder instance.</returns>
-    public FusionRequestBuilder WithPersistentIndex(bool usePersistentIndex)
+    public FusionRequestBuilder WithAnalysisCache(bool useAnalysisCache)
     {
-        _usePersistentIndex = usePersistentIndex;
+        _useAnalysisCache = useAnalysisCache;
         return this;
     }
 
@@ -379,7 +379,7 @@ public sealed class FusionRequestBuilder
             _parallelism,
             _useReductionCache,
             _clearReductionCache,
-            _usePersistentIndex,
+            _useAnalysisCache,
             _experimental);
     }
 

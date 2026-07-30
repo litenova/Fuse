@@ -37,7 +37,7 @@ Every analyzer implements `ISemanticAnalyzer` and runs per project over the Rosl
 | `ReferenceEdgeAnalyzer` | Type-level use of another source type's member or type | `references` edges, the substrate `fuse_impact` reads |
 | `TestEdgeExtractor` | A test type's references to the source types it exercises (runs after the per-project analyzers merge) | `tests` edges, the substrate for covering-test selection |
 
-The semantics benchmark (`fuse eval semantics`) measures analyzer accuracy against a hand-built edge ground truth on the OrderingApp fixture; it is the gate any new analyzer extends.
+The separate semantics benchmark measures analyzer accuracy against a hand-built edge ground truth on the OrderingApp fixture; it is the gate any new analyzer extends.
 
 ## Contributing an analyzer
 
@@ -48,7 +48,7 @@ The steps to add coverage for a framework not in the table:
 3. Add a fixture and a golden edge test. Extend the OrderingApp wiring fixture (or add a focused fixture) with the new pattern, and assert the exact edges in the semantics ground truth. An analyzer without a ground-truth edge is unmeasured, and the semantics suite is the strictest gate in the harness: it must match the hand-built edges exactly.
 4. Keep the three gates green: `dotnet build Fuse.slnx -c Release`, `dotnet test Fuse.slnx -c Release --no-build`, `dotnet format Fuse.slnx --verify-no-changes`. Add XML docs on the public analyzer type per the project's documentation standard.
 
-A few rules keep an analyzer honest. Emit an edge only when the symbols resolve; a name-based guess that fires on a partial load produces a false edge, which is worse than a missing one. Weight a soft signal (a `references` edge is weight 0.15) below a hard wiring edge, so ranking reflects certainty. And measure precision, not just recall: `fuse eval semantics --corpus-sample N` samples predicted edges over the corpus for adjudication, which is how a new resolver's false-positive rate is checked before it ships.
+A few rules keep an analyzer honest. Emit an edge only when the symbols resolve; a name-based guess that fires on a partial load produces a false edge, which is worse than a missing one. Weight a soft signal (a `references` edge is weight 0.15) below a hard wiring edge, so ranking reflects certainty. And measure precision, not just recall: the separate semantics suite samples predicted edges over the corpus for adjudication, which is how a new resolver's false-positive rate is checked before it ships.
 
 ## Contributing a semantic language (F6 entry bar)
 
@@ -56,6 +56,6 @@ A second semantic language is out of scope for 4.2. When the F6 entry bar is met
 
 1. Implement `ISemanticLanguageProvider` with a real compiler-backed loader for that language (not a syntax-only parser).
 2. Register the provider through DI (`ISemanticLanguageProvider`) before or alongside `AddCSharpSemanticLanguageProvider()`.
-3. Add a fixture, golden edges, and a `fuse eval semantics` gate for that language's wiring patterns.
+3. Add a fixture, golden edges, and a semantics-suite gate for that language's wiring patterns.
 
 Community syntax providers continue through `ILanguageSyntaxProvider`; the semantic tier is a separate, compiler-backed capability.

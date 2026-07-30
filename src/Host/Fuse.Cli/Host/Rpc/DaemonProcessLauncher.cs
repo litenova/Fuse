@@ -4,13 +4,18 @@ namespace Fuse.Cli.Rpc;
 
 /// <summary>
 ///     Launches a detached <c>fuse host</c> daemon for a repository root (G5), so <c>mcp serve</c> can spawn the
-///     shared daemon on demand and delegate its resident workspace to it. The daemon is started with the resident
-///     workspace enabled and an idle-shutdown window, so it holds the warm compilation for every client and stops
-///     itself when no client has used it for a while. The single-instance lock in the daemon makes a redundant
-///     spawn harmless (the second daemon exits).
+///     shared daemon on demand. The daemon starts syntax-first with no resident compiler state or background
+///     semantic work, then stops itself after its idle-shutdown window. The single-instance lock in the daemon
+///     makes a redundant spawn harmless (the second daemon exits).
 /// </summary>
 public static class DaemonProcessLauncher
 {
+    /// <summary>
+    ///     The environment marker the launcher sets on a spawned daemon. A daemon that sees it writes only to its
+    ///     rolling file log, because its standard streams are pipes the launcher abandons.
+    /// </summary>
+    public const string DetachedEnvironmentVariable = "FUSE_DAEMON_DETACHED";
+
     /// <summary>
     ///     Builds the start info to launch a daemon for a root, handling both a published apphost (<c>fuse</c>) and
     ///     a framework-dependent run (<c>dotnet fuse.dll</c>). Pure, so the argument and environment wiring is
@@ -21,6 +26,13 @@ public static class DaemonProcessLauncher
     /// <param name="root">The repository root the daemon should serve.</param>
     /// <param name="idleMinutes">The daemon's idle-shutdown window in minutes.</param>
     /// <returns>The configured start info.</returns>
+    /// <remarks>
+    ///     The daemon outlives the process that spawns it, so it must not inherit that process's standard streams.
+    ///     An inherited stdout keeps the caller's pipe open for the daemon's whole idle window, which hangs any
+    ///     piped or redirected invocation (a shell pipeline, a CI log capture, an agent harness) long after the
+    ///     command itself finished. Redirecting gives the daemon fresh pipes instead, and the detached marker stops
+    ///     it writing into them.
+    /// </remarks>
     public static ProcessStartInfo BuildStartInfo(string processPath, string? fuseDllPath, string root, int idleMinutes)
     {
         var psi = new ProcessStartInfo
@@ -28,9 +40,14 @@ public static class DaemonProcessLauncher
             UseShellExecute = false,
             CreateNoWindow = true,
             WorkingDirectory = root,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
         };
-        // The daemon owns the resident workspace for every client, and stops itself when idle.
-        psi.Environment["FUSE_RESIDENT"] = "1";
+        // Index jobs are syntax-first. A daemon starts no compiler state or eager index work until a caller asks.
+        psi.Environment["FUSE_RESIDENT"] = "0";
+        psi.Environment["FUSE_EAGER_INDEX"] = "0";
+        psi.Environment[DetachedEnvironmentVariable] = "1";
         psi.Environment["FUSE_DAEMON_IDLE_MINUTES"] = idleMinutes.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
         var runningUnderDotnet = Path.GetFileNameWithoutExtension(processPath)
@@ -58,7 +75,13 @@ public static class DaemonProcessLauncher
         var fuseDll = typeof(DaemonProcessLauncher).Assembly.Location;
         try
         {
+            // The daemon must not hold this process's standard handles: an inherited stdout keeps the caller's
+            // pipe open for the daemon's idle window, which hangs a piped or redirected command.
+            using var handles = InheritedStandardHandleScope.Suppress();
             using var process = Process.Start(BuildStartInfo(processPath, fuseDll, root, idleMinutes));
+            // Release this process's ends of the redirected streams straight away. The daemon keeps running with
+            // its own handles; nothing here reads them, and the detached marker keeps the daemon from writing.
+            process?.StandardInput.Close();
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
         {

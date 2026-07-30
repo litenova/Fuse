@@ -13,13 +13,13 @@ namespace Fuse.Retrieval;
 /// </remarks>
 public sealed class SemanticResolver
 {
-    private readonly IWorkspaceIndexStore _store;
+    private readonly IWorkspaceIndexGraphStore _store;
 
     /// <summary>
     ///     Initializes a new instance of the <see cref="SemanticResolver" /> class.
     /// </summary>
     /// <param name="store">The index store to query.</param>
-    public SemanticResolver(IWorkspaceIndexStore store) => _store = store;
+    public SemanticResolver(IWorkspaceIndexGraphStore store) => _store = store;
 
     /// <summary>
     ///     Resolves a service to its registered implementation(s).

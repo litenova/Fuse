@@ -15,7 +15,7 @@ using Xunit;
 namespace Fuse.Cli.Tests.Mcp;
 
 /// <summary>
-///     Status validates or warms the index before reporting it; diagnostics retains the cold read-only path.
+///     Status reads retained index and job state without creating a competing index pass.
 /// </summary>
 [Collection("FuseToolsResidentProvider")]
 public sealed class FastWorkspaceStatusTests : IAsyncLifetime, IDisposable
@@ -24,6 +24,7 @@ public sealed class FastWorkspaceStatusTests : IAsyncLifetime, IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "fuse-fast-status", Guid.NewGuid().ToString("N"));
     private SemanticIndexer Indexer => _provider.GetRequiredService<SemanticIndexer>();
     private IChangeSource ChangeSource => _provider.GetRequiredService<IChangeSource>();
+    private IndexJobClient Jobs => new(_provider.GetRequiredService<IWorkspaceIndexJobManager>(), daemonEnabled: false);
 
     public Task InitializeAsync()
     {
@@ -32,17 +33,18 @@ public sealed class FastWorkspaceStatusTests : IAsyncLifetime, IDisposable
     }
 
     [Fact]
-    public async Task Status_on_cold_repo_creates_valid_warm_index()
+    public async Task Status_on_cold_repo_reports_not_indexed_without_creating_a_database()
     {
         var databasePath = Fuse.Reduction.Caching.FuseStorePaths.ResolveDatabasePath(_root);
         Assert.False(File.Exists(databasePath));
 
-        var status = await FuseTools.FuseWorkspaceAsync(Indexer, action: "status", path: _root);
+        var status = await WorkspaceToolOperations.ExecuteAsync(Indexer, Jobs, action: "status", path: _root);
 
-        Assert.True(File.Exists(databasePath));
-        Assert.Contains("index_state: ready", status);
-        Assert.Contains("index mode: syntax", status);
+        Assert.False(File.Exists(databasePath));
+        Assert.Contains("index_state: not_indexed", status);
+        Assert.Contains("index mode: not_indexed", status);
         Assert.Contains("files indexed: 0", status);
+        Assert.Contains("index job: none", status);
     }
 
     [Fact]
@@ -66,30 +68,30 @@ public sealed class FastWorkspaceStatusTests : IAsyncLifetime, IDisposable
         }
 
         var stopwatch = Stopwatch.StartNew();
-        var status = await FuseTools.FuseWorkspaceAsync(Indexer, action: "status", path: _root);
+        var status = await WorkspaceToolOperations.ExecuteAsync(Indexer, Jobs, action: "status", path: _root);
         stopwatch.Stop();
 
         Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(2), $"status took {stopwatch.Elapsed.TotalSeconds:F1}s");
         Assert.Contains("index_state: building_syntax", status);
-        Assert.Contains("semantic upgrade in progress", status);
+        Assert.Contains("compiler analysis in progress", status);
         Assert.Contains("files indexed: 1", status);
     }
 
     [Fact]
-    public async Task Doctor_warms_cold_repo_before_reporting_diagnosis()
+    public async Task Doctor_reports_cold_repo_without_creating_a_database()
     {
         var databasePath = Fuse.Reduction.Caching.FuseStorePaths.ResolveDatabasePath(_root);
         Assert.False(File.Exists(databasePath));
 
-        var doctor = await FuseTools.FuseWorkspaceAsync(Indexer, action: "doctor", path: _root);
+        var doctor = await WorkspaceToolOperations.ExecuteAsync(Indexer, Jobs, action: "doctor", path: _root);
 
-        Assert.True(File.Exists(databasePath));
-        Assert.StartsWith("index_state: ready", doctor);
+        Assert.False(File.Exists(databasePath));
+        Assert.StartsWith("index_state: not_indexed", doctor);
         Assert.Contains("load tier:", doctor);
     }
 
     [Fact]
-    public async Task FuseFind_returns_index_busy_when_database_is_locked()
+    public async Task FuseFind_returns_a_bounded_building_header_when_database_is_locked()
     {
         var databasePath = Fuse.Reduction.Caching.FuseStorePaths.ResolveDatabasePath(_root);
         Directory.CreateDirectory(Path.GetDirectoryName(databasePath)!);
@@ -107,13 +109,17 @@ public sealed class FastWorkspaceStatusTests : IAsyncLifetime, IDisposable
         lockCommand.CommandText = "BEGIN EXCLUSIVE;";
         await lockCommand.ExecuteNonQueryAsync();
 
-        var result = await FuseTools.FuseFindAsync(
+        var stopwatch = Stopwatch.StartNew();
+        var result = await FindToolOperations.ExecuteAsync(
             Indexer, ChangeSource, "App", path: _root, kind: "symbol");
+        stopwatch.Stop();
 
-        Assert.StartsWith("index_state: index_busy", result);
-        Assert.Contains("files_indexed: 1", result);
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(8), $"find blocked for {stopwatch.Elapsed.TotalSeconds:F1}s");
+        Assert.StartsWith("index_state: building_syntax", result);
+        Assert.Contains("grade: deferred", result);
         Assert.Contains("availability:", result);
         Assert.DoesNotContain(FuseOperationalErrors.IndexBusyPrefix, result);
+        Assert.DoesNotContain(FuseOperationalErrors.InternalErrorPrefix, result);
     }
 
     public Task DisposeAsync()

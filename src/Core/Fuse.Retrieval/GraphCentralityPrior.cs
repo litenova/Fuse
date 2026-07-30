@@ -23,13 +23,13 @@ public sealed class GraphCentralityPrior
     // node lookups for file-only candidates.
     private const int MaxCandidatesToAdjust = 30;
 
-    private readonly IWorkspaceIndexStore _store;
+    private readonly IWorkspaceIndexGraphStore _store;
 
     /// <summary>
     ///     Initializes a new instance of the <see cref="GraphCentralityPrior" /> class.
     /// </summary>
     /// <param name="store">The index store whose nodes and edges define the centrality.</param>
-    public GraphCentralityPrior(IWorkspaceIndexStore store) => _store = store;
+    public GraphCentralityPrior(IWorkspaceIndexGraphStore store) => _store = store;
 
     /// <summary>
     ///     Applies the centrality multiplier to a ranked candidate set and re-sorts. In syntax mode (no edges)

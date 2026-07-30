@@ -37,7 +37,7 @@ public static class ResidentAnalyzerRunner
         if (analyzers.IsDefaultOrEmpty)
             return [];
 
-        var withAnalyzers = compilation.WithAnalyzers(analyzers, options, cancellationToken);
+        var withAnalyzers = compilation.WithAnalyzers(analyzers, options);
         var diagnostics = await withAnalyzers.GetAnalyzerDiagnosticsAsync(cancellationToken);
         return diagnostics
             .Where(d => d.Location.SourceTree == tree)

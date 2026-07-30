@@ -3,7 +3,7 @@ using Fuse.Cli.Mcp;
 using Fuse.Indexing;
 using Fuse.Retrieval;
 using Fuse.Semantics;
-using Microsoft.Data.Sqlite;
+using Fuse.Workspace;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -21,12 +21,10 @@ public sealed class IndexStateAvailabilityHeaderTests : IDisposable
     private IChangeSource ChangeSource => _provider.GetRequiredService<IChangeSource>();
 
     // Isolate the header root's store to {_root}/.fuse so root-derived lookups never read the shared machine-wide
-    // ~/.fuse, and pin the process-global resident provider to null: the golden encodes the store-backed (no
-    // resident) header, so a provider left set by another test in this collection would flip "store-backed".
+    // ~/.fuse. The golden encodes the store-backed header.
     public IndexStateAvailabilityHeaderTests()
     {
         _root.AsIsolatedRepo();
-        FuseTools.ResidentWorkspaces = Fuse.Workspace.NullResidentWorkspaceProvider.Instance;
     }
 
     public static TheoryData<string, Action<WorkspaceIndexStore>, int?> IndexStateCases => new()
@@ -97,7 +95,7 @@ public sealed class IndexStateAvailabilityHeaderTests : IDisposable
     {
         if (expectedState == "not_indexed")
         {
-            var header = await FuseTools.FormatNotIndexedAvailabilityHeaderAsync(_root, CancellationToken.None);
+            var header = await IndexAvailabilityReporter.NotIndexedHeaderAsync(_root, CancellationToken.None);
             AssertHeaderShape(header, expectedState, 0);
             AvailabilityHeaderGoldenAssert.AssertMatches($"availability-header-{expectedState}", NormalizeForGolden(header));
             return;
@@ -121,8 +119,8 @@ public sealed class IndexStateAvailabilityHeaderTests : IDisposable
         await WorkspaceIndexManifest.CompleteAsync(_root, store, inventory, CancellationToken.None);
 
         var headerFromStore = expectedState == "index_busy"
-            ? await FuseTools.OracleAvailabilityHeaderAsync(store, _root, CancellationToken.None, indexStateOverride: "index_busy")
-            : await FuseTools.OracleAvailabilityHeaderAsync(store, _root, CancellationToken.None);
+            ? await IndexAvailabilityReporter.OracleHeaderAsync(store, _root, CancellationToken.None, indexStateOverride: "index_busy")
+            : await IndexAvailabilityReporter.OracleHeaderAsync(store, _root, CancellationToken.None);
 
         AssertHeaderShape(headerFromStore, expectedState, expectedFiles!.Value);
         AvailabilityHeaderGoldenAssert.AssertMatches($"availability-header-{expectedState}", NormalizeForGolden(headerFromStore));
@@ -130,56 +128,47 @@ public sealed class IndexStateAvailabilityHeaderTests : IDisposable
     }
 
     [Fact]
-    public async Task Blocked_find_returns_header_within_two_seconds_not_index_busy_prefix()
+    public async Task Deferred_find_returns_building_header_without_storage_access()
     {
-        var root = Path.Combine(Path.GetTempPath(), "fuse-blocked-find", Guid.NewGuid().ToString("N"));
+        var root = Path.Combine(Path.GetTempPath(), "fuse-deferred-find", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         root.AsIsolatedRepo();
         var databasePath = Fuse.Reduction.Caching.FuseStorePaths.ResolveDatabasePath(root);
-        Directory.CreateDirectory(Path.GetDirectoryName(databasePath)!);
-        await using (var seed = new WorkspaceIndexStore(databasePath))
-        {
-            await seed.InitializeAsync(CancellationToken.None);
-            await seed.UpsertFilesAsync(
-                [new IndexedFileRecord("App.cs", "App.cs", ".cs", 10, DateTime.UtcNow.Ticks, "hash", Language: "csharp")],
-                CancellationToken.None);
-        }
-
-        await using var lockConnection = new SqliteConnection($"Data Source={databasePath}");
-        await lockConnection.OpenAsync();
-        await using var lockCommand = lockConnection.CreateCommand();
-        lockCommand.CommandText = "BEGIN EXCLUSIVE;";
-        await lockCommand.ExecuteNonQueryAsync();
-
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-        var result = await FuseTools.FuseFindAsync(
-            Indexer,
-            ChangeSource,
-            "App",
-            path: root,
-            kind: "symbol",
-            cancellationToken: cts.Token);
-        stopwatch.Stop();
-
-        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(2), $"find blocked for {stopwatch.Elapsed.TotalSeconds:F1}s");
-        Assert.DoesNotContain(FuseOperationalErrors.IndexBusyPrefix, result);
-        Assert.StartsWith("index_state: index_busy", result);
-        Assert.Contains("files_indexed: 1", result);
-        Assert.Contains("availability:", result);
-
         try
         {
-            Directory.Delete(root, recursive: true);
+            var coordinator = _provider.GetRequiredService<IndexCoordinator>();
+            var runtime = new FuseMcpRuntime(
+                new DeferredIndexAccessProvider(root),
+                NullResidentWorkspaceProvider.Instance,
+                coordinator,
+                _provider.GetRequiredService<IWorkspaceIndexJobManager>(),
+                _provider.GetRequiredService<WarmSolutionCache>(),
+                _provider.GetRequiredService<PooledCheckWorker>(),
+                _provider.GetRequiredService<IProcessRunner>());
+
+            var result = await FindToolOperations.ExecuteAsync(
+                Indexer,
+                ChangeSource,
+                "App",
+                path: root,
+                kind: "symbol",
+                runtime: runtime);
+
+            Assert.False(File.Exists(databasePath));
+            Assert.DoesNotContain(FuseOperationalErrors.IndexBusyPrefix, result);
+            Assert.DoesNotContain(FuseOperationalErrors.InternalErrorPrefix, result);
+            Assert.StartsWith("index_state: building_syntax", result);
+            Assert.Contains("grade: deferred", result);
+            Assert.Contains("availability:", result);
         }
-        catch (IOException)
+        finally
         {
+            Directory.Delete(root, recursive: true);
         }
     }
 
     public void Dispose()
     {
-        FuseTools.ResidentWorkspaces = Fuse.Workspace.NullResidentWorkspaceProvider.Instance;
         _provider.Dispose();
     }
 
@@ -193,11 +182,25 @@ public sealed class IndexStateAvailabilityHeaderTests : IDisposable
 
     private static string NormalizeForGolden(string header) =>
         header
-            .Replace(" semantic upgrade in progress (a build is running for tier-1);", " semantic upgrade in progress;", StringComparison.Ordinal)
             .Replace("tier-1 build capture configured", "tier-1 build capture {tier1}", StringComparison.Ordinal)
             .Replace("tier-1 build capture not configured", "tier-1 build capture {tier1}", StringComparison.Ordinal)
             .Replace("verify serves oracle-grade", "verify serves {verify-grade}", StringComparison.Ordinal)
             .Replace("verify serves build-grade (fuse_check runs a scoped dotnet build)", "verify serves {verify-grade}", StringComparison.Ordinal);
+
+    private sealed class DeferredIndexAccessProvider(string root) : IIndexAccessProvider
+    {
+        public Task<IndexJobStartResult> StartSyntaxAsync(
+            SemanticIndexer indexer, string path, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<WorkspaceIndexStore> OpenIndexedAsync(
+            SemanticIndexer indexer, string path, CancellationToken cancellationToken) =>
+            throw new ColdStartInProgressException(root);
+
+        public Task<SemanticIndexResult> IndexAsync(
+            SemanticIndexer indexer, string path, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
 }
 
 internal static class AvailabilityHeaderGoldenAssert
@@ -229,5 +232,5 @@ internal static class AvailabilityHeaderGoldenAssert
     }
 
     private static string NormalizeLineEndings(string text) =>
-        text.Replace("\r\n", "\n").Replace("\r", "\n");
+        text.Replace("\r\n", "\n").Replace("\r", "\n").TrimEnd();
 }

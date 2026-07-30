@@ -143,7 +143,11 @@ public static class SessionClaimLedger
     /// <param name="cancellationToken">A token to cancel the write.</param>
     /// <returns>A task that completes when the claims are persisted.</returns>
     public static Task SaveAsync(
-        IWorkspaceIndexStore store, string sessionId, string root, IReadOnlyList<Claim> claims, CancellationToken cancellationToken)
+        IWorkspaceIndexVerificationSessionStore store,
+        string sessionId,
+        string root,
+        IReadOnlyList<Claim> claims,
+        CancellationToken cancellationToken)
     {
         var json = JsonSerializer.Serialize(claims.ToList(), ClaimJsonContext.Default.ListClaim);
         return store.SaveClaimLedgerAsync(sessionId, root, json, cancellationToken);
@@ -161,7 +165,11 @@ public static class SessionClaimLedger
     /// <param name="cancellationToken">A token to cancel the write.</param>
     /// <returns>A task that completes when the appended ledger is persisted.</returns>
     public static async Task AppendAsync(
-        IWorkspaceIndexStore store, string sessionId, string root, IReadOnlyList<Claim> newClaims, CancellationToken cancellationToken)
+        IWorkspaceIndexVerificationSessionStore store,
+        string sessionId,
+        string root,
+        IReadOnlyList<Claim> newClaims,
+        CancellationToken cancellationToken)
     {
         if (newClaims.Count == 0)
             return;
@@ -175,7 +183,7 @@ public static class SessionClaimLedger
     /// <param name="cancellationToken">A token to cancel the read.</param>
     /// <returns>The persisted claims, or empty when the session has none.</returns>
     public static async Task<IReadOnlyList<Claim>> LoadAsync(
-        IWorkspaceIndexStore store, string sessionId, CancellationToken cancellationToken)
+        IWorkspaceIndexVerificationSessionStore store, string sessionId, CancellationToken cancellationToken)
     {
         var record = await store.GetClaimLedgerAsync(sessionId, cancellationToken);
         if (record is null)

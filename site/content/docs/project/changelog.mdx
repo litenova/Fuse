@@ -13,11 +13,14 @@ The repository CHANGELOG.md file documents every notable change by version, incl
 
 ## Most Recent Notable Changes
 
+**4.4.0** (2026-07-30): Indexing becomes a repository-owned job with progress, cancellation, and storage reporting, and it starts at the syntax tier; `fuse index --semantic` is the explicit request for compiler analysis. `fuse index status`, `fuse index cancel`, and `fuse index clean` expose that lifecycle, and `fuse mcp doctor` reports the running binary, client registration, daemon protocol, and active job. Inventory now reads Git blob ids, generated files keep declarations without bodies, and completed jobs truncate the write-ahead log. The reduction cache moves into bounded process memory, so Fuse no longer creates `fuse-cache.db`. Existing indexes rebuild for the new extraction contract.
+
 **4.3.0** (2026-07-16): Workspace-scoped MCP operations now resolve to the nearest Git repository root, refuse folders outside a repository, and validate warm indexes against a complete inventory before serving reads. The release also separates Fuse executable installation from MCP registration, generated agent guidance, and Claude Code hooks.
 
 **4.2.1** (2026-07-16): `fuse mcp install` adds native project and user configuration for OpenCode, Kilo Code, Codex, and Grok Build, bringing the supported client set to seven. `--rules` now installs task-specific guidance from the same source as the MCP server instructions, writes rules only after successful registration, and describes the boundaries of checks, refactors, focused tests, and reviews. The README and documentation site now lead with persistent .NET discovery and compiler verification, with a new supporting article and refreshed social cards.
 
 **4.2.0** (2026-07-14): MCP serving defaults to one shared daemon per repository with eager warm-on-start indexing, live incremental updates, and a bounded syntax-first cold path. Repeated compiler operations can reuse a held Roslyn solution or pooled build-capture worker. The release also adds the semantic-language provider seam, focused index-store components, one shared scoping model, a unified API-surface reference, and explicit degraded-state reporting. Existing indexes rebuild when the new extraction contract requires it; older capture bundles must be re-captured.
+
 **4.1.0** (2026-07-14): Derived KV cache moves to `.fuse/fuse-cache.db` so corruption recovery cannot wipe the semantic index; FTS unavailability is surfaced and `fuse_find kind=task` refuses honestly; host RPC binds to the served root; MCP file paths are workspace-confined; opt-in metrics via `FUSE_METRICS=1`; performance docs aligned to recorded benchmark JSON; brand icon on NuGet, MCP Registry, WinGet, and the site; centered landing hero and shared site footer.
 
 **4.0.1** (2026-07-13): `fuse mcp install --rules` adds `.fuse/` to `.gitignore` at project scope; docs cover any MCP-compatible client and clarify that indexing happens on the first MCP read; consumer copy and the landing hero are retuned for a technical audience; diagram rendering on the site is fixed.
@@ -28,7 +31,7 @@ The MCP server exposes a loop-shaped surface of eight tools (`fuse_workspace`, `
 
 The persistent index is a single SQLite database at `.fuse/fuse.db` (WAL mode), built through MSBuild and Roslyn with a syntax-only fallback and re-indexed incrementally per changed file. See [Store internals](/docs/internals/caching-internals) and [Operator guide](/docs/internals/operator).
 
-The benchmark suites are run by a C# eval driver (`fuse eval semantics|review|localize|ranking|checkgate|loop|agent|reduce|performance`); the numbers and figure are regenerated from `tests/benchmarks/results`. See [Benchmarks](/docs/project/benchmarks).
+The benchmark source is isolated in `Fuse.Benchmarks.slnx`; the recorded numbers and figure live under `tests/benchmarks/results`. The packaged Fuse 4.4 tool does not include an evaluation command. See [Benchmarks](/docs/project/benchmarks).
 
 Fuse ships under the Apache License, Version 2.0. The `Fuse` .NET global tool is framework-dependent and requires a compatible .NET runtime. Runtime-specific release archives and installer downloads are self-contained and bundle the runtime. Install paths are documented under [Install](/docs/start/install).
 

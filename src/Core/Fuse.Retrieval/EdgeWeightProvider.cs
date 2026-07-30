@@ -7,7 +7,7 @@ namespace Fuse.Retrieval;
 /// <remarks>
 ///     Weights follow the retrieval design: route and MediatR handling and DI resolution are near-certain
 ///     (1.00 to 0.95), structural relationships are strong (0.90 to 0.75), and weak proximity signals are low
-///     (co-change 0.45 down to bare references 0.15). Unknown edge types fall back to a low default so a new
+///     (project references 0.30 down to bare references 0.15). Unknown edge types fall back to a low default so a new
 ///     edge cannot dominate before it is tuned.
 /// </remarks>
 public sealed class EdgeWeightProvider
@@ -31,7 +31,6 @@ public sealed class EdgeWeightProvider
         // "tests" edges (a test type to the symbols it covers, DI-resolved) are produced by TestEdgeExtractor
         // (R5 part 2); the weight drives the test-impact traversal M1 uses to select covering tests.
         ["tests"] = 0.65,
-        ["cochanges"] = 0.45,
         ["project_references"] = 0.30,
         ["path_proximity"] = 0.20,
         // "references" is produced by ReferenceEdgeAnalyzer (R5): a type-level use edge, the weakest structural

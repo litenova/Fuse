@@ -50,5 +50,5 @@ orient a reader or an agent before any deeper drill-in.
 
 Run `fuse diagnostics ./src`, then `fuse map ./src --detail all`. If the map names the
 route, service, request, or config section you need, resolve it directly. Otherwise run
-`fuse localize ./src --task "<your task>"` and use the strongest candidate as the next
+`fuse find "<your task>" --kind task --path ./src` and use the strongest candidate as the next
 context seed.

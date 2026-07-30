@@ -1,5 +1,6 @@
 using Fuse.Cli.Extensions;
 using Fuse.Cli.Mcp;
+using Fuse.Cli.Services;
 using Fuse.Indexing;
 using Fuse.Reduction.Caching;
 using Fuse.Semantics;
@@ -12,14 +13,16 @@ public sealed class WorkspaceIdentityMcpTests : IDisposable
 {
     private readonly ServiceProvider _services = new ServiceCollection().AddFuseForTests().BuildServiceProvider();
     private readonly List<string> _roots = [];
+    private IndexJobClient Jobs => new(_services.GetRequiredService<IWorkspaceIndexJobManager>(), daemonEnabled: false);
 
     [Fact]
     public async Task IndexedToolRefusesFolderWithoutRepositoryIdentity()
     {
         var root = CreateTempDirectory(markAsRepository: false);
 
-        var result = await FuseTools.FuseWorkspaceAsync(
+        var result = await WorkspaceToolOperations.ExecuteAsync(
             _services.GetRequiredService<SemanticIndexer>(),
+            Jobs,
             action: "status",
             path: root);
 
@@ -33,7 +36,7 @@ public sealed class WorkspaceIdentityMcpTests : IDisposable
     {
         var root = CreateTempDirectory(markAsRepository: false);
 
-        var result = await FuseTools.FuseImpactAsync(
+        var result = await ImpactToolOperations.ExecuteAsync(
             _services.GetRequiredService<SemanticIndexer>(),
             path: root,
             package: "Example.Package",
@@ -63,23 +66,26 @@ public sealed class WorkspaceIdentityMcpTests : IDisposable
             await seed.SetMetaAsync("index_mode", "syntax", CancellationToken.None);
         }
 
-        var previousBackgroundSetting = FuseTools.BackgroundSemanticUpgradeEnabled;
-        FuseTools.BackgroundSemanticUpgradeEnabled = false;
-        try
-        {
-            var result = await FuseTools.FuseWorkspaceAsync(
-                _services.GetRequiredService<SemanticIndexer>(),
-                action: "status",
-                path: nested);
+        var started = await WorkspaceToolOperations.ExecuteAsync(
+            _services.GetRequiredService<SemanticIndexer>(),
+            Jobs,
+            action: "index",
+            path: nested);
+        Assert.Contains("index job:", started, StringComparison.Ordinal);
 
-            Assert.Contains($"workspace: {root}", result, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("files indexed: 2", result, StringComparison.Ordinal);
-            Assert.Contains("index_state: ready", result, StringComparison.Ordinal);
-        }
-        finally
-        {
-            FuseTools.BackgroundSemanticUpgradeEnabled = previousBackgroundSetting;
-        }
+        var completed = await _services.GetRequiredService<IWorkspaceIndexJobManager>()
+            .WaitForCompletionAsync(root, CancellationToken.None);
+        Assert.NotNull(completed);
+        Assert.Equal(IndexJobState.Completed, completed!.State);
+
+        var result = await WorkspaceToolOperations.ExecuteAsync(
+            _services.GetRequiredService<SemanticIndexer>(),
+            Jobs,
+            action: "status",
+            path: nested);
+        Assert.Contains($"workspace: {root}", result, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("files indexed: 2", result, StringComparison.Ordinal);
+        Assert.Contains("index_state: ready", result, StringComparison.Ordinal);
 
         await using var store = new WorkspaceIndexStore(FuseStorePaths.ResolveDatabasePath(root));
         Assert.Equal(WorkspaceIndexReadOpenStatus.Ready, await store.OpenForReadAsync(CancellationToken.None));
@@ -94,7 +100,7 @@ public sealed class WorkspaceIdentityMcpTests : IDisposable
         var root = CreateTempDirectory(markAsRepository: true);
         await File.WriteAllTextAsync(Path.Combine(root, "OrderService.cs"), "public class OrderService { }");
 
-        var result = await FuseTools.FuseTestAsync(
+        var result = await TestToolOperations.ExecuteAsync(
             _services.GetRequiredService<SemanticIndexer>(),
             symbol: "OrderService",
             path: root);
