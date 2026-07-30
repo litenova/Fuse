@@ -1,14 +1,14 @@
 namespace Fuse.Indexing;
 
 /// <summary>
-///     The outcome of a read-only warm open (<see cref="IWorkspaceIndexStore.OpenForReadAsync" />).
+///     The outcome of a read-only warm open (<see cref="IWorkspaceIndexLifecycleStore.OpenForReadAsync" />).
 /// </summary>
 public enum WorkspaceIndexReadOpenStatus
 {
     /// <summary>The database exists, schema matches, and the store is ready for reads.</summary>
     Ready,
 
-    /// <summary>The database file does not exist yet; call <see cref="IWorkspaceIndexStore.InitializeAsync" />.</summary>
+    /// <summary>The database file does not exist yet; call <see cref="IWorkspaceIndexLifecycleStore.InitializeAsync" />.</summary>
     DatabaseMissing,
 
     /// <summary>The on-disk schema version is below the target; write initialization is required.</summary>

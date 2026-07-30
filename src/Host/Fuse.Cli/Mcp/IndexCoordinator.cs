@@ -11,7 +11,7 @@ namespace Fuse.Cli.Mcp;
 
 /// <summary>
 ///     Serializes index writes per workspace root (one in-process writer queue) and arbitrates cross-process
-///     contention with a named mutex (R14). Warm foreground reads use <see cref="IWorkspaceIndexStore.OpenForReadAsync" />
+///     contention with a named mutex (R14). Warm foreground reads use <see cref="IWorkspaceIndexLifecycleStore.OpenForReadAsync" />
 ///     without acquiring the writer lock; write initialization, indexing, and chunked upgrades run under the lock.
 /// </summary>
 public sealed class IndexCoordinator

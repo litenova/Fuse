@@ -1,7 +1,7 @@
 namespace Fuse.Indexing;
 
 /// <summary>
-///     The result of <see cref="IWorkspaceIndexStore.InitializeAsync" />, reporting whether the store was
+///     The result of <see cref="IWorkspaceIndexLifecycleStore.InitializeAsync" />, reporting whether the store was
 ///     rebuilt empty and must be re-indexed from source before serving reads.
 /// </summary>
 /// <param name="RebuiltEmptyStore">

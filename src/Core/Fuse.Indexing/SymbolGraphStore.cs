@@ -28,7 +28,7 @@ internal sealed class SymbolGraphStore
         _fts = fts;
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.UpsertFilesAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexWriteStore.UpsertFilesAsync" />
     public async Task UpsertFilesAsync(IReadOnlyList<IndexedFileRecord> files, CancellationToken cancellationToken)
     {
         if (files.Count == 0)
@@ -84,7 +84,7 @@ internal sealed class SymbolGraphStore
         await transaction.CommitAsync(cancellationToken);
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.UpsertProjectsAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexWriteStore.UpsertProjectsAsync" />
     public async Task UpsertProjectsAsync(IReadOnlyList<ProjectRecord> projects, CancellationToken cancellationToken)
     {
         if (projects.Count == 0)
@@ -124,7 +124,7 @@ internal sealed class SymbolGraphStore
         await transaction.CommitAsync(cancellationToken);
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.ReplaceTfmAvailabilityAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexWriteStore.ReplaceTfmAvailabilityAsync" />
     public async Task ReplaceTfmAvailabilityAsync(
         IReadOnlyList<TfmAvailabilityRecord> availability,
         CancellationToken cancellationToken)
@@ -163,7 +163,7 @@ internal sealed class SymbolGraphStore
         await transaction.CommitAsync(cancellationToken);
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.GetTfmAvailabilityAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexQueryStore.GetTfmAvailabilityAsync" />
     public async Task<IReadOnlyList<TfmAvailabilityRecord>> GetTfmAvailabilityAsync(CancellationToken cancellationToken)
     {
         var result = new List<TfmAvailabilityRecord>();
@@ -186,7 +186,7 @@ internal sealed class SymbolGraphStore
         return result;
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.UpsertNodesAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexGraphStore.UpsertNodesAsync" />
     public async Task UpsertNodesAsync(IReadOnlyList<NodeRecord> nodes, CancellationToken cancellationToken)
     {
         if (nodes.Count == 0)
@@ -235,7 +235,7 @@ internal sealed class SymbolGraphStore
         await transaction.CommitAsync(cancellationToken);
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.UpsertSymbolsAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexWriteStore.UpsertSymbolsAsync" />
     public async Task UpsertSymbolsAsync(IReadOnlyList<SymbolRecord> symbols, CancellationToken cancellationToken)
     {
         if (symbols.Count == 0)
@@ -298,7 +298,7 @@ internal sealed class SymbolGraphStore
         await transaction.CommitAsync(cancellationToken);
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.UpsertChunksAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexWriteStore.UpsertChunksAsync" />
     public async Task UpsertChunksAsync(IReadOnlyList<ChunkRecord> chunks, CancellationToken cancellationToken)
     {
         if (chunks.Count == 0)
@@ -372,7 +372,7 @@ internal sealed class SymbolGraphStore
         await transaction.CommitAsync(cancellationToken);
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.UpsertEdgesAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexGraphStore.UpsertEdgesAsync" />
     public async Task UpsertEdgesAsync(IReadOnlyList<SemanticEdgeRecord> edges, CancellationToken cancellationToken)
     {
         if (edges.Count == 0)
@@ -422,7 +422,7 @@ internal sealed class SymbolGraphStore
         await transaction.CommitAsync(cancellationToken);
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.UpsertRoutesAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexGraphStore.UpsertRoutesAsync" />
     public async Task UpsertRoutesAsync(IReadOnlyList<RouteRecord> routes, CancellationToken cancellationToken)
     {
         if (routes.Count == 0)
@@ -470,7 +470,7 @@ internal sealed class SymbolGraphStore
         await transaction.CommitAsync(cancellationToken);
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.UpsertDiRegistrationsAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexGraphStore.UpsertDiRegistrationsAsync" />
     public async Task UpsertDiRegistrationsAsync(IReadOnlyList<DiRegistrationRecord> registrations, CancellationToken cancellationToken)
     {
         if (registrations.Count == 0)
@@ -526,7 +526,7 @@ internal sealed class SymbolGraphStore
         await transaction.CommitAsync(cancellationToken);
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.UpsertOptionsBindingsAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexGraphStore.UpsertOptionsBindingsAsync" />
     public async Task UpsertOptionsBindingsAsync(IReadOnlyList<OptionsBindingRecord> bindings, CancellationToken cancellationToken)
     {
         if (bindings.Count == 0)
@@ -576,11 +576,11 @@ internal sealed class SymbolGraphStore
         await transaction.CommitAsync(cancellationToken);
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.DeleteFileDataAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexWriteStore.DeleteFileDataAsync" />
     public Task DeleteFileDataAsync(string normalizedPath, CancellationToken cancellationToken) =>
         DeleteFileCoreAsync(normalizedPath, removeFileRecord: false, cancellationToken);
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.DeleteFileAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexWriteStore.DeleteFileAsync" />
     public Task DeleteFileAsync(string normalizedPath, CancellationToken cancellationToken) =>
         DeleteFileCoreAsync(normalizedPath, removeFileRecord: true, cancellationToken);
 
@@ -632,7 +632,7 @@ internal sealed class SymbolGraphStore
         await transaction.CommitAsync(cancellationToken);
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.ClearFileDataAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexWriteStore.ClearFileDataAsync" />
     public async Task ClearFileDataAsync(
         IReadOnlyCollection<string> normalizedPaths,
         CancellationToken cancellationToken)
@@ -697,7 +697,7 @@ internal sealed class SymbolGraphStore
         await transaction.CommitAsync(cancellationToken);
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.PruneFilesAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexWriteStore.PruneFilesAsync" />
     public async Task<int> PruneFilesAsync(
         IReadOnlyCollection<string> normalizedPaths,
         CancellationToken cancellationToken)
@@ -796,7 +796,7 @@ internal sealed class SymbolGraphStore
         }
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.ListSymbolsAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexQueryStore.ListSymbolsAsync" />
     public async Task<IReadOnlyList<SymbolListItem>> ListSymbolsAsync(int limit, CancellationToken cancellationToken)
     {
         await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
@@ -828,7 +828,7 @@ internal sealed class SymbolGraphStore
         return items;
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.FindSymbolsByNameAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexQueryStore.FindSymbolsByNameAsync" />
     public async Task<IReadOnlyList<SymbolListItem>> FindSymbolsByNameAsync(string nameFragment, int limit, CancellationToken cancellationToken)
     {
         await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
@@ -862,7 +862,7 @@ internal sealed class SymbolGraphStore
         return items;
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.GetSignaturesByNamesAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexQueryStore.GetSignaturesByNamesAsync" />
     public async Task<IReadOnlyList<SymbolSignature>> GetSignaturesByNamesAsync(
         IReadOnlyCollection<string> names, int limitPerName, CancellationToken cancellationToken)
     {
@@ -910,7 +910,7 @@ internal sealed class SymbolGraphStore
         return results;
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.GetMembersOfTypeAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexQueryStore.GetMembersOfTypeAsync" />
     public async Task<IReadOnlyList<SymbolSignature>> GetMembersOfTypeAsync(
         string typeName, int limit, CancellationToken cancellationToken)
     {
@@ -957,7 +957,7 @@ internal sealed class SymbolGraphStore
         return results;
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.ListRoutesAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexQueryStore.ListRoutesAsync" />
     public async Task<IReadOnlyList<RouteListItem>> ListRoutesAsync(int limit, CancellationToken cancellationToken)
     {
         await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
@@ -986,7 +986,7 @@ internal sealed class SymbolGraphStore
         return items;
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.GetNodeAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexGraphStore.GetNodeAsync" />
     public async Task<NodeRecord?> GetNodeAsync(string nodeId, CancellationToken cancellationToken)
     {
         await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
@@ -997,7 +997,7 @@ internal sealed class SymbolGraphStore
         return await reader.ReadAsync(cancellationToken) ? ReadNode(reader) : null;
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.FindNodesByDisplayNameAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexGraphStore.FindNodesByDisplayNameAsync" />
     public async Task<IReadOnlyList<NodeRecord>> FindNodesByDisplayNameAsync(string displayName, CancellationToken cancellationToken)
     {
         await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
@@ -1007,7 +1007,7 @@ internal sealed class SymbolGraphStore
         return await ReadNodesAsync(command, cancellationToken);
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.GetNodesByFileAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexGraphStore.GetNodesByFileAsync" />
     public async Task<IReadOnlyList<NodeRecord>> GetNodesByFileAsync(string normalizedPath, CancellationToken cancellationToken)
     {
         await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
@@ -1017,7 +1017,7 @@ internal sealed class SymbolGraphStore
         return await ReadNodesAsync(command, cancellationToken);
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.GetAllEdgesAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexGraphStore.GetAllEdgesAsync" />
     public async Task<IReadOnlyList<SemanticEdgeRecord>> GetAllEdgesAsync(CancellationToken cancellationToken)
     {
         await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
@@ -1047,15 +1047,15 @@ internal sealed class SymbolGraphStore
         return edges;
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.GetOutgoingEdgesAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexGraphStore.GetOutgoingEdgesAsync" />
     public Task<IReadOnlyList<SemanticEdgeRecord>> GetOutgoingEdgesAsync(string nodeId, CancellationToken cancellationToken) =>
         GetEdgesAsync("from_node_id", nodeId, cancellationToken);
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.GetIncomingEdgesAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexGraphStore.GetIncomingEdgesAsync" />
     public Task<IReadOnlyList<SemanticEdgeRecord>> GetIncomingEdgesAsync(string nodeId, CancellationToken cancellationToken) =>
         GetEdgesAsync("to_node_id", nodeId, cancellationToken);
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.FindFilesByPathAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexQueryStore.FindFilesByPathAsync" />
     public async Task<IReadOnlyList<FileListItem>> FindFilesByPathAsync(string fragment, int limit, CancellationToken cancellationToken)
     {
         await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
@@ -1081,7 +1081,7 @@ internal sealed class SymbolGraphStore
         return files;
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.GetFileTokenEstimateAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexQueryStore.GetFileTokenEstimateAsync" />
     public async Task<int> GetFileTokenEstimateAsync(string normalizedPath, CancellationToken cancellationToken)
     {
         await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
@@ -1094,7 +1094,7 @@ internal sealed class SymbolGraphStore
         return result is long value ? (int)value : 0;
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.GetFileTokenEstimatesAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexQueryStore.GetFileTokenEstimatesAsync" />
     public async Task<IReadOnlyDictionary<string, int>> GetFileTokenEstimatesAsync(CancellationToken cancellationToken)
     {
         await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
@@ -1110,7 +1110,7 @@ internal sealed class SymbolGraphStore
         return estimates;
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.GetContentHashesAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexQueryStore.GetContentHashesAsync" />
     public async Task<IReadOnlyDictionary<string, string>> GetContentHashesAsync(
         IReadOnlyCollection<string> normalizedPaths, CancellationToken cancellationToken)
     {
@@ -1137,7 +1137,7 @@ internal sealed class SymbolGraphStore
         return result;
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.GetAllFileHashesAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexQueryStore.GetAllFileHashesAsync" />
     public async Task<IReadOnlyDictionary<string, string>> GetAllFileHashesAsync(CancellationToken cancellationToken)
     {
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -1151,7 +1151,7 @@ internal sealed class SymbolGraphStore
         return result;
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.GetFilesByLanguageAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexQueryStore.GetFilesByLanguageAsync" />
     public async Task<IReadOnlyList<string>> GetFilesByLanguageAsync(string language, CancellationToken cancellationToken)
     {
         await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
@@ -1166,7 +1166,7 @@ internal sealed class SymbolGraphStore
         return paths;
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.GetRouteCountAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexQueryStore.GetRouteCountAsync" />
     public async Task<int> GetRouteCountAsync(CancellationToken cancellationToken)
     {
         await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
@@ -1176,7 +1176,7 @@ internal sealed class SymbolGraphStore
         return result is long value ? (int)value : 0;
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.GetLanguageCountsAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexQueryStore.GetLanguageCountsAsync" />
     public async Task<IReadOnlyList<LanguageCount>> GetLanguageCountsAsync(CancellationToken cancellationToken)
     {
         await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
@@ -1191,7 +1191,7 @@ internal sealed class SymbolGraphStore
         return counts;
     }
 
-    /// <inheritdoc cref="IWorkspaceIndexStore.GetFileDependencyEdgesAsync" />
+    /// <inheritdoc cref="IWorkspaceIndexGraphStore.GetFileDependencyEdgesAsync" />
     public async Task<IReadOnlyList<FileDependencyEdge>> GetFileDependencyEdgesAsync(CancellationToken cancellationToken)
     {
         await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
