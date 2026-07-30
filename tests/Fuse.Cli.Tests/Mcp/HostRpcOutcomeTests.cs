@@ -52,13 +52,61 @@ public sealed class HostRpcOutcomeTests : IDisposable
                     Path.Combine(root, $"T{i}.cs"),
                     $"namespace Storm; public class Type{i} {{ public void M() {{ }} }}");
 
+            var coordinator = _provider.GetRequiredService<IndexCoordinator>();
+            var runtime = new FuseMcpRuntime(
+                new LocalIndexAccessProvider(
+                    coordinator,
+                    _provider.GetRequiredService<IWorkspaceIndexJobManager>(),
+                    TimeSpan.FromSeconds(30)),
+                NullResidentWorkspaceProvider.Instance,
+                coordinator,
+                _provider.GetRequiredService<IWorkspaceIndexJobManager>(),
+                _provider.GetRequiredService<WarmSolutionCache>(),
+                _provider.GetRequiredService<PooledCheckWorker>(),
+                _provider.GetRequiredService<IProcessRunner>());
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             var output = await FuseTools.FuseImpactAsync(
-                indexer, symbol: "Type0", path: root, cancellationToken: CancellationToken.None);
+                indexer, symbol: "Type0", path: root, cancellationToken: timeout.Token, runtime: runtime);
 
             Assert.StartsWith("index_state: ready", output);
             Assert.Contains($"files_indexed: {StormFileCount}", output);
             Assert.Contains("up to date", output);
             Assert.DoesNotContain("results may lag the working tree", output);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
+    public async Task Impact_returns_the_building_header_when_the_index_read_is_deferred()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "fuse-impact-deferred", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        root.AsIsolatedRepo();
+
+        try
+        {
+            var coordinator = _provider.GetRequiredService<IndexCoordinator>();
+            var runtime = new FuseMcpRuntime(
+                new DeferredIndexAccessProvider(root),
+                NullResidentWorkspaceProvider.Instance,
+                coordinator,
+                _provider.GetRequiredService<IWorkspaceIndexJobManager>(),
+                _provider.GetRequiredService<WarmSolutionCache>(),
+                _provider.GetRequiredService<PooledCheckWorker>(),
+                _provider.GetRequiredService<IProcessRunner>());
+
+            var output = await FuseTools.FuseImpactAsync(
+                _provider.GetRequiredService<SemanticIndexer>(),
+                symbol: "Widget",
+                path: root,
+                cancellationToken: CancellationToken.None,
+                runtime: runtime);
+
+            Assert.StartsWith("index_state: building_syntax", output);
+            Assert.DoesNotContain(FuseOperationalErrors.InternalErrorPrefix, output);
         }
         finally
         {
@@ -210,6 +258,21 @@ public sealed class HostRpcOutcomeTests : IDisposable
             string queried, string relativeFilePath, string newContent, bool includeAnalyzers, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<CheckDiagnostic>?>(
                 string.Equals(queried, Path.GetFullPath(root), StringComparison.OrdinalIgnoreCase) ? diagnostics : null);
+    }
+
+    private sealed class DeferredIndexAccessProvider(string root) : IIndexAccessProvider
+    {
+        public Task<IndexJobStartResult> StartSyntaxAsync(
+            SemanticIndexer indexer, string path, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<WorkspaceIndexStore> OpenIndexedAsync(
+            SemanticIndexer indexer, string path, CancellationToken cancellationToken) =>
+            throw new ColdStartInProgressException(root);
+
+        public Task<SemanticIndexResult> IndexAsync(
+            SemanticIndexer indexer, string path, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     public void Dispose()

@@ -29,6 +29,8 @@ public sealed class FuseFindSignaturesResidentTests : IDisposable
         var work = Path.Combine(Path.GetTempPath(), "fuse-find-sig-resident-it", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(work);
         Directory.CreateDirectory(Path.Combine(work, ".git"));
+        var coordinator = new IndexCoordinator();
+        var jobs = new WorkspaceIndexJobManager(new SemanticIndexJobExecutor(coordinator, indexer));
         try
         {
             // A minimal source file so the store index builds; the resident answer supersedes it for the query.
@@ -36,12 +38,19 @@ public sealed class FuseFindSignaturesResidentTests : IDisposable
                 "namespace Sample; public sealed class Widget { public int Spin() => 42; }");
 
             var root = Path.GetFullPath(work);
-            var runtime = FuseMcpRuntime.CreateIsolated(indexer, new StubSignatureProvider(root,
-            [
-                new ResidentSignature(
-                    "public static string Serialize<TValue>(TValue value)", "Method",
-                    "System.Text.Json.JsonSerializer", "System.Text.Json"),
-            ]));
+            var runtime = new FuseMcpRuntime(
+                new LocalIndexAccessProvider(coordinator, jobs),
+                new StubSignatureProvider(root,
+                [
+                    new ResidentSignature(
+                        "public static string Serialize<TValue>(TValue value)", "Method",
+                        "System.Text.Json.JsonSerializer", "System.Text.Json"),
+                ]),
+                coordinator,
+                jobs,
+                new WarmSolutionCache(),
+                new PooledCheckWorker(),
+                new OwnedProcessRunner());
 
             var output = await FuseTools.FuseFindAsync(
                 indexer, changeSource, "System.Text.Json.JsonSerializer.Serialize", work, kind: "signatures",
@@ -53,6 +62,55 @@ public sealed class FuseFindSignaturesResidentTests : IDisposable
         }
         finally
         {
+            await jobs.DisposeAsync();
+            try { Directory.Delete(work, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
+    public async Task Resident_signatures_are_returned_while_the_syntax_index_is_building()
+    {
+        var indexer = _provider.GetRequiredService<SemanticIndexer>();
+        var changeSource = _provider.GetRequiredService<IChangeSource>();
+        var work = Path.Combine(Path.GetTempPath(), "fuse-find-sig-resident-deferred", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(work);
+        Directory.CreateDirectory(Path.Combine(work, ".git"));
+        var root = Path.GetFullPath(work);
+        var coordinator = new IndexCoordinator();
+        var jobs = new WorkspaceIndexJobManager(new SemanticIndexJobExecutor(coordinator, indexer));
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(work, "Widget.cs"),
+                "namespace Sample; public sealed class Widget { public int Spin() => 42; }");
+
+            var runtime = new FuseMcpRuntime(
+                new DeferredIndexAccessProvider(root, jobs),
+                new StubSignatureProvider(root,
+                [
+                    new ResidentSignature(
+                        "public static string Serialize<TValue>(TValue value)", "Method",
+                        "System.Text.Json.JsonSerializer", "System.Text.Json"),
+                ]),
+                coordinator,
+                jobs,
+                new WarmSolutionCache(),
+                new PooledCheckWorker(),
+                new OwnedProcessRunner());
+
+            var output = await FuseTools.FuseFindAsync(
+                indexer,
+                changeSource,
+                "System.Text.Json.JsonSerializer.Serialize",
+                work,
+                kind: "signatures",
+                cancellationToken: CancellationToken.None,
+                runtime: runtime);
+
+            Assert.Contains("Serialize<TValue>", output);
+        }
+        finally
+        {
+            await jobs.DisposeAsync();
             try { Directory.Delete(work, recursive: true); } catch (IOException) { }
         }
     }
@@ -65,19 +123,38 @@ public sealed class FuseFindSignaturesResidentTests : IDisposable
         var work = Path.Combine(Path.GetTempPath(), "fuse-find-sig-resident-it", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(work);
         Directory.CreateDirectory(Path.Combine(work, ".git"));
+        var coordinator = new IndexCoordinator();
+        var jobs = new WorkspaceIndexJobManager(new SemanticIndexJobExecutor(coordinator, indexer));
         try
         {
             await File.WriteAllTextAsync(Path.Combine(work, "Widget.cs"),
                 "namespace Sample; public sealed class Widget { public int Spin() => 42; }");
 
+            // The assertion targets store fallback, not the MCP cold-read deadline. A bounded longer wait keeps
+            // the test independent from unrelated full-suite CPU pressure.
+            var runtime = new FuseMcpRuntime(
+                new LocalIndexAccessProvider(coordinator, jobs, TimeSpan.FromSeconds(30)),
+                NullResidentWorkspaceProvider.Instance,
+                coordinator,
+                jobs,
+                new WarmSolutionCache(),
+                new PooledCheckWorker(),
+                new OwnedProcessRunner());
             var output = await FuseTools.FuseFindAsync(
-                indexer, changeSource, "Widget", work, kind: "signatures", cancellationToken: CancellationToken.None);
+                indexer,
+                changeSource,
+                "Widget",
+                work,
+                kind: "signatures",
+                cancellationToken: CancellationToken.None,
+                runtime: runtime);
 
             Assert.Contains("Widget", output);
             Assert.DoesNotContain("resident (metadata:", output);
         }
         finally
         {
+            await jobs.DisposeAsync();
             try { Directory.Delete(work, recursive: true); } catch (IOException) { }
         }
     }
@@ -94,5 +171,22 @@ public sealed class FuseFindSignaturesResidentTests : IDisposable
         public IReadOnlyList<ResidentSignature>? TryGetSignature(
             string queried, string symbolName, int limitPerName, CancellationToken cancellationToken) =>
             string.Equals(queried, root, StringComparison.OrdinalIgnoreCase) ? signatures : null;
+    }
+
+    private sealed class DeferredIndexAccessProvider(string root, IWorkspaceIndexJobManager jobs) : IIndexAccessProvider
+    {
+        public Task<IndexJobStartResult> StartSyntaxAsync(
+            SemanticIndexer indexer, string path, CancellationToken cancellationToken) =>
+            jobs.StartOrJoinAsync(
+                new IndexJobRequest(root, IndexDepth.Syntax, Force: false, CaptureBundlePath: null),
+                cancellationToken);
+
+        public Task<WorkspaceIndexStore> OpenIndexedAsync(
+            SemanticIndexer indexer, string path, CancellationToken cancellationToken) =>
+            throw new ColdStartInProgressException(root);
+
+        public Task<SemanticIndexResult> IndexAsync(
+            SemanticIndexer indexer, string path, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 }

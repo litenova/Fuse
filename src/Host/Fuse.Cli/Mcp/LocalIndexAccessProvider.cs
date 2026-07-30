@@ -20,16 +20,19 @@ public sealed class LocalIndexAccessProvider : IIndexAccessProvider
     /// <param name="coordinator">The process-owned store coordinator used only to open the committed store.</param>
     /// <param name="jobs">The process-owned repository job manager.</param>
     /// <param name="coldReadDeadline">
-    ///     An optional local-read deadline. Production uses <see cref="ColdReadDeadline" />; tests can supply a
-    ///     longer bounded wait when they need to assert the completed fallback rather than the normal cold-read
-    ///     deferral contract.
+    ///     An optional local-read deadline. Production MCP reads use <see cref="ColdReadDeadline" />; tests can
+    ///     supply a longer bounded wait when they need to assert the completed fallback. Pass
+    ///     <see cref="Timeout.InfiniteTimeSpan" /> for a daemon-owned RPC read, which waits until syntax is
+    ///     committed or the host lifetime is cancelled.
     /// </param>
     public LocalIndexAccessProvider(
         IndexCoordinator coordinator,
         IWorkspaceIndexJobManager jobs,
         TimeSpan? coldReadDeadline = null)
     {
-        if (coldReadDeadline is { } deadline && deadline <= TimeSpan.Zero)
+        if (coldReadDeadline is { } deadline
+            && deadline != Timeout.InfiniteTimeSpan
+            && deadline <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(coldReadDeadline), "The cold-read deadline must be positive.");
 
         _coordinator = coordinator;
@@ -38,21 +41,28 @@ public sealed class LocalIndexAccessProvider : IIndexAccessProvider
     }
 
     /// <inheritdoc />
+    public Task<IndexJobStartResult> StartSyntaxAsync(
+        SemanticIndexer indexer, string path, CancellationToken cancellationToken)
+    {
+        var root = WorkspacePathResolver.ResolveRepositoryRoot(path);
+        return _jobs.StartOrJoinAsync(
+            new IndexJobRequest(root, IndexDepth.Syntax, Force: false, CaptureBundlePath: null),
+            cancellationToken);
+    }
+
+    /// <inheritdoc />
     public async Task<WorkspaceIndexStore> OpenIndexedAsync(
         SemanticIndexer indexer, string path, CancellationToken cancellationToken)
     {
         var root = WorkspacePathResolver.ResolveRepositoryRoot(path);
-        var started = await _jobs.StartOrJoinAsync(
-            new IndexJobRequest(root, IndexDepth.Syntax, Force: false, CaptureBundlePath: null),
-            cancellationToken);
+        var started = await StartSyntaxAsync(indexer, root, cancellationToken);
         if (started.Conflict)
             throw new IndexBusyException();
 
         var syntaxReady = _jobs.WaitForSyntaxReadyAsync(root, cancellationToken);
-        var deadline = Task.Delay(
-            _coldReadDeadline ?? TimeSpan.FromMilliseconds(ColdReadDeadline.DeadlineMilliseconds()),
-            cancellationToken);
-        if (await Task.WhenAny(syntaxReady, deadline) != syntaxReady)
+        var deadline = _coldReadDeadline ?? TimeSpan.FromMilliseconds(ColdReadDeadline.DeadlineMilliseconds());
+        if (deadline != Timeout.InfiniteTimeSpan
+            && await Task.WhenAny(syntaxReady, Task.Delay(deadline, cancellationToken)) != syntaxReady)
         {
             cancellationToken.ThrowIfCancellationRequested();
             throw new ColdStartInProgressException(root);

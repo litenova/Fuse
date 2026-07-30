@@ -505,6 +505,37 @@ public sealed class FuseHostServiceRpcTests : IDisposable
     }
 
     [Fact]
+    public async Task Graph_waits_for_the_daemon_owned_syntax_job_beyond_the_mcp_read_deadline()
+    {
+        var source = NewFixture(("Widget.cs", "public class Widget { public int Value() => 1; }"));
+        var coordinator = _provider.GetRequiredService<IndexCoordinator>();
+        var jobs = new WorkspaceIndexJobManager(
+            new DelayedIndexExecutor(
+                new SemanticIndexJobExecutor(coordinator, _provider.GetRequiredService<SemanticIndexer>())));
+        var context = new FuseHostRequestContext(
+            _provider.GetRequiredService<SemanticIndexer>(),
+            _provider.GetRequiredService<IChangeSource>(),
+            _provider.GetRequiredService<ContentReductionPipeline>(),
+            _provider.GetRequiredService<ISecretRedactor>(),
+            _provider.GetRequiredService<IGeneratedCodeDetector>(),
+            coordinator,
+            jobs);
+
+        try
+        {
+            using var service = new FuseHostService(context, NullLogger<FuseHostService>.Instance);
+            var graph = await service.GraphAsync(SessionToken(service), source, "Files");
+
+            Assert.Contains(graph.Nodes, node => node.Path == "Widget.cs");
+        }
+        finally
+        {
+            await jobs.DisposeAsync();
+            CleanupFixture(source);
+        }
+    }
+
+    [Fact]
     public async Task Check_WithNoResidentWorkspace_ReturnsNonResidentEmptyDelta()
     {
         // Delta mode must not run a build, so with no resident workspace the RPC returns a non-resident empty
@@ -583,6 +614,19 @@ public sealed class FuseHostServiceRpcTests : IDisposable
         finally
         {
             CleanupFixture(source);
+        }
+    }
+
+    private sealed class DelayedIndexExecutor(IWorkspaceIndexJobExecutor inner) : IWorkspaceIndexJobExecutor
+    {
+        public async Task<SemanticIndexResult> ExecuteAsync(
+            string jobId,
+            IndexJobRequest request,
+            IProgress<IndexJobProgress> progress,
+            CancellationToken cancellationToken)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(4), cancellationToken);
+            return await inner.ExecuteAsync(jobId, request, progress, cancellationToken);
         }
     }
 

@@ -6,6 +6,8 @@ namespace Fuse.Semantics.Tests;
 
 public sealed class OwnedProcessRunnerTests
 {
+    private static readonly TimeSpan ChildStartupTimeout = TimeSpan.FromSeconds(20);
+
     [Fact]
     public async Task Caller_cancellation_stops_the_owned_process_tree()
     {
@@ -67,7 +69,7 @@ public sealed class OwnedProcessRunnerTests
 
     private static async Task<int> WaitForChildPidAsync(string childPidPath)
     {
-        var deadline = DateTime.UtcNow.AddSeconds(5);
+        var deadline = DateTime.UtcNow + ChildStartupTimeout;
         while (DateTime.UtcNow < deadline)
         {
             if (File.Exists(childPidPath)

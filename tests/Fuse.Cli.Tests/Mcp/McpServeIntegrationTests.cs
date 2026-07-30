@@ -11,6 +11,8 @@ namespace Fuse.Cli.Tests.Mcp;
 /// </summary>
 public sealed class McpServeIntegrationTests
 {
+    private const int IndexStatusPollAttempts = 600;
+
     // The eight-tool loop surface plus fuse_reduce, the one out-of-loop utility (it compacts arbitrary files
     // and raw content, which fuse_context's indexed-seed emission does not cover). v4 is a clean-slate first
     // public release (D14): no deprecation shims, no legacy names - the surface is exactly these nine tools.
@@ -65,8 +67,35 @@ public sealed class McpServeIntegrationTests
         Assert.Contains("verify serves", statusText);
         Assert.Contains("full-text search:", statusText);
 
-        // fuse_workspace action=map builds the index on first use (the fixture is a git repo, so the store stays
-        // inside it).
+        // Start the daemon-owned job explicitly before asserting map content. A map request may correctly return
+        // a building_syntax availability header when its bounded MCP read wait expires under parallel test load.
+        var indexResult = await client.CallToolAsync(
+            "fuse_workspace",
+            new Dictionary<string, object?> { ["action"] = "index", ["path"] = fixture.ProjectPath },
+            cancellationToken: TestCancellation);
+        Assert.Contains("index job:", TextContent(indexResult));
+
+        string indexStatus = string.Empty;
+        for (var attempt = 0; attempt < IndexStatusPollAttempts; attempt++)
+        {
+            var indexStatusResult = await client.CallToolAsync(
+                "fuse_workspace",
+                new Dictionary<string, object?> { ["action"] = "status", ["path"] = fixture.ProjectPath },
+                cancellationToken: TestCancellation);
+            indexStatus = TextContent(indexStatusResult);
+            if (indexStatus.Contains("index job state: Completed", StringComparison.Ordinal)
+                || indexStatus.Contains("index job state: Failed", StringComparison.Ordinal)
+                || indexStatus.Contains("index job state: Cancelled", StringComparison.Ordinal))
+            {
+                break;
+            }
+
+            await Task.Delay(100, TestCancellation);
+        }
+
+        Assert.Contains("index job state: Completed", indexStatus);
+
+        // The fixture is a Git repo, so its completed store stays inside the fixture directory.
         var result = await client.CallToolAsync(
             "fuse_workspace",
             new Dictionary<string, object?> { ["action"] = "map", ["path"] = fixture.ProjectPath, ["detail"] = "symbols" },
@@ -165,7 +194,7 @@ public sealed class McpServeIntegrationTests
         Assert.Contains("index job owner: daemon", TextContent(indexResult));
 
         string statusText = string.Empty;
-        for (var attempt = 0; attempt < 100; attempt++)
+        for (var attempt = 0; attempt < IndexStatusPollAttempts; attempt++)
         {
             var status = await client.CallToolAsync(
                 "fuse_workspace",
@@ -207,7 +236,7 @@ public sealed class McpServeIntegrationTests
         if (!TextContent(afterEdit).Contains("GearboxService", StringComparison.Ordinal))
         {
             statusText = string.Empty;
-            for (var attempt = 0; attempt < 100; attempt++)
+            for (var attempt = 0; attempt < IndexStatusPollAttempts; attempt++)
             {
                 var status = await client.CallToolAsync(
                     "fuse_workspace",

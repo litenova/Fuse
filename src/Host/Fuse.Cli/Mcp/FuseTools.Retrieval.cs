@@ -10,6 +10,7 @@ using Fuse.Reduction.Caching;
 using Fuse.Retrieval;
 using Fuse.Scoping;
 using Fuse.Semantics;
+using Fuse.Workspace;
 using Microsoft.Data.Sqlite;
 
 namespace Fuse.Cli.Mcp;
@@ -94,13 +95,46 @@ internal static partial class FuseToolOperations
 
         var toolRuntime = ResolveRuntime(runtime, indexer);
         var root = WorkspacePathResolver.ResolveRepositoryRoot(path);
+        var requestedNames = names
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Select(name => name.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var residentByName = requestedNames.ToDictionary(
+            name => name,
+            name => toolRuntime.ResidentWorkspaces.TryGetSignature(root, name, limitPerName, cancellationToken),
+            StringComparer.Ordinal);
+
+        // A resident compiler can answer metadata signatures without waiting for the syntax store. Start or join
+        // the repository job through the selected access provider so a daemon-backed MCP server never starts a
+        // competing local writer, then return the exact compiler answer immediately.
+        if (requestedNames.Length > 0 && residentByName.Values.All(signatures => signatures is { Count: > 0 }))
+        {
+            var started = await toolRuntime.IndexAccess.StartSyntaxAsync(indexer, root, cancellationToken);
+            var residentBuilder = new StringBuilder();
+            residentBuilder.AppendLine(await FormatAvailabilityHeaderAsync(
+                store: null,
+                root,
+                "building_syntax",
+                started.Snapshot.Counts.Files,
+                toolRuntime.ResidentWorkspaces,
+                cancellationToken));
+            foreach (var requested in requestedNames)
+            {
+                residentBuilder.AppendLine($"# {requested}");
+                AppendResidentSignatures(residentBuilder, residentByName[requested]!);
+            }
+
+            return residentBuilder.ToString().TrimEnd();
+        }
+
         await using var store = await OpenIndexedAsync(toolRuntime, indexer, path, cancellationToken);
         var matches = await store.GetSignaturesByNamesAsync(names, limitPerName, cancellationToken);
 
         var builder = new StringBuilder();
         builder.AppendLine(await OracleAvailabilityHeaderAsync(
             store, root, cancellationToken, residentWorkspaces: toolRuntime.ResidentWorkspaces));
-        foreach (var requested in names.Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => n.Trim()).Distinct(StringComparer.Ordinal))
+        foreach (var requested in requestedNames)
         {
             builder.AppendLine($"# {requested}");
 
@@ -108,16 +142,10 @@ internal static partial class FuseToolOperations
             // (including a referenced package's API) from the compiler's real metadata, so a package signature is
             // answered from the compiler rather than the store (which never indexed the package). Fall through to
             // the store when no resident workspace serves the root, or it did not resolve this name.
-            var residentSignatures = toolRuntime.ResidentWorkspaces.TryGetSignature(root, requested, limitPerName, cancellationToken);
+            var residentSignatures = residentByName[requested];
             if (residentSignatures is { Count: > 0 })
             {
-                foreach (var s in residentSignatures)
-                {
-                    var residentContainer = string.IsNullOrEmpty(s.Container) ? "" : $" in {s.Container}";
-                    builder.AppendLine($"  {s.Signature}{residentContainer}");
-                    builder.AppendLine($"    [{s.Kind}] resident (metadata: {s.Assembly})");
-                }
-
+                AppendResidentSignatures(builder, residentSignatures);
                 continue;
             }
 
@@ -144,6 +172,16 @@ internal static partial class FuseToolOperations
         }
 
         return builder.ToString().TrimEnd();
+    }
+
+    private static void AppendResidentSignatures(StringBuilder builder, IReadOnlyList<ResidentSignature> signatures)
+    {
+        foreach (var signature in signatures)
+        {
+            var container = string.IsNullOrEmpty(signature.Container) ? "" : $" in {signature.Container}";
+            builder.AppendLine($"  {signature.Signature}{container}");
+            builder.AppendLine($"    [{signature.Kind}] resident (metadata: {signature.Assembly})");
+        }
     }
 
     /// <summary>
@@ -236,7 +274,7 @@ internal static partial class FuseToolOperations
         [Description("Optional session id: when set, this call's graded claims are appended to the session's claim ledger (U2).")] string session = "",
         CancellationToken cancellationToken = default,
         FuseMcpRuntime? runtime = null) =>
-        FuseOperationalErrors.ExecuteMcpAsync(() => FuseImpactCoreAsync(
+        ExecuteReadMcpAsync(() => FuseImpactCoreAsync(
             ResolveRuntime(runtime, indexer), indexer, symbol, path, limit, package, fromVersion, toVersion, session, cancellationToken));
 
     private static async Task<string> FuseImpactCoreAsync(

@@ -47,6 +47,15 @@ public sealed class RemoteIndexAccessProvider : IIndexAccessProvider
     }
 
     /// <inheritdoc />
+    public async Task<IndexJobStartResult> StartSyntaxAsync(
+        SemanticIndexer indexer, string path, CancellationToken cancellationToken)
+    {
+        var root = WorkspacePathResolver.ResolveRepositoryRoot(path);
+        var started = await _indexStart(root, IndexDepth.Syntax, false, null, _connectTimeout, cancellationToken);
+        return started ?? await LocalFallback(indexer).StartSyntaxAsync(indexer, root, cancellationToken);
+    }
+
+    /// <inheritdoc />
     public async Task<WorkspaceIndexStore> OpenIndexedAsync(
         SemanticIndexer indexer, string path, CancellationToken cancellationToken)
     {

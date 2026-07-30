@@ -61,6 +61,7 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
     private readonly HostPayloadTracker _payloads;
     private readonly Fuse.Workspace.IResidentWorkspaceProvider _residentWorkspaces;
     private readonly IIndexAccessProvider _indexAccess;
+    private readonly LocalIndexAccessProvider _hostIndexAccess;
     private readonly FuseMcpRuntime _runtime;
     private readonly FuseHostReadOperations _readOperations;
     private readonly FuseHostIndexOperations _indexOperations;
@@ -121,6 +122,12 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
         _payloads = new HostPayloadTracker(logger);
         _indexAccess = context.IndexAccess ?? context.Runtime?.IndexAccess
             ?? new LocalIndexAccessProvider(_indexCoordinator, _indexJobs);
+        // A daemon-owned RPC has no MCP tool response body in which to return a deferred availability header.
+        // Keep the shared job running and wait for its committed syntax store until the daemon stops instead.
+        _hostIndexAccess = new LocalIndexAccessProvider(
+            _indexCoordinator,
+            _indexJobs,
+            Timeout.InfiniteTimeSpan);
         _residentWorkspaces = residentWorkspaces
             ?? context.Runtime?.ResidentWorkspaces
             ?? Fuse.Workspace.NullResidentWorkspaceProvider.Instance;
@@ -509,6 +516,6 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
     }
 
     internal Task<WorkspaceIndexStore> OpenIndexedForHostAsync(string root, CancellationToken cancellationToken) =>
-        _indexAccess.OpenIndexedAsync(_indexer, root, cancellationToken);
+        _hostIndexAccess.OpenIndexedAsync(_indexer, root, cancellationToken);
 
 }

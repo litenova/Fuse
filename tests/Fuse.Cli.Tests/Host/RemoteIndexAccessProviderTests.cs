@@ -96,4 +96,56 @@ public sealed class RemoteIndexAccessProviderTests
             try { Directory.Delete(root, recursive: true); } catch (IOException) { }
         }
     }
+
+    [Fact]
+    public async Task Starts_resident_signature_index_work_through_the_daemon()
+    {
+        var indexer = _provider.GetRequiredService<SemanticIndexer>();
+        var root = Path.Combine(Path.GetTempPath(), "fuse-remote-index-start", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, ".git"));
+        var invoked = false;
+        var expected = new IndexJobStartResult(
+            new IndexJobSnapshot(
+                "job-1",
+                root,
+                IndexJobState.Running,
+                IndexPhase.Inventory,
+                1,
+                4,
+                0,
+                null,
+                null,
+                null,
+                "opening index",
+                DateTimeOffset.UtcNow,
+                TimeSpan.Zero,
+                IndexCountSnapshot.Empty,
+                IndexStorageSnapshot.Empty,
+                [],
+                null,
+                null),
+            Joined: false,
+            Conflict: false);
+        var provider = new RemoteIndexAccessProvider(
+            indexStart: (_, depth, force, capture, _, _) =>
+            {
+                invoked = true;
+                Assert.Equal(IndexDepth.Syntax, depth);
+                Assert.False(force);
+                Assert.Null(capture);
+                return Task.FromResult<IndexJobStartResult?>(expected);
+            });
+
+        try
+        {
+            var result = await provider.StartSyntaxAsync(indexer, root, CancellationToken.None);
+
+            Assert.True(invoked);
+            Assert.Equal(expected, result);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+        }
+    }
 }

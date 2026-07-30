@@ -686,6 +686,19 @@ internal static partial class FuseToolOperations
         CancellationToken cancellationToken,
         Fuse.Workspace.IResidentWorkspaceProvider? residentWorkspaces = null)
     {
+        var activeJob = jobs?.GetStatus(root);
+        if (activeJob is { State: IndexJobState.Queued or IndexJobState.Running or IndexJobState.Cancelling })
+        {
+            return await FormatAvailabilityHeaderAsync(
+                    store: null,
+                    root,
+                    "building_syntax",
+                    activeJob.Counts.Files,
+                    residentWorkspaces ?? Fuse.Workspace.NullResidentWorkspaceProvider.Instance,
+                    cancellationToken)
+                + ElapsedProgressSuffix(root, jobs);
+        }
+
         var databasePath = FuseStorePaths.ResolveDatabasePath(root);
         if (!File.Exists(databasePath))
             return await FormatAvailabilityHeaderAsync(
