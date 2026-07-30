@@ -20,19 +20,22 @@ public sealed class ImpactCommand
 {
     private readonly IConsoleUI _consoleUI;
     private readonly SemanticIndexer _indexer;
+    private readonly FuseMcpRuntime _runtime;
 
     /// <summary>Initializes a new instance of the <see cref="ImpactCommand" /> class for CLI option binding only.</summary>
-    public ImpactCommand() : this(null!, null!)
+    public ImpactCommand() : this(null!, null!, null!)
     {
     }
 
     /// <summary>Initializes a new instance of the <see cref="ImpactCommand" /> class.</summary>
     /// <param name="consoleUI">The console UI for output.</param>
     /// <param name="indexer">The semantic indexer (builds the index on first use).</param>
-    public ImpactCommand(IConsoleUI consoleUI, SemanticIndexer indexer)
+    /// <param name="runtime">The process-owned MCP runtime used for shared index access.</param>
+    public ImpactCommand(IConsoleUI consoleUI, SemanticIndexer indexer, FuseMcpRuntime runtime)
     {
         _consoleUI = consoleUI;
         _indexer = indexer;
+        _runtime = runtime;
     }
 
     /// <summary>The symbol whose blast radius to compute.</summary>
@@ -73,7 +76,8 @@ public sealed class ImpactCommand
         }
 
         var output = await FuseTools.FuseImpactAsync(
-            _indexer, Symbol, Path, Limit, Package, FromVersion, ToVersion, session: "", context.CancellationToken);
+            _indexer, Symbol, Path, Limit, Package, FromVersion, ToVersion, session: "", context.CancellationToken,
+            runtime: _runtime);
         _consoleUI.WriteResult(output);
     }
 }

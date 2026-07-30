@@ -213,6 +213,7 @@ public sealed class IndexConcurrencyIntegrationTests : IAsyncLifetime, IDisposab
     private readonly IndexCoordinator _coordinator = new();
     private SemanticIndexer Indexer => _provider.GetRequiredService<SemanticIndexer>();
     private IChangeSource ChangeSource => _provider.GetRequiredService<IChangeSource>();
+    private FuseMcpRuntime Runtime => _provider.GetRequiredService<FuseMcpRuntime>();
 
     public Task InitializeAsync()
     {
@@ -244,7 +245,8 @@ public sealed class IndexConcurrencyIntegrationTests : IAsyncLifetime, IDisposab
             ChangeSource,
             "Widget",
             path: _root,
-            kind: "symbol")).ToArray();
+            kind: "symbol",
+            runtime: Runtime)).ToArray();
 
         var results = await Task.WhenAll(tasks);
         Assert.All(results, r => Assert.Contains("Widget", r));
@@ -309,7 +311,8 @@ public sealed class IndexConcurrencyIntegrationTests : IAsyncLifetime, IDisposab
             ChangeSource,
             "F1",
             path: _root,
-            kind: "path")).ToArray();
+            kind: "path",
+            runtime: Runtime)).ToArray();
         var results = await Task.WhenAll(opens);
         Assert.Equal(24, results.Length);
         Assert.DoesNotContain(results, r => r.StartsWith(FuseOperationalErrors.InternalErrorPrefix));
