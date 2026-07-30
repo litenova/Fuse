@@ -25,6 +25,7 @@ public sealed class SemanticIndexer
     private readonly WorkspaceInventoryPlanner _inventory;
     private readonly SyntaxIndexStage _syntaxStage;
     private readonly DirtyFileReconciler _dirtyFileReconciler;
+    private readonly SemanticIndexWriter _semanticIndexWriter;
     // R42: the host-owned warm-solution cache lets a second doctor in a session skip the full MSBuild load.
     private readonly WarmSolutionCache _warmSolutions;
 
@@ -107,6 +108,7 @@ public sealed class SemanticIndexer
         _inventory = new WorkspaceInventoryPlanner(scanner, _syntaxProviders);
         _syntaxStage = new SyntaxIndexStage(_syntaxProviders, syntaxSymbols, routeExtractor);
         _dirtyFileReconciler = new DirtyFileReconciler(_inventory, _syntaxStage, _finalizer);
+        _semanticIndexWriter = new SemanticIndexWriter(_semanticGraph, _syntaxStage, _syntaxProviders);
     }
 
     /// <summary>
@@ -136,14 +138,14 @@ public sealed class SemanticIndexer
         LoadDiagnosis diagnosis;
         if (capture is not null)
         {
-            result = await IndexFromCaptureAsync(root, store, files, capture, cancellationToken);
+            result = await _semanticIndexWriter.WriteCaptureAsync(root, store, files, capture, cancellationToken);
             diagnosis = BuildDiagnosisFromCapture(discovery, capture);
         }
         else
         {
             var snapshot = await _loader.LoadAsync(discovery, cancellationToken);
             result = snapshot.SemanticLoadSucceeded
-                ? await IndexSemanticAsync(root, store, files, snapshot, cancellationToken)
+                ? await _semanticIndexWriter.WriteSemanticAsync(root, store, files, snapshot, cancellationToken)
                 : await _syntaxStage.IndexAllAsync(root, store, files, snapshot, cancellationToken);
             diagnosis = BuildDiagnosisFromSnapshot(discovery, snapshot);
         }
@@ -369,7 +371,7 @@ public sealed class SemanticIndexer
         // defeats syntax-first indexing and prevents project-level cancellation and progress reporting.
         var snapshot = await _loader.LoadAsync(discovery, cancellationToken);
         var result = snapshot.SemanticLoadSucceeded
-            ? await IndexSemanticChunkedAsync(root, store, files, snapshot, cancellationToken, progress)
+            ? await _semanticIndexWriter.WriteSemanticChunkedAsync(root, store, files, snapshot, cancellationToken, progress)
             : await _syntaxStage.IndexChunkedAsync(root, store, files, snapshot, cancellationToken, progress: null);
         var diagnosis = BuildDiagnosisFromSnapshot(discovery, snapshot);
 
@@ -462,155 +464,6 @@ public sealed class SemanticIndexer
         => await _dirtyFileReconciler.ReconcileAsync(
             Path.GetFullPath(rootDirectory), store, StaleAsOfMetaKey, cancellationToken);
 
-    private async Task<SemanticIndexResult> IndexSemanticAsync(
-        string root,
-        IWorkspaceIndexStore store,
-        IReadOnlyList<IndexedFileRecord> files,
-        RoslynWorkspaceSnapshot snapshot,
-        CancellationToken cancellationToken)
-    {
-        // This non-capture path cannot establish target-framework membership. Clear any prior capture-derived
-        // facts rather than serving availability from an unrelated build.
-        await store.ReplaceTfmAvailabilityAsync([], cancellationToken);
-        var projects = _semanticGraph.BuildProjectRecords(snapshot, cancellationToken);
-        await store.UpsertProjectsAsync(projects, cancellationToken);
-
-        var fileToProject = SemanticGraphExtractor.BuildFileProjectMap(root, snapshot);
-        var linkedFiles = files
-            .Select(f => (fileToProject.TryGetValue(f.NormalizedPath, out var projectPath)
-                ? f with { ProjectPath = projectPath }
-                : f) with
-            { Language = _syntaxProviders.ForExtension(f.Extension)?.Language })
-            .ToList();
-        await store.UpsertFilesAsync(linkedFiles, cancellationToken);
-
-        var symbols = new List<SymbolRecord>();
-        foreach (var project in snapshot.Projects)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            symbols.AddRange(_semanticGraph.ExtractSymbols(project, root, cancellationToken));
-        }
-
-        await store.UpsertSymbolsAsync(symbols, cancellationToken);
-
-        var (chunks, syntaxRoutes) = await _syntaxStage.ExtractChunksAndRoutesAsync(root, files, dropChunkSymbolIds: true, cancellationToken);
-        await store.UpsertChunksAsync(chunks, cancellationToken);
-        // Syntax routes first (covers minimal APIs), then the semantic MVC routes overwrite by route id with
-        // their resolved handler symbol ids.
-        await store.UpsertRoutesAsync(syntaxRoutes, cancellationToken);
-
-        // Run the analyzers over every loaded project and store the resulting graph. Nodes are upserted before
-        // edges so the edge foreign keys resolve.
-        var graph = _semanticGraph.AnalyzeWorkspace(root, snapshot, cancellationToken);
-        await store.UpsertNodesAsync(graph.Nodes, cancellationToken);
-        await store.UpsertEdgesAsync(graph.Edges, cancellationToken);
-        await store.UpsertRoutesAsync(graph.Routes, cancellationToken);
-        await store.UpsertDiRegistrationsAsync(graph.DiRegistrations, cancellationToken);
-        await store.UpsertOptionsBindingsAsync(graph.OptionsBindings, cancellationToken);
-
-        // Any load diagnostic (MSBuild warning, a project without a compilation) means the semantic picture is
-        // incomplete; report that honestly as partial rather than claiming a clean semantic index.
-        var diagnostics = snapshot.Diagnostics.Concat(graph.Diagnostics).ToList();
-        var mode = snapshot.Diagnostics.Any(d => d.Severity is DiagnosticSeverity.Warning or DiagnosticSeverity.Error)
-            ? "partial"
-            : "semantic";
-
-        var routeCount = syntaxRoutes.Count + graph.Routes.Count;
-        return new SemanticIndexResult(mode, linkedFiles.Count, projects.Count, symbols.Count, chunks.Count, routeCount, diagnostics);
-    }
-
-    // R14: explicit semantic indexing commits per project and per file batch so WAL readers are not blocked by one long write.
-    private async Task<SemanticIndexResult> IndexSemanticChunkedAsync(
-        string root,
-        IWorkspaceIndexStore store,
-        IReadOnlyList<IndexedFileRecord> files,
-        RoslynWorkspaceSnapshot snapshot,
-        CancellationToken cancellationToken,
-        IProgress<SemanticIndexProgress>? progress)
-    {
-        // This non-capture path cannot establish target-framework membership. Clear any prior capture-derived
-        // facts rather than serving availability from an unrelated build.
-        await store.ReplaceTfmAvailabilityAsync([], cancellationToken);
-        var projects = _semanticGraph.BuildProjectRecords(snapshot, cancellationToken);
-        await store.UpsertProjectsAsync(projects, cancellationToken);
-
-        var fileToProject = SemanticGraphExtractor.BuildFileProjectMap(root, snapshot);
-        var linkedFiles = files
-            .Select(f => (fileToProject.TryGetValue(f.NormalizedPath, out var projectPath)
-                ? f with { ProjectPath = projectPath }
-                : f) with
-            { Language = _syntaxProviders.ForExtension(f.Extension)?.Language })
-            .ToList();
-
-        for (var i = 0; i < linkedFiles.Count; i += UpgradeCommitFileBatchSize)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var batch = linkedFiles.Skip(i).Take(UpgradeCommitFileBatchSize).ToList();
-            await store.UpsertFilesAsync(batch, cancellationToken);
-        }
-
-        var symbols = new List<SymbolRecord>();
-        progress?.Report(new SemanticIndexProgress(
-            SemanticIndexStage.SemanticExtraction,
-            0,
-            snapshot.Projects.Count,
-            "extracting compiler symbols"));
-        foreach (var project in snapshot.Projects)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var projectSymbols = _semanticGraph.ExtractSymbols(project, root, cancellationToken).ToList();
-            symbols.AddRange(projectSymbols);
-            await store.UpsertSymbolsAsync(projectSymbols, cancellationToken);
-        }
-
-        var (chunks, syntaxRoutes) = await _syntaxStage.ExtractChunksAndRoutesChunkedAsync(
-            store, root, files, dropChunkSymbolIds: true, cancellationToken);
-        await store.UpsertRoutesAsync(syntaxRoutes, cancellationToken);
-
-        var edges = new List<SemanticEdgeRecord>();
-        var semanticRoutes = new List<RouteRecord>();
-        var registrations = new List<DiRegistrationRecord>();
-        var bindings = new List<OptionsBindingRecord>();
-        var graphDiagnostics = new List<DiagnosticRecord>();
-
-        var completedProjects = 0;
-        foreach (var project in snapshot.Projects)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var graph = _semanticGraph.AnalyzeProject(project, root, cancellationToken);
-            edges.AddRange(graph.Edges);
-            semanticRoutes.AddRange(graph.Routes);
-            registrations.AddRange(graph.DiRegistrations);
-            bindings.AddRange(graph.OptionsBindings);
-            graphDiagnostics.AddRange(graph.Diagnostics);
-
-            await store.UpsertNodesAsync(graph.Nodes, cancellationToken);
-            await store.UpsertEdgesAsync(graph.Edges, cancellationToken);
-            await store.UpsertRoutesAsync(graph.Routes, cancellationToken);
-            await store.UpsertDiRegistrationsAsync(graph.DiRegistrations, cancellationToken);
-            await store.UpsertOptionsBindingsAsync(graph.OptionsBindings, cancellationToken);
-            completedProjects++;
-            progress?.Report(new SemanticIndexProgress(
-                SemanticIndexStage.SemanticExtraction,
-                completedProjects,
-                snapshot.Projects.Count,
-                project.Name));
-        }
-
-        progress?.Report(new SemanticIndexProgress(
-            SemanticIndexStage.SemanticPersistence,
-            1,
-            1,
-            "semantic facts persisted"));
-
-        var diagnostics = snapshot.Diagnostics.Concat(graphDiagnostics).ToList();
-        var mode = snapshot.Diagnostics.Any(d => d.Severity is DiagnosticSeverity.Warning or DiagnosticSeverity.Error)
-            ? "partial"
-            : "semantic";
-        var routeCount = syntaxRoutes.Count + semanticRoutes.Count;
-        return new SemanticIndexResult(mode, linkedFiles.Count, projects.Count, symbols.Count, chunks.Count, routeCount, diagnostics);
-    }
-
     // Tier 1 write path: the graph came from the out-of-process build-capture worker (exact compilations), so
     // the symbols, nodes, edges, routes, and DI/options are taken from its bundle. Chunks and syntax routes are
     // produced here from the parent's own syntax pass, exactly as the semantic path does.
@@ -645,7 +498,7 @@ public sealed class SemanticIndexer
         var scan = await ScanFilesAsync(root, cancellationToken);
         var files = scan.Files;
         await store.ClearFileDataAsync(files.Select(file => file.NormalizedPath).ToArray(), cancellationToken);
-        var result = await IndexFromCaptureAsync(root, store, files, capture, cancellationToken);
+        var result = await _semanticIndexWriter.WriteCaptureAsync(root, store, files, capture, cancellationToken);
         await store.SetMetaAsync("index_mode", result.Mode, cancellationToken);
         await store.SetMetaAsync(SemanticPendingMetaKey, "0", cancellationToken);
         await store.SetMetaAsync(WorkspaceIndexStore.FuseVersionMetaKey, FuseBuildInfo.Current, cancellationToken);
@@ -670,72 +523,13 @@ public sealed class SemanticIndexer
         Fuse.Indexing.CaptureResult capture,
         CancellationToken cancellationToken,
         bool replaceTfmAvailability = true)
-    {
-        // R60: a build captures one compiler invocation per target framework. Select a deterministic primary
-        // representation for each project, then union every stable declaration and graph fact from every target
-        // rather than allowing the last compiler invocation to overwrite a non-primary-only fact in SQLite.
-        var union = CanonicalTfmUnion.Create(capture);
-        var projects = _semanticGraph.BuildCaptureProjectRecords(union.Projects, cancellationToken);
-        await store.UpsertProjectsAsync(projects, cancellationToken);
-
-        var fileToProject = union.Symbols
-            .Where(symbol => !string.IsNullOrWhiteSpace(symbol.ProjectPath))
-            .GroupBy(symbol => symbol.FilePath, StringComparer.Ordinal)
-            .ToDictionary(group => group.Key, group => group.First().ProjectPath!, StringComparer.Ordinal);
-        var linkedFiles = files
-            .Select(f =>
-                (fileToProject.TryGetValue(f.NormalizedPath, out var projectPath)
-                    ? f with { ProjectPath = projectPath }
-                    : f) with
-                { Language = _syntaxProviders.ForExtension(f.Extension)?.Language })
-            .ToList();
-        await store.UpsertFilesAsync(linkedFiles, cancellationToken);
-
-        var symbols = union.Symbols;
-        await store.UpsertSymbolsAsync(symbols, cancellationToken);
-
-        var (chunks, syntaxRoutes) = await _syntaxStage.ExtractChunksAndRoutesAsync(root, files, dropChunkSymbolIds: true, cancellationToken);
-        await store.UpsertChunksAsync(chunks, cancellationToken);
-        await store.UpsertRoutesAsync(syntaxRoutes, cancellationToken);
-
-        // Nodes before edges so the edge foreign keys resolve, then the semantic routes/DI/options from the bundle.
-        var nodes = union.Nodes;
-        var edges = union.Edges;
-        var semanticRoutes = union.Routes;
-        var registrations = union.Registrations;
-        var bindings = union.Bindings;
-        await store.UpsertNodesAsync(nodes, cancellationToken);
-        await store.UpsertEdgesAsync(edges, cancellationToken);
-        await store.UpsertRoutesAsync(semanticRoutes, cancellationToken);
-        await store.UpsertDiRegistrationsAsync(registrations, cancellationToken);
-        await store.UpsertOptionsBindingsAsync(bindings, cancellationToken);
-        // Only a complete build capture owns this projection. A partial resident refresh must preserve the
-        // availability facts supplied by the complete capture for the rest of the workspace.
-        if (replaceTfmAvailability)
-            await store.ReplaceTfmAvailabilityAsync(union.Availability, cancellationToken);
-        await store.SetMetaAsync("multi_tfm_union_loss", "0", cancellationToken);
-        await store.SetMetaAsync("multi_tfm_capture_invocations", union.CapturedProjectCount.ToString(System.Globalization.CultureInfo.InvariantCulture), cancellationToken);
-        await store.SetMetaAsync("multi_tfm_unique_projects", union.Projects.Count.ToString(System.Globalization.CultureInfo.InvariantCulture), cancellationToken);
-        await store.SetMetaAsync("multi_tfm_raw_entities", union.RawEntityCount.ToString(System.Globalization.CultureInfo.InvariantCulture), cancellationToken);
-        await store.SetMetaAsync("multi_tfm_canonical_entities", union.CanonicalEntityCount.ToString(System.Globalization.CultureInfo.InvariantCulture), cancellationToken);
-
-        // Build capture shares the real build's inputs, so a project with residual compile errors is graph-grade
-        // (partial); a clean capture across every project is the oracle-grade semantic tier.
-        var mode = capture.Projects.Any(p => p.ErrorCount > 0) ? "partial" : "semantic";
-        var diagnostics = new List<DiagnosticRecord>
-        {
-            new(DiagnosticSeverity.Info, "build-capture",
-                $"Tier-1 canonical TFM union: {union.CapturedProjectCount} compiler invocation(s), " +
-                $"{union.Projects.Count} project(s), {symbols.Count} symbols, {edges.Count} edges."),
-        };
-        var routeCount = syntaxRoutes.Count + semanticRoutes.Count;
-        return new SemanticIndexResult(mode, linkedFiles.Count, union.Projects.Count, symbols.Count, chunks.Count, routeCount, diagnostics);
-    }
+        => await _semanticIndexWriter.WriteCaptureAsync(
+            root, store, files, capture, cancellationToken, replaceTfmAvailability);
 
     /// <summary>
     ///     Projects live (resident) compilations into the store (S1 step 4): for each compilation, extracts its
     ///     symbols and wiring graph in-process (the same extraction the build-capture worker runs) and upserts them
-    ///     through <see cref="IndexFromCaptureAsync" />, so a cross-file relationship an edit introduced (for
+    ///     through capture-compatible projection, so a cross-file relationship an edit introduced (for
     ///     example a new DI registration) becomes queryable without a full re-index.
     /// </summary>
     /// <remarks>
@@ -758,57 +552,8 @@ public sealed class SemanticIndexer
         IReadOnlyList<(string ProjectFilePath, Microsoft.CodeAnalysis.Compilation Compilation)> compilations,
         IReadOnlyList<IndexedFileRecord> files,
         CancellationToken cancellationToken)
-    {
-        // Clear each projected file's existing semantic rows first, so an entity an edit REMOVED does not linger
-        // as a stale row; the upsert below then reinserts the current set. Clear-then-reproject is an idempotent
-        // replace (the file row itself is kept, so symbols keep their foreign key). This covers add, change, and
-        // removal within the projected files.
-        foreach (var file in files)
-            await store.DeleteFileDataAsync(file.NormalizedPath, cancellationToken);
-
-        var captured = new List<CapturedProject>(compilations.Count);
-        foreach (var (projectFilePath, compilation) in compilations)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var loaded = new LoadedProject(
-                Name: Path.GetFileNameWithoutExtension(projectFilePath),
-                FilePath: projectFilePath,
-                AssemblyName: compilation.AssemblyName,
-                Compilation: compilation);
-            // Paths are made relative to the workspace root (not the project directory) so symbol and node
-            // rows match the root-relative files.normalized_path the store links foreign keys against. Passing
-            // the project directory here produced project-relative paths that never resolved, so every symbol
-            // was dropped (null file_id) and every node stored an unlinked file_id. Matches the root passed by
-            // IndexSemanticChunkedAsync.
-            var symbols = _semanticGraph.ExtractSymbols(loaded, root, cancellationToken);
-            var graph = _semanticGraph.AnalyzeProject(loaded, root, cancellationToken);
-            var errorCount = compilation.GetDiagnostics(cancellationToken)
-                .Count(d => d.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error);
-            captured.Add(new CapturedProject(
-                Name: loaded.Name,
-                FilePath: loaded.FilePath,
-                AssemblyName: compilation.AssemblyName,
-                ErrorCount: errorCount,
-                TypeCount: 0,
-                SymbolCount: symbols.Count,
-                NodeCount: graph.Nodes.Count,
-                EdgeCount: graph.Edges.Count,
-                Symbols: symbols,
-                Nodes: graph.Nodes,
-                Edges: graph.Edges,
-                Routes: graph.Routes,
-                DiRegistrations: graph.DiRegistrations,
-                OptionsBindings: graph.OptionsBindings));
-        }
-
-        return await IndexFromCaptureAsync(
-            root,
-            store,
-            files,
-            CaptureResult.Ok(captured),
-            cancellationToken,
-            replaceTfmAvailability: false);
-    }
+        => await _semanticIndexWriter.ProjectFromCompilationsAsync(
+            root, store, compilations, files, cancellationToken);
 
 }
 
