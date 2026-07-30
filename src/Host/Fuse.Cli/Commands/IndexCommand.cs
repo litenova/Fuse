@@ -252,11 +252,13 @@ public sealed class IndexCommand
 /// <summary>Renders human and JSON index job progress without relying on terminal-specific control sequences.</summary>
 internal sealed class IndexProgressRenderer
 {
+    private static readonly char[] SpinnerFrames = ['|', '/', '-', '\\'];
     private readonly IConsoleUI _consoleUI;
     private readonly bool _json;
     private IndexPhase? _lastPhase;
     private int? _lastBucket;
     private DateTimeOffset _lastRender;
+    private int _spinnerFrame;
 
     /// <summary>Initializes a progress renderer.</summary>
     /// <param name="consoleUI">The output service used for human-readable progress.</param>
@@ -290,10 +292,10 @@ internal sealed class IndexProgressRenderer
         _lastPhase = snapshot.Phase;
         _lastBucket = bucket;
         _lastRender = now;
-        _consoleUI.WriteStep(Format(snapshot));
+        _consoleUI.WriteStep(Format(snapshot, SpinnerFrames[_spinnerFrame++ % SpinnerFrames.Length]));
     }
 
-    private static string Format(IndexJobSnapshot snapshot)
+    private static string Format(IndexJobSnapshot snapshot, char spinnerFrame)
     {
         var phase = snapshot.Phase.ToString();
         if (snapshot.PhasePercent is { } percent && snapshot.TotalUnits is { } total)
@@ -305,7 +307,7 @@ internal sealed class IndexProgressRenderer
         }
 
         var current = string.IsNullOrWhiteSpace(snapshot.CurrentItem) ? "working" : snapshot.CurrentItem;
-        return $"Phase {snapshot.PhaseNumber}/{snapshot.PhaseCount} [----------] {current} ({phase})";
+        return $"Phase {snapshot.PhaseNumber}/{snapshot.PhaseCount} [{spinnerFrame}] {current} ({phase})";
     }
 }
 
