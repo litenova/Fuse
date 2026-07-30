@@ -15,13 +15,20 @@ namespace Fuse.BuildCaptureWorker;
 public sealed class BuildCaptureRehydrator
 {
     private readonly BuildCaptureProcessExecutor _processExecutor;
+    private readonly SpeculativeCheckRunner _speculativeCheckRunner = new();
+    private readonly CompilerLogLoader _compilerLogLoader;
+    private readonly CaptureGraphExtractor _graphExtractor;
 
     /// <summary>
     ///     Initializes a build-capture rehydrator with an owned process runner for its compiler build.
     /// </summary>
     /// <param name="processRunner">The runner that terminates this worker's build tree on cancellation or timeout.</param>
-    public BuildCaptureRehydrator(IProcessRunner? processRunner = null) =>
+    public BuildCaptureRehydrator(IProcessRunner? processRunner = null)
+    {
         _processExecutor = new BuildCaptureProcessExecutor(processRunner ?? new OwnedProcessRunner());
+        _compilerLogLoader = new CompilerLogLoader(NormalizeSigning);
+        _graphExtractor = new CaptureGraphExtractor(NormalizeSigning);
+    }
 
     /// <summary>
     ///     Builds the target and rehydrates its C# compilations, reporting each project's outcome.
@@ -173,53 +180,14 @@ public sealed class BuildCaptureRehydrator
     /// <param name="cancellationToken">A token to cancel the rehydration.</param>
     /// <returns>The held compilations, disposable.</returns>
     public HeldComplog RehydrateHeld(string logPath, CancellationToken cancellationToken)
-    {
-        var reader = CompilerCallReaderUtil.Create(logPath);
-        var compilations = new List<Compilation>();
-        try
-        {
-            foreach (var data in reader.ReadAllCompilationData())
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (data.CompilerCall.IsCSharp != true)
-                    continue;
-                compilations.Add(NormalizeSigning(data.GetCompilationAfterGenerators(cancellationToken), data.CompilerCall.ProjectFilePath));
-            }
-        }
-        catch
-        {
-            reader.Dispose();
-            throw;
-        }
-
-        return new HeldComplog(reader, compilations);
-    }
+        => _compilerLogLoader.LoadHeld(logPath, cancellationToken);
 
     /// <summary>
     ///     Opens a compiler log for lazy pooled checks (R53). Compiler-call source metadata is read up front, but
     ///     the costly Roslyn compilation is deferred until a request names a source file that call owns.
     /// </summary>
     public LazyHeldComplog RehydrateLazyHeld(string logPath, CancellationToken cancellationToken)
-    {
-        var reader = CompilerCallReaderUtil.Create(logPath);
-        try
-        {
-            var calls = reader.ReadAllCompilationData()
-                .Where(static data => data.CompilerCall.IsCSharp == true)
-                .ToList();
-            var sourcePaths = calls
-                .Select(data => reader.ReadAllSourceTextData(data.CompilerCall)
-                    .Select(source => source.FilePath.Replace('\\', '/'))
-                    .ToList())
-                .ToList();
-            return new LazyHeldComplog(reader, calls, sourcePaths);
-        }
-        catch
-        {
-            reader.Dispose();
-            throw;
-        }
-    }
+        => _compilerLogLoader.LoadLazyHeld(logPath, cancellationToken);
 
     /// <summary>
     ///     Speculatively typechecks a proposed single-file patch against already-held compilations (R48): the exact
@@ -233,7 +201,7 @@ public sealed class BuildCaptureRehydrator
     /// <returns>The diagnostics for the changed document, or an abstention when the file is not in the log.</returns>
     public CheckResult CheckHeld(
         HeldComplog held, string relativeFilePath, string newContent, CancellationToken cancellationToken)
-        => CheckCompilations(held.Compilations, relativeFilePath, newContent, cancellationToken);
+        => _speculativeCheckRunner.Check(held.Compilations, relativeFilePath, newContent, cancellationToken);
 
     /// <summary>
     ///     Typechecks a single-file overlay through a lazy held compiler log. Every captured compiler invocation
@@ -244,33 +212,7 @@ public sealed class BuildCaptureRehydrator
         LazyHeldComplog held, string relativeFilePath, string newContent, CancellationToken cancellationToken)
     {
         var compilations = held.GetCompilationsFor(relativeFilePath, NormalizeSigning, cancellationToken);
-        return CheckCompilations(compilations, relativeFilePath, newContent, cancellationToken);
-    }
-
-    private static CheckResult CheckCompilations(
-        IReadOnlyList<Compilation> compilations, string relativeFilePath, string newContent, CancellationToken cancellationToken)
-    {
-        var normalized = relativeFilePath.Replace('\\', '/');
-        foreach (var compilation in compilations)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var tree = compilation.SyntaxTrees.FirstOrDefault(t =>
-                t.FilePath.Replace('\\', '/').EndsWith(normalized, StringComparison.OrdinalIgnoreCase));
-            if (tree is null)
-                continue; // The changed file is not in this project; try the next.
-
-            var newTree = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(
-                newContent, (Microsoft.CodeAnalysis.CSharp.CSharpParseOptions?)tree.Options, tree.FilePath, cancellationToken: cancellationToken);
-            var forked = compilation.ReplaceSyntaxTree(tree, newTree);
-            var diagnostics = forked.GetSemanticModel(newTree)
-                .GetDiagnostics(cancellationToken: cancellationToken)
-                .Where(d => d.Severity is Microsoft.CodeAnalysis.DiagnosticSeverity.Error or Microsoft.CodeAnalysis.DiagnosticSeverity.Warning)
-                .Select(ToCheckDiagnostic)
-                .ToList();
-            return CheckResult.Ok(diagnostics);
-        }
-
-        return CheckResult.Abstain($"the changed file '{relativeFilePath}' was not found in any captured C# project");
+        return _speculativeCheckRunner.Check(compilations, relativeFilePath, newContent, cancellationToken);
     }
 
     // Normalizes strong-name signing on a rehydrated compilation before its diagnostics are read. The compilation
@@ -319,17 +261,6 @@ public sealed class BuildCaptureRehydrator
             return null;
         var candidate = Path.GetFullPath(Path.Combine(projectDir, cryptoKeyFile));
         return File.Exists(candidate) ? candidate : null;
-    }
-
-    private static CheckDiagnostic ToCheckDiagnostic(Microsoft.CodeAnalysis.Diagnostic d)
-    {
-        var span = d.Location.IsInSource ? d.Location.GetLineSpan() : default;
-        return new CheckDiagnostic(
-            Id: d.Id,
-            Severity: d.Severity.ToString(),
-            Message: d.GetMessage(),
-            FilePath: d.Location.IsInSource ? d.Location.SourceTree?.FilePath : null,
-            Line: d.Location.IsInSource ? span.StartLinePosition.Line + 1 : 0);
     }
 
     /// <summary>
@@ -407,14 +338,14 @@ public sealed class BuildCaptureRehydrator
     /// <returns>The unioned capture result, or a failure when no fragment recorded a C# compilation.</returns>
     public CaptureResult MergeFragments(IReadOnlyList<string> fragmentLogPaths, CancellationToken cancellationToken, string? workspaceRoot = null)
     {
-        var merged = new List<RehydratedProject>();
+        var merged = new List<RehydratedCaptureProject>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var fragment in fragmentLogPaths)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (!File.Exists(fragment))
                 continue;
-            foreach (var project in RehydrateProjects(fragment, workspaceRoot, cancellationToken))
+            foreach (var project in _graphExtractor.RehydrateProjects(fragment, workspaceRoot, cancellationToken))
             {
                 // Keep one compiler invocation per project and target framework. A project can legitimately appear
                 // once for each target, and the canonical union downstream needs all of those facts.
@@ -426,7 +357,7 @@ public sealed class BuildCaptureRehydrator
 
         return merged.Count == 0
             ? CaptureResult.Failed("no capture fragment recorded a C# compilation")
-            : CaptureResult.Ok(ProjectCoveringTestEdges(merged, workspaceRoot, cancellationToken));
+            : CaptureResult.Ok(_graphExtractor.AddCoveringTestEdges(merged, workspaceRoot, cancellationToken));
     }
 
     /// <summary>
@@ -454,167 +385,10 @@ public sealed class BuildCaptureRehydrator
     /// <returns>The capture result with one entry per rehydrated C# compilation.</returns>
     public CaptureResult RehydrateFromBinlog(string binlogPath, string? workspaceRoot, CancellationToken cancellationToken)
     {
-        var projects = RehydrateProjects(binlogPath, workspaceRoot, cancellationToken);
+        var projects = _graphExtractor.RehydrateProjects(binlogPath, workspaceRoot, cancellationToken);
         return projects.Count == 0
             ? CaptureResult.Failed("the build log recorded no C# compiler invocations")
-            : CaptureResult.Ok(ProjectCoveringTestEdges(projects, workspaceRoot, cancellationToken));
-    }
-
-    private static List<RehydratedProject> RehydrateProjects(
-        string binlogPath, string? workspaceRoot, CancellationToken cancellationToken)
-    {
-        using var reader = CompilerCallReaderUtil.Create(binlogPath);
-        var symbolExtractor = new SemanticSymbolExtractor();
-        var analyzers = SemanticAnalysisRunner.CreateDefault();
-        var projects = new List<RehydratedProject>();
-        foreach (var data in reader.ReadAllCompilationData())
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var call = data.CompilerCall;
-            if (call.IsCSharp != true)
-                continue;
-
-            var compilation = NormalizeSigning(data.GetCompilationAfterGenerators(cancellationToken), call.ProjectFilePath);
-            var errorCount = compilation.GetDiagnostics(cancellationToken)
-                .Count(d => d.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error);
-            var typeCount = CountTypes(compilation.Assembly.GlobalNamespace);
-
-            // Run Fuse's semantic extraction over the rehydrated compilation (never MSBuildWorkspace), the crux of
-            // tier-1: the worker produces the same symbol and wiring-graph data the in-process semantic pass does.
-            var projectDir = Path.GetDirectoryName(call.ProjectFilePath) ?? Directory.GetCurrentDirectory();
-            // Normalize file paths against the workspace root (not the project directory) so symbol and node rows
-            // match the root-relative files.normalized_path the store links foreign keys against. Falling back to the
-            // project directory reproduces the pre-fix basis, which only matched when a project sat at the root; on a
-            // nested layout it produced project-relative paths that never resolved, dropping every symbol.
-            var normalizeRoot = string.IsNullOrEmpty(workspaceRoot) ? projectDir : workspaceRoot;
-            var loaded = new LoadedProject(
-                Name: Path.GetFileNameWithoutExtension(call.ProjectFilePath) ?? call.ProjectFileName ?? "project",
-                FilePath: call.ProjectFilePath ?? "",
-                AssemblyName: compilation.AssemblyName,
-                Compilation: compilation);
-            var symbols = symbolExtractor.Extract(loaded, normalizeRoot, cancellationToken);
-            var graph = analyzers.Run(new SemanticAnalysisContext(loaded, normalizeRoot), cancellationToken);
-
-            projects.Add(new RehydratedProject(new CapturedProject(
-                Name: loaded.Name,
-                FilePath: loaded.FilePath,
-                AssemblyName: compilation.AssemblyName,
-                ErrorCount: errorCount,
-                TypeCount: typeCount,
-                SymbolCount: symbols.Count,
-                NodeCount: graph.Nodes.Count,
-                EdgeCount: graph.Edges.Count,
-                Symbols: symbols,
-                Nodes: graph.Nodes,
-                Edges: graph.Edges,
-                Routes: graph.Routes,
-                DiRegistrations: graph.DiRegistrations,
-                OptionsBindings: graph.OptionsBindings,
-                TargetFramework: call.TargetFramework),
-                loaded));
-        }
-
-        return projects;
-    }
-
-    // TestEdgeExtractor deliberately runs after every project's wiring graph exists, because test code commonly
-    // references production types from a different project. The normal workspace path does this in
-    // SemanticIndexer.RunAnalyzers; build capture must do the equivalent projection before serializing its graph.
-    // Keep target frameworks separate so CanonicalTfmUnion can record the edge availability correctly.
-    private static IReadOnlyList<CapturedProject> ProjectCoveringTestEdges(
-        IReadOnlyList<RehydratedProject> captures, string? workspaceRoot, CancellationToken cancellationToken)
-    {
-        var projected = captures.Select(c => c.Project).ToList();
-        foreach (var targetGroup in captures
-            .Select((capture, index) => (Capture: capture, Index: index))
-            .GroupBy(x => x.Capture.Project.TargetFramework ?? string.Empty, StringComparer.Ordinal)
-            .OrderBy(group => group.Key, StringComparer.Ordinal))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var members = targetGroup.ToList();
-            var nodesById = new Dictionary<string, int>(StringComparer.Ordinal);
-            var existingNodeIds = new HashSet<string>(StringComparer.Ordinal);
-            var allEdges = new List<SemanticEdgeRecord>();
-            foreach (var member in members)
-            {
-                foreach (var node in projected[member.Index].Nodes ?? [])
-                {
-                    existingNodeIds.Add(node.NodeId);
-                    nodesById.TryAdd(node.NodeId, member.Index);
-                }
-
-                allEdges.AddRange(projected[member.Index].Edges ?? []);
-            }
-
-            var diResolvesTo = allEdges
-                .Where(edge => edge.EdgeType == "di_resolves_to")
-                .GroupBy(edge => edge.FromNodeId, StringComparer.Ordinal)
-                .ToDictionary(
-                    group => group.Key,
-                    group => (IReadOnlyList<string>)group.Select(edge => edge.ToNodeId).Distinct(StringComparer.Ordinal).ToList(),
-                    StringComparer.Ordinal);
-            var root = !string.IsNullOrEmpty(workspaceRoot)
-                ? workspaceRoot
-                : Path.GetDirectoryName(members[0].Capture.Project.FilePath) ?? Directory.GetCurrentDirectory();
-            var (testNodes, testEdges) = new TestEdgeExtractor().Extract(
-                members.Select(member => member.Capture.Loaded).ToList(),
-                existingNodeIds,
-                diResolvesTo,
-                root,
-                cancellationToken);
-
-            var nodesToAdd = new Dictionary<int, List<NodeRecord>>();
-            foreach (var node in testNodes)
-            {
-                if (nodesById.TryGetValue(node.NodeId, out var owner))
-                    (nodesToAdd.TryGetValue(owner, out var list) ? list : nodesToAdd[owner] = []).Add(node);
-            }
-
-            var edgesToAdd = new Dictionary<int, List<SemanticEdgeRecord>>();
-            foreach (var edge in testEdges)
-            {
-                if (nodesById.TryGetValue(edge.FromNodeId, out var owner))
-                    (edgesToAdd.TryGetValue(owner, out var list) ? list : edgesToAdd[owner] = []).Add(edge);
-            }
-
-            foreach (var member in members)
-            {
-                var hasNodes = nodesToAdd.TryGetValue(member.Index, out var memberNodes);
-                var hasEdges = edgesToAdd.TryGetValue(member.Index, out var memberEdges);
-                if (!hasNodes && !hasEdges)
-                    continue;
-
-                var nodes = (projected[member.Index].Nodes ?? [])
-                    .Concat(memberNodes ?? [])
-                    .GroupBy(node => node.NodeId, StringComparer.Ordinal)
-                    .Select(group => group.First())
-                    .ToList();
-                var edges = (projected[member.Index].Edges ?? [])
-                    .Concat(memberEdges ?? [])
-                    .GroupBy(edge => (edge.FromNodeId, edge.ToNodeId, edge.EdgeType, edge.EvidenceFilePath), EqualityComparer<(string, string, string, string?)>.Default)
-                    .Select(group => group.First())
-                    .ToList();
-                projected[member.Index] = projected[member.Index] with
-                {
-                    Nodes = nodes,
-                    NodeCount = nodes.Count,
-                    Edges = edges,
-                    EdgeCount = edges.Count,
-                };
-            }
-        }
-
-        return projected;
-    }
-
-    private sealed record RehydratedProject(CapturedProject Project, LoadedProject Loaded);
-
-    private static int CountTypes(INamespaceSymbol ns)
-    {
-        var count = ns.GetTypeMembers().Length;
-        foreach (var child in ns.GetNamespaceMembers())
-            count += CountTypes(child);
-        return count;
+            : CaptureResult.Ok(_graphExtractor.AddCoveringTestEdges(projects, workspaceRoot, cancellationToken));
     }
 
     private static void TryDelete(string path)
