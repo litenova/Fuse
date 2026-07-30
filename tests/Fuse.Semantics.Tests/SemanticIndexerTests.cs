@@ -69,6 +69,26 @@ public sealed class SemanticIndexerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task IndexSyntaxFirstAsync_Reports_inventory_and_incremental_syntax_progress()
+    {
+        var indexer = CreateIndexer();
+        var progress = new ProgressCapture();
+
+        await indexer.IndexSyntaxFirstAsync(_projectRoot, _store, CancellationToken.None, progress);
+
+        var updates = progress.Updates;
+        Assert.Contains(updates, update => update.Stage == SemanticIndexStage.Inventory && update.TotalUnits is > 0);
+        Assert.Contains(updates, update => update.Stage == SemanticIndexStage.SyntaxExtraction);
+        Assert.Contains(updates, update => update.Stage == SemanticIndexStage.SyntaxPersistence);
+        var extraction = updates.Where(update => update.Stage == SemanticIndexStage.SyntaxExtraction).ToList();
+        Assert.All(extraction, update =>
+        {
+            if (update.TotalUnits is { } total)
+                Assert.InRange(update.CompletedUnits, 0, total);
+        });
+    }
+
+    [Fact]
     public async Task UpgradeToSemanticAsync_LandsTheGraph()
     {
         var indexer = CreateIndexer();
@@ -150,6 +170,26 @@ public sealed class SemanticIndexerTests : IAsyncLifetime
         Assert.NotNull(dir);
         // Index just the Core project directory (a clean SDK project, no ASP.NET dependency).
         return Path.Combine(dir!, "tests", "fixtures", "SampleShop", "src", "SampleShop.Core");
+    }
+
+    private sealed class ProgressCapture : IProgress<SemanticIndexProgress>
+    {
+        private readonly List<SemanticIndexProgress> _updates = [];
+
+        public IReadOnlyList<SemanticIndexProgress> Updates
+        {
+            get
+            {
+                lock (_updates)
+                    return _updates.ToArray();
+            }
+        }
+
+        public void Report(SemanticIndexProgress value)
+        {
+            lock (_updates)
+                _updates.Add(value);
+        }
     }
 
     public async Task DisposeAsync()

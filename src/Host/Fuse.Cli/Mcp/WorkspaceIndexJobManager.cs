@@ -240,7 +240,8 @@ public sealed class WorkspaceIndexJobManager : IWorkspaceIndexJobManager, IDispo
         private async Task RunAsync(IWorkspaceIndexJobExecutor executor, CancellationToken shutdownToken, TimeProvider timeProvider)
         {
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(_cancellation.Token, shutdownToken);
-            IProgress<IndexJobProgress> progress = new Progress<IndexJobProgress>(update => UpdateProgress(update, timeProvider));
+            IProgress<IndexJobProgress> progress = new InlineProgress<IndexJobProgress>(
+                update => UpdateProgress(update, timeProvider));
             try
             {
                 SemanticIndexResult result;
@@ -335,6 +336,11 @@ public sealed class WorkspaceIndexJobManager : IWorkspaceIndexJobManager, IDispo
         {
             lock (_sync)
             {
+                var currentRank = PhaseRank(_phase);
+                var updateRank = PhaseRank(update.Phase);
+                if (updateRank < currentRank)
+                    return;
+
                 if (_phase != update.Phase)
                 {
                     _phase = update.Phase;
@@ -344,13 +350,27 @@ public sealed class WorkspaceIndexJobManager : IWorkspaceIndexJobManager, IDispo
                     _completedAtPhaseStart = 0;
                 }
 
-                _completedUnits = update.CompletedUnits;
-                _totalUnits = update.TotalUnits;
+                _completedUnits = Math.Max(_completedUnits, update.CompletedUnits);
+                _totalUnits = update.TotalUnits is null
+                    ? _totalUnits
+                    : Math.Max(_totalUnits ?? 0, update.TotalUnits.Value);
                 _currentItem = update.CurrentItem;
                 if (!string.IsNullOrWhiteSpace(update.Warning) && _warnings.Count < MaxWarnings)
                     _warnings.Add(update.Warning);
             }
         }
+
+        private static int PhaseRank(IndexPhase phase) => phase switch
+        {
+            IndexPhase.Inventory => 1,
+            IndexPhase.SyntaxExtraction => 2,
+            IndexPhase.SyntaxPersistence => 3,
+            IndexPhase.SemanticPreparation => 4,
+            IndexPhase.SemanticExtraction => 5,
+            IndexPhase.SemanticPersistence => 6,
+            IndexPhase.Finalization => 7,
+            _ => 0,
+        };
 
         private void UpdateResult(SemanticIndexResult result, TimeProvider timeProvider)
         {

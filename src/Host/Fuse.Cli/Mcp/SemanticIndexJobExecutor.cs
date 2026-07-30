@@ -78,21 +78,25 @@ public sealed class SemanticIndexJobExecutor : IWorkspaceIndexJobExecutor
                 // Syntax rows stay readable while compiler analysis is active. The flag describes live work only;
                 // normal syntax indexing is a completed depth and leaves it clear.
                 await store.SetMetaAsync(SemanticIndexer.SemanticPendingMetaKey, "1", cancellationToken);
-                progress.Report(new IndexJobProgress(IndexPhase.SemanticExtraction, CurrentItem: "loading compiler workspace"));
-                await MarkAsync(store, jobId, request, IndexPhase.SemanticExtraction, "running", cancellationToken);
-                result = await _indexer.UpgradeToSemanticAsync(request.Root, store, cancellationToken);
+                result = await _indexer.UpgradeToSemanticAsync(
+                    request.Root,
+                    store,
+                    cancellationToken,
+                    ToJobProgress(progress));
                 progress.Report(new IndexJobProgress(IndexPhase.SemanticPersistence, CompletedUnits: 1, TotalUnits: 1));
             }
             else
             {
-                progress.Report(new IndexJobProgress(IndexPhase.SyntaxExtraction, CurrentItem: "extracting source declarations"));
-                await MarkAsync(store, jobId, request, IndexPhase.SyntaxExtraction, "running", cancellationToken);
-                result = await _indexer.IndexSyntaxFirstAsync(request.Root, store, cancellationToken);
+                result = await _indexer.IndexSyntaxFirstAsync(
+                    request.Root,
+                    store,
+                    cancellationToken,
+                    ToJobProgress(progress));
                 progress.Report(new IndexJobProgress(
                     IndexPhase.SyntaxPersistence,
-                    CompletedUnits: result.FileCount,
-                    TotalUnits: result.FileCount,
-                    CurrentItem: "persisting syntax index"));
+                    CompletedUnits: Math.Max(1, result.FileCount),
+                    TotalUnits: Math.Max(1, result.FileCount),
+                    CurrentItem: "syntax index ready"));
             }
 
             await MarkAsync(store, jobId, request, IndexPhase.Finalization, "completed", cancellationToken);
@@ -100,6 +104,9 @@ public sealed class SemanticIndexJobExecutor : IWorkspaceIndexJobExecutor
                 store,
                 completed: true,
                 progress: progress,
+                reportingPhase: request.Depth == IndexDepth.Semantic
+                    ? IndexPhase.SemanticPersistence
+                    : IndexPhase.SyntaxPersistence,
                 cancellationToken: cancellationToken);
             return result;
         }
@@ -112,6 +119,9 @@ public sealed class SemanticIndexJobExecutor : IWorkspaceIndexJobExecutor
                 store,
                 completed: false,
                 progress: progress,
+                reportingPhase: request.Depth == IndexDepth.Semantic
+                    ? IndexPhase.SemanticPersistence
+                    : IndexPhase.SyntaxPersistence,
                 cancellationToken: terminalWrite.Token);
             throw;
         }
@@ -143,6 +153,7 @@ public sealed class SemanticIndexJobExecutor : IWorkspaceIndexJobExecutor
         WorkspaceIndexStore store,
         bool completed,
         IProgress<IndexJobProgress> progress,
+        IndexPhase reportingPhase,
         CancellationToken cancellationToken)
     {
         try
@@ -153,20 +164,20 @@ public sealed class SemanticIndexJobExecutor : IWorkspaceIndexJobExecutor
             if (maintenance.FullTextOptimized || maintenance.FullTextMerged || maintenance.VacuumedPages > 0)
             {
                 progress.Report(new IndexJobProgress(
-                    IndexPhase.Finalization,
+                    reportingPhase,
                     CurrentItem: "maintaining SQLite index"));
             }
         }
         catch (Microsoft.Data.Sqlite.SqliteException ex)
         {
             progress.Report(new IndexJobProgress(
-                IndexPhase.Finalization,
+                reportingPhase,
                 Warning: $"database maintenance skipped: {ex.SqliteErrorCode}"));
         }
         catch (IOException)
         {
             progress.Report(new IndexJobProgress(
-                IndexPhase.Finalization,
+                reportingPhase,
                 Warning: "database maintenance skipped: I/O error"));
         }
     }
@@ -183,6 +194,23 @@ public sealed class SemanticIndexJobExecutor : IWorkspaceIndexJobExecutor
             throw new IndexJobValidationException($"Capture bundle has no readable extracted graph at {bundlePath}.");
         return graph;
     }
+
+    private static IProgress<SemanticIndexProgress> ToJobProgress(IProgress<IndexJobProgress> progress) =>
+        new InlineProgress<SemanticIndexProgress>(update => progress.Report(new IndexJobProgress(
+            update.Stage switch
+            {
+                SemanticIndexStage.Inventory => IndexPhase.Inventory,
+                SemanticIndexStage.SyntaxExtraction => IndexPhase.SyntaxExtraction,
+                SemanticIndexStage.SyntaxPersistence => IndexPhase.SyntaxPersistence,
+                SemanticIndexStage.SemanticPreparation => IndexPhase.SemanticPreparation,
+                SemanticIndexStage.SemanticExtraction => IndexPhase.SemanticExtraction,
+                SemanticIndexStage.SemanticPersistence => IndexPhase.SemanticPersistence,
+                SemanticIndexStage.Finalization => IndexPhase.Finalization,
+                _ => throw new ArgumentOutOfRangeException(nameof(update), update.Stage, "unknown semantic index stage"),
+            },
+            update.CompletedUnits,
+            update.TotalUnits,
+            update.CurrentItem)));
 
     private static async Task MarkAsync(
         IWorkspaceIndexStore store,

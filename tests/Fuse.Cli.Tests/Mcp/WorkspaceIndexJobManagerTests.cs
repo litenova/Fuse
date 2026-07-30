@@ -152,6 +152,28 @@ public sealed class WorkspaceIndexJobManagerTests : IAsyncLifetime
         Assert.True(executor.CancellationObserved.Task.IsCompleted);
     }
 
+    [Fact]
+    public async Task Progress_snapshot_never_moves_back_to_an_earlier_phase()
+    {
+        var executor = new OutOfOrderProgressExecutor();
+        await using var manager = new WorkspaceIndexJobManager(executor);
+
+        await manager.StartOrJoinAsync(Request(IndexDepth.Syntax), CancellationToken.None);
+        await executor.ProgressReported.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var snapshot = manager.GetStatus(_root);
+
+        Assert.NotNull(snapshot);
+        Assert.Equal(IndexPhase.SyntaxPersistence, snapshot.Phase);
+        Assert.Equal(4, snapshot.CompletedUnits);
+        Assert.Equal(4, snapshot.TotalUnits);
+
+        executor.Release();
+        var terminal = await manager.WaitForCompletionAsync(_root, CancellationToken.None);
+        Assert.Equal(IndexJobState.Completed, terminal!.State);
+        Assert.Equal(IndexPhase.Finalization, terminal.Phase);
+    }
+
     private IndexJobRequest Request(IndexDepth depth) => new(_root, depth, Force: false, CaptureBundlePath: null);
 
     private sealed class BlockingExecutor : IWorkspaceIndexJobExecutor
@@ -232,5 +254,28 @@ public sealed class WorkspaceIndexJobManagerTests : IAsyncLifetime
         public void ReleaseSyntax() => _releaseSyntax.TrySetResult();
 
         public void ReleaseSemantic() => _releaseSemantic.TrySetResult();
+    }
+
+    private sealed class OutOfOrderProgressExecutor : IWorkspaceIndexJobExecutor
+    {
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource ProgressReported { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<SemanticIndexResult> ExecuteAsync(
+            string jobId,
+            IndexJobRequest request,
+            IProgress<IndexJobProgress> progress,
+            CancellationToken cancellationToken)
+        {
+            progress.Report(new IndexJobProgress(IndexPhase.SyntaxExtraction, 2, 4, "A.cs"));
+            progress.Report(new IndexJobProgress(IndexPhase.SyntaxPersistence, 4, 4, "syntax committed"));
+            progress.Report(new IndexJobProgress(IndexPhase.SyntaxExtraction, 3, 4, "late callback"));
+            ProgressReported.TrySetResult();
+            await _release.Task.WaitAsync(cancellationToken);
+            return new SemanticIndexResult("syntax", 4, 0, 4, 4, 0, []);
+        }
+
+        public void Release() => _release.TrySetResult();
     }
 }

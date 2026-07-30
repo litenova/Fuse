@@ -315,6 +315,7 @@ public sealed class SemanticIndexer
     /// <param name="rootDirectory">The workspace root.</param>
     /// <param name="store">The index store to write to.</param>
     /// <param name="cancellationToken">A token to cancel the index.</param>
+    /// <param name="progress">An optional synchronous observer for inventory and syntax-stage progress.</param>
     /// <returns>A syntax-tier index summary.</returns>
     /// <remarks>
     ///     The cold index time is dominated by the MSBuild evaluation, not the syntax extraction, so the
@@ -324,20 +325,31 @@ public sealed class SemanticIndexer
     public async Task<SemanticIndexResult> IndexSyntaxFirstAsync(
         string rootDirectory,
         IWorkspaceIndexStore store,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IProgress<SemanticIndexProgress>? progress = null)
     {
         var root = Path.GetFullPath(rootDirectory);
         await WorkspaceIndexManifest.BeginBuildAsync(root, store, cancellationToken);
+        progress?.Report(new SemanticIndexProgress(
+            SemanticIndexStage.Inventory,
+            0,
+            null,
+            "scanning repository inventory"));
         var scan = await ScanFilesAsync(root, cancellationToken);
         var files = scan.Files;
+        progress?.Report(new SemanticIndexProgress(
+            SemanticIndexStage.Inventory,
+            files.Count,
+            files.Count,
+            "repository inventory complete"));
         var snapshot = new RoslynWorkspaceSnapshot(
             SemanticLoadSucceeded: false,
             Projects: [],
-            Diagnostics: [new DiagnosticRecord(DiagnosticSeverity.Info, "syntax-first", "Syntax-tier index served first; the semantic graph upgrades in the background.")],
+            Diagnostics: [new DiagnosticRecord(DiagnosticSeverity.Info, "syntax-first", "Syntax-tier index served first; run 'fuse index --semantic' to add compiler facts.")],
             ProjectReports: []);
 
         await store.ReplaceTfmAvailabilityAsync([], cancellationToken);
-        var result = await IndexSyntaxIncrementallyAsync(root, store, files, snapshot, cancellationToken);
+        var result = await IndexSyntaxIncrementallyAsync(root, store, files, snapshot, cancellationToken, progress);
         await store.SetMetaAsync("index_mode", result.Mode, cancellationToken);
         // Syntax is now the completed default index depth. Compiler work starts only after an explicit semantic
         // request, so this store is not waiting for an automatic background upgrade.
@@ -385,11 +397,13 @@ public sealed class SemanticIndexer
     /// <param name="rootDirectory">The workspace root.</param>
     /// <param name="store">The index store to write to (a fresh store handle, since the foreground store is disposed).</param>
     /// <param name="cancellationToken">A token to cancel the upgrade.</param>
+    /// <param name="progress">An optional synchronous observer for compiler-stage progress.</param>
     /// <returns>The full index summary (semantic, partial, or syntax if the load could not improve on syntax).</returns>
     public async Task<SemanticIndexResult> UpgradeToSemanticAsync(
         string rootDirectory,
         IWorkspaceIndexStore store,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IProgress<SemanticIndexProgress>? progress = null)
     {
         var root = Path.GetFullPath(rootDirectory);
         var discovery = await _discoverer.DiscoverAsync(root, cancellationToken);
@@ -407,8 +421,8 @@ public sealed class SemanticIndexer
         {
             var snapshot = await _loader.LoadAsync(discovery, cancellationToken);
             result = snapshot.SemanticLoadSucceeded
-                ? await IndexSemanticChunkedAsync(root, store, files, snapshot, cancellationToken)
-                : await IndexSyntaxChunkedAsync(root, store, files, snapshot, cancellationToken);
+                ? await IndexSemanticChunkedAsync(root, store, files, snapshot, cancellationToken, progress)
+                : await IndexSyntaxChunkedAsync(root, store, files, snapshot, cancellationToken, progress: null);
             diagnosis = BuildDiagnosisFromSnapshot(discovery, snapshot);
         }
 
@@ -428,7 +442,6 @@ public sealed class SemanticIndexer
         await StampIntegrityAsync(store, cancellationToken); // R31: record the post-upgrade integrity result.
 
         await WorkspaceIndexManifest.CompleteAsync(root, store, files, cancellationToken);
-
         return result;
     }
 
@@ -715,7 +728,8 @@ public sealed class SemanticIndexer
         IWorkspaceIndexStore store,
         IReadOnlyList<IndexedFileRecord> files,
         RoslynWorkspaceSnapshot snapshot,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IProgress<SemanticIndexProgress>? progress)
     {
         // This non-capture path cannot establish target-framework membership. Clear any prior capture-derived
         // facts rather than serving availability from an unrelated build.
@@ -739,6 +753,11 @@ public sealed class SemanticIndexer
         }
 
         var symbols = new List<SymbolRecord>();
+        progress?.Report(new SemanticIndexProgress(
+            SemanticIndexStage.SemanticExtraction,
+            0,
+            snapshot.Projects.Count,
+            "extracting compiler symbols"));
         foreach (var project in snapshot.Projects)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -757,6 +776,7 @@ public sealed class SemanticIndexer
         var bindings = new List<OptionsBindingRecord>();
         var graphDiagnostics = new List<DiagnosticRecord>();
 
+        var completedProjects = 0;
         foreach (var project in snapshot.Projects)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -772,7 +792,19 @@ public sealed class SemanticIndexer
             await store.UpsertRoutesAsync(graph.Routes, cancellationToken);
             await store.UpsertDiRegistrationsAsync(graph.DiRegistrations, cancellationToken);
             await store.UpsertOptionsBindingsAsync(graph.OptionsBindings, cancellationToken);
+            completedProjects++;
+            progress?.Report(new SemanticIndexProgress(
+                SemanticIndexStage.SemanticExtraction,
+                completedProjects,
+                snapshot.Projects.Count,
+                project.Name));
         }
+
+        progress?.Report(new SemanticIndexProgress(
+            SemanticIndexStage.SemanticPersistence,
+            1,
+            1,
+            "semantic facts persisted"));
 
         var diagnostics = snapshot.Diagnostics.Concat(graphDiagnostics).ToList();
         var mode = snapshot.Diagnostics.Any(d => d.Severity is DiagnosticSeverity.Warning or DiagnosticSeverity.Error)
@@ -787,7 +819,8 @@ public sealed class SemanticIndexer
         IWorkspaceIndexStore store,
         IReadOnlyList<IndexedFileRecord> files,
         RoslynWorkspaceSnapshot snapshot,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IProgress<SemanticIndexProgress>? progress)
     {
         // Syntax extraction has no compiler-target view, so prior capture-derived availability would be stale.
         await store.ReplaceTfmAvailabilityAsync([], cancellationToken);
@@ -808,6 +841,12 @@ public sealed class SemanticIndexer
             CancellationToken = cancellationToken,
             MaxDegreeOfParallelism = SyntaxExtractionParallelism
         };
+        var completedFiles = 0;
+        progress?.Report(new SemanticIndexProgress(
+            SemanticIndexStage.SyntaxExtraction,
+            0,
+            files.Count,
+            "extracting source declarations"));
         await Parallel.ForEachAsync(Enumerable.Range(0, files.Count), parallelOptions, async (i, ct) =>
         {
             var file = files[i];
@@ -826,6 +865,12 @@ public sealed class SemanticIndexer
                 extracted.Symbols.ToList(),
                 RetainChunksForDetail(file, extracted.Chunks).ToList(),
                 fileRoutes);
+            var completed = Interlocked.Increment(ref completedFiles);
+            progress?.Report(new SemanticIndexProgress(
+                SemanticIndexStage.SyntaxExtraction,
+                completed,
+                files.Count,
+                file.NormalizedPath));
         });
 
         var symbols = new List<SymbolRecord>();
@@ -850,6 +895,11 @@ public sealed class SemanticIndexer
         }
 
         await store.UpsertRoutesAsync(routes, cancellationToken);
+        progress?.Report(new SemanticIndexProgress(
+            SemanticIndexStage.SyntaxPersistence,
+            files.Count,
+            files.Count,
+            "syntax facts persisted"));
 
         return new SemanticIndexResult("syntax", files.Count, 0, symbols.Count, chunks.Count, routes.Count, snapshot.Diagnostics);
     }
@@ -1081,7 +1131,8 @@ public sealed class SemanticIndexer
         IWorkspaceIndexStore store,
         IReadOnlyList<IndexedFileRecord> files,
         RoslynWorkspaceSnapshot snapshot,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IProgress<SemanticIndexProgress>? progress)
     {
         var stored = await store.GetAllFileHashesAsync(cancellationToken);
         var pendingPaths = await ReadPendingSyntaxPathsAsync(store, cancellationToken);
@@ -1098,6 +1149,13 @@ public sealed class SemanticIndexer
             .OrderBy(path => path, StringComparer.Ordinal)
             .ToArray();
 
+        var totalWork = changed.Length + removed.Length;
+        var completedWork = 0;
+        progress?.Report(new SemanticIndexProgress(
+            SemanticIndexStage.SyntaxExtraction,
+            0,
+            totalWork,
+            totalWork == 0 ? "source hashes are current" : "extracting changed source declarations"));
         var ftsReplacements = 0;
         foreach (var batch in BatchSyntaxFiles(changed))
         {
@@ -1115,17 +1173,34 @@ public sealed class SemanticIndexer
                 cancellationToken,
                 resetTfmAvailability: false);
             ftsReplacements += batchResult.ChunkCount;
+            completedWork += batch.Count;
+            progress?.Report(new SemanticIndexProgress(
+                SemanticIndexStage.SyntaxExtraction,
+                completedWork,
+                totalWork,
+                batch[^1].NormalizedPath));
         }
 
         foreach (var path in removed)
         {
             cancellationToken.ThrowIfCancellationRequested();
             await store.DeleteFileAsync(path, cancellationToken);
+            completedWork++;
+            progress?.Report(new SemanticIndexProgress(
+                SemanticIndexStage.SyntaxExtraction,
+                completedWork,
+                totalWork,
+                path));
         }
 
         await store.SetMetaAsync(PendingSyntaxBatchMetaKey, string.Empty, cancellationToken);
         await store.SetMetaAsync("last_index_file_upserts", changed.Length.ToString(System.Globalization.CultureInfo.InvariantCulture), cancellationToken);
         await store.SetMetaAsync("last_index_fts_replacements", ftsReplacements.ToString(System.Globalization.CultureInfo.InvariantCulture), cancellationToken);
+        progress?.Report(new SemanticIndexProgress(
+            SemanticIndexStage.SyntaxPersistence,
+            totalWork == 0 ? 1 : totalWork,
+            totalWork == 0 ? 1 : totalWork,
+            totalWork == 0 ? "no source rows changed" : "syntax facts persisted"));
 
         var state = await store.GetStateAsync(cancellationToken);
         var routeCount = await store.GetRouteCountAsync(cancellationToken);
