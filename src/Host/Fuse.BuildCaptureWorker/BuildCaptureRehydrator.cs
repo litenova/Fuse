@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Basic.CompilerLog.Util;
 using Fuse.Indexing;
 using Fuse.Semantics;
@@ -15,14 +14,14 @@ namespace Fuse.BuildCaptureWorker;
 /// </summary>
 public sealed class BuildCaptureRehydrator
 {
-    private readonly IProcessRunner _processRunner;
+    private readonly BuildCaptureProcessExecutor _processExecutor;
 
     /// <summary>
     ///     Initializes a build-capture rehydrator with an owned process runner for its compiler build.
     /// </summary>
     /// <param name="processRunner">The runner that terminates this worker's build tree on cancellation or timeout.</param>
     public BuildCaptureRehydrator(IProcessRunner? processRunner = null) =>
-        _processRunner = processRunner ?? new OwnedProcessRunner();
+        _processExecutor = new BuildCaptureProcessExecutor(processRunner ?? new OwnedProcessRunner());
 
     /// <summary>
     ///     Builds the target and rehydrates its C# compilations, reporting each project's outcome.
@@ -38,7 +37,7 @@ public sealed class BuildCaptureRehydrator
         var binlogPath = Path.Combine(Path.GetTempPath(), $"fuse-capture-{Guid.NewGuid():N}.binlog");
         try
         {
-            var (exitCode, timedOut, firstError) = await RunBuildAsync(buildTarget, binlogPath, buildTimeout, cancellationToken);
+            var (exitCode, timedOut, firstError) = await _processExecutor.RunAsync(buildTarget, binlogPath, buildTimeout, cancellationToken);
             if (timedOut)
                 return CaptureResult.Failed($"build timed out after {buildTimeout.TotalSeconds:F0}s");
             if (exitCode != 0 || !File.Exists(binlogPath))
@@ -71,7 +70,7 @@ public sealed class BuildCaptureRehydrator
         var binlogPath = Path.Combine(Path.GetTempPath(), $"fuse-capture-{Guid.NewGuid():N}.binlog");
         try
         {
-            var (exitCode, timedOut, firstError) = await RunBuildAsync(buildTarget, binlogPath, buildTimeout, cancellationToken);
+            var (exitCode, timedOut, firstError) = await _processExecutor.RunAsync(buildTarget, binlogPath, buildTimeout, cancellationToken);
             if (timedOut)
                 return CaptureResult.Failed($"build timed out after {buildTimeout.TotalSeconds:F0}s");
             if (exitCode != 0 || !File.Exists(binlogPath))
@@ -133,7 +132,7 @@ public sealed class BuildCaptureRehydrator
         var binlogPath = Path.Combine(Path.GetTempPath(), $"fuse-check-{Guid.NewGuid():N}.binlog");
         try
         {
-            var (exitCode, timedOut, firstError) = await RunBuildAsync(buildTarget, binlogPath, buildTimeout, cancellationToken);
+            var (exitCode, timedOut, firstError) = await _processExecutor.RunAsync(buildTarget, binlogPath, buildTimeout, cancellationToken);
             if (timedOut || exitCode != 0 || !File.Exists(binlogPath))
                 return CheckResult.Abstain(timedOut ? "capture build timed out" : $"capture build did not succeed ({firstError ?? $"exit {exitCode}"}); cannot verify");
 
@@ -616,40 +615,6 @@ public sealed class BuildCaptureRehydrator
         foreach (var child in ns.GetNamespaceMembers())
             count += CountTypes(child);
         return count;
-    }
-
-    // Runs `dotnet build <target> -bl:<binlog>` with a fixed, bounded argument list (never a variable-length
-    // path or id list, per the change-safety invariant) and a timeout. `--no-incremental` is required: rehydration
-    // reads the C# compiler (Csc) invocations from the binary log, but an already-built or up-to-date repository
-    // builds incrementally and emits NO Csc invocations, so the rehydrator would see an empty log and fail with
-    // "the build log recorded no C# compiler invocations". Forcing a non-incremental build makes every project
-    // compile, so the binlog always carries the Csc calls tier-1 needs (the cost is a full compile per capture).
-    private async Task<(int ExitCode, bool TimedOut, string? FirstError)> RunBuildAsync(
-        string buildTarget, string binlogPath, TimeSpan timeout, CancellationToken cancellationToken)
-    {
-        var psi = new ProcessStartInfo("dotnet")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            WorkingDirectory = Path.GetDirectoryName(buildTarget) ?? Environment.CurrentDirectory,
-        };
-        psi.ArgumentList.Add("build");
-        psi.ArgumentList.Add(buildTarget);
-        psi.ArgumentList.Add("--no-incremental");
-        psi.ArgumentList.Add($"-bl:{binlogPath}");
-        psi.ArgumentList.Add("-nologo");
-        psi.ArgumentList.Add("-v:quiet");
-
-        var execution = await _processRunner.RunAsync(psi, timeout, cancellationToken);
-        var output = string.Concat(execution.StandardOutput, Environment.NewLine, execution.StandardError);
-        if (!execution.Started)
-            return (-1, false, execution.StartError);
-        if (execution.TimedOut)
-            return (-1, true, null);
-
-        var match = System.Text.RegularExpressions.Regex.Match(output, @"error\s+([A-Z]{2,}\d{3,})");
-        return (execution.ExitCode ?? -1, false, match.Success ? match.Groups[1].Value : null);
     }
 
     private static void TryDelete(string path)
