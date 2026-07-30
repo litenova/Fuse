@@ -89,6 +89,32 @@ public sealed class CiWorkflowParserTests
         Assert.Single(result.RehearsableCommands);
         Assert.Contains("dotnet test", result.RehearsableCommands[0]);
     }
+
+    [Fact]
+    public void Runtime_smoke_initializes_a_git_repository_before_indexing()
+    {
+        var workflow = File.ReadAllText(Path.Combine(RepositoryRoot(), ".github", "workflows", "ci.yml"));
+        var fixtureCopy = workflow.IndexOf("cp -r tests/fixtures/SampleShop/* \"$WS/\"", StringComparison.Ordinal);
+        var gitInit = workflow.IndexOf("git init -q \"$WS\"", StringComparison.Ordinal);
+        var index = workflow.IndexOf("\"$BIN\" index \"$WS\"", StringComparison.Ordinal);
+
+        Assert.True(fixtureCopy >= 0, "The runtime smoke must copy the SampleShop fixture.");
+        Assert.True(gitInit > fixtureCopy, "The runtime smoke must create a Git repository after copying the fixture.");
+        Assert.True(index > gitInit, "The runtime smoke must create a Git repository before Fuse indexes the fixture.");
+    }
+
+    private static string RepositoryRoot()
+    {
+        var current = new DirectoryInfo(AppContext.BaseDirectory);
+        while (current is not null)
+        {
+            if (File.Exists(Path.Combine(current.FullName, "Fuse.slnx")))
+                return current.FullName;
+            current = current.Parent;
+        }
+
+        throw new InvalidOperationException("Could not locate the Fuse repository root.");
+    }
 }
 
 // G8 rehearser: scans .github/workflows and produces the parity report (no execution here, so it is deterministic).
