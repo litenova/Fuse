@@ -155,6 +155,7 @@ public sealed class WorkspaceIndexJobManager : IWorkspaceIndexJobManager, IDispo
         private readonly List<string> _warnings = [];
         private readonly string _jobId = Guid.NewGuid().ToString("N");
         private readonly DateTimeOffset _startedAt;
+        private DateTimeOffset? _finishedAt;
         private IndexDepth _targetDepth;
         private IndexJobState _state = IndexJobState.Queued;
         private IndexPhase _phase = IndexPhase.Inventory;
@@ -289,6 +290,7 @@ public sealed class WorkspaceIndexJobManager : IWorkspaceIndexJobManager, IDispo
                 lock (_sync)
                 {
                     _state = IndexJobState.Completed;
+                    _finishedAt = timeProvider.GetUtcNow();
                     _currentItem = null;
                     _storage = ReadStorage(Request.Root);
                 }
@@ -298,6 +300,7 @@ public sealed class WorkspaceIndexJobManager : IWorkspaceIndexJobManager, IDispo
                 lock (_sync)
                 {
                     _state = IndexJobState.Cancelled;
+                    _finishedAt = timeProvider.GetUtcNow();
                     _currentItem = null;
                     _storage = ReadStorage(Request.Root);
                 }
@@ -308,6 +311,7 @@ public sealed class WorkspaceIndexJobManager : IWorkspaceIndexJobManager, IDispo
                 lock (_sync)
                 {
                     _state = IndexJobState.Failed;
+                    _finishedAt = timeProvider.GetUtcNow();
                     _currentItem = null;
                     _errorCode = "index_invalid_request";
                     _errorMessage = ex.Message;
@@ -320,6 +324,7 @@ public sealed class WorkspaceIndexJobManager : IWorkspaceIndexJobManager, IDispo
                 lock (_sync)
                 {
                     _state = IndexJobState.Failed;
+                    _finishedAt = timeProvider.GetUtcNow();
                     _currentItem = null;
                     _errorCode = "index_failed";
                     _errorMessage = ex.Message;
@@ -412,6 +417,7 @@ public sealed class WorkspaceIndexJobManager : IWorkspaceIndexJobManager, IDispo
                     return false;
 
                 _state = IndexJobState.Completed;
+                _finishedAt = timeProvider.GetUtcNow();
                 _currentItem = null;
                 _storage = ReadStorage(Request.Root);
                 return true;
@@ -459,7 +465,7 @@ public sealed class WorkspaceIndexJobManager : IWorkspaceIndexJobManager, IDispo
                 eta,
                 _currentItem,
                 _startedAt,
-                timeProvider.GetUtcNow() - _startedAt,
+                (_finishedAt ?? timeProvider.GetUtcNow()) - _startedAt,
                 _counts,
                 _storage,
                 _warnings.ToArray(),

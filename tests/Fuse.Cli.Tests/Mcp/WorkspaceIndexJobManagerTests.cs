@@ -212,6 +212,28 @@ public sealed class WorkspaceIndexJobManagerTests : IAsyncLifetime
         Assert.Equal(IndexPhase.Finalization, terminal.Phase);
     }
 
+    [Fact]
+    public async Task Completed_job_elapsed_stays_at_its_terminal_duration()
+    {
+        var time = new ManualTimeProvider(new DateTimeOffset(2026, 7, 30, 12, 0, 0, TimeSpan.Zero));
+        var executor = new BlockingExecutor();
+        await using var manager = new WorkspaceIndexJobManager(executor, time);
+
+        await manager.StartOrJoinAsync(Request(IndexDepth.Syntax), CancellationToken.None);
+        await executor.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        time.Advance(TimeSpan.FromSeconds(4));
+        executor.Release();
+
+        var completed = await manager.WaitForCompletionAsync(_root, CancellationToken.None);
+        time.Advance(TimeSpan.FromSeconds(10));
+        var retained = manager.GetStatus(_root);
+
+        Assert.NotNull(completed);
+        Assert.NotNull(retained);
+        Assert.Equal(TimeSpan.FromSeconds(4), completed.Elapsed);
+        Assert.Equal(completed.Elapsed, retained.Elapsed);
+    }
+
     private IndexJobRequest Request(IndexDepth depth) => new(_root, depth, Force: false, CaptureBundlePath: null);
 
     private sealed class BlockingExecutor : IWorkspaceIndexJobExecutor
@@ -329,5 +351,14 @@ public sealed class WorkspaceIndexJobManagerTests : IAsyncLifetime
         }
 
         public void Release() => _release.TrySetResult();
+    }
+
+    private sealed class ManualTimeProvider(DateTimeOffset initial) : TimeProvider
+    {
+        private long _utcTicks = initial.UtcTicks;
+
+        public override DateTimeOffset GetUtcNow() => new(Interlocked.Read(ref _utcTicks), TimeSpan.Zero);
+
+        public void Advance(TimeSpan duration) => Interlocked.Add(ref _utcTicks, duration.Ticks);
     }
 }
