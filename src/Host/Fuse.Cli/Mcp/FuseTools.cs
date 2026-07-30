@@ -10,7 +10,6 @@ using Fuse.Reduction.Caching;
 using Fuse.Retrieval;
 using Fuse.Semantics;
 using Microsoft.Data.Sqlite;
-using ModelContextProtocol.Server;
 
 namespace Fuse.Cli.Mcp;
 
@@ -69,7 +68,6 @@ internal static partial class FuseToolOperations
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <param name="runtime">The host-owned index, compiler, and job services.</param>
     /// <returns>The action's result, or a descriptive error.</returns>
-    [McpServerTool(Name = "fuse_workspace", ReadOnly = false)]
     [Description("Workspace status and lifecycle (the loop's first stop). action=status (default): index mode, verification grade, freshness, and active job. action=index: start or join the syntax index job. action=cancel: stop the active index job. action=map: symbols, routes, and counts. action=doctor: daemon, configuration, storage, compiler-target, and job diagnostics. action=apply: write a proposed single-file edit (file + content) to the working tree; it is a dry run unless write=true and refuses paths outside the workspace root.")]
     public static Task<string> FuseWorkspaceAsync(
         SemanticIndexer indexer,
@@ -419,7 +417,6 @@ internal static partial class FuseToolOperations
     /// <param name="cancellationToken">A token to cancel the read.</param>
     /// <param name="runtime">The host-owned index, compiler, and job services.</param>
     /// <returns>The matches grouped by kind.</returns>
-    [McpServerTool(Name = "fuse_find", ReadOnly = true)]
     [Description("The find union: locate what a task needs by kind. Exact lookup - kind=symbol (by name), path (by fragment), text (full-text), or all. Wiring - kind=service, request, route, or config resolves the query to its implementation/handler/action/options. kind=signatures returns the query symbol's exact signature. kind=neighbors returns the query symbol's callers and implementers. kind=task ranks candidate files for the query with the graded refuse-and-route contract. Use instead of broad grep when the name, wiring, or task is known.")]
     public static Task<string> FuseFindAsync(
         SemanticIndexer indexer,
@@ -535,7 +532,6 @@ internal static partial class FuseToolOperations
     /// <param name="maxTokens">The token ceiling, or zero for none.</param>
     /// <param name="cancellationToken">A token to cancel the run.</param>
     /// <returns>The reduced output, or a descriptive error.</returns>
-    [McpServerTool(Name = "fuse_reduce", ReadOnly = true)]
     [Description("Compact a specific set of files (or raw content) by running Fuse's reduction, without collecting a whole directory. Pass `files` or `content` (+ `extension`).")]
     public static Task<string> FuseReduceAsync(
         FusionOrchestrator orchestrator,

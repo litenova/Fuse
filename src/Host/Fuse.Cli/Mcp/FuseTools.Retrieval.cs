@@ -11,7 +11,6 @@ using Fuse.Retrieval;
 using Fuse.Scoping;
 using Fuse.Semantics;
 using Microsoft.Data.Sqlite;
-using ModelContextProtocol.Server;
 
 namespace Fuse.Cli.Mcp;
 
@@ -225,7 +224,6 @@ internal static partial class FuseToolOperations
     /// <param name="cancellationToken">A token to cancel the read.</param>
     /// <param name="runtime">The host-owned index, compiler, and job services.</param>
     /// <returns>The impacted files and symbols with the edge that connects them, plus an availability note.</returns>
-    [McpServerTool(Name = "fuse_impact", ReadOnly = true)]
     [Description("Blast radius for a symbol before you edit it: the callers, implementers, consumers, and referencing types a change would touch, from the persisted semantic graph. No bodies. The exact signature-change break set (which call sites would no longer bind) needs an oracle-grade (tier-1) load and is reported unavailable otherwise, rather than guessed. Package-upgrade mode (F3): pass package + fromVersion + toVersion to get the public-API break set between two cached NuGet package versions (removed/changed public members), so a bump's risk is knowable before the lockfile changes; it abstains when a version is not in the local cache and names its blind spots.")]
     public static Task<string> FuseImpactAsync(
         SemanticIndexer indexer,
@@ -341,7 +339,6 @@ internal static partial class FuseToolOperations
     /// <param name="cancellationToken">A token to cancel the run.</param>
     /// <param name="runtime">The host-owned index, compiler, and job services.</param>
     /// <returns>The per-test verdicts plus the grade, or the selection-only floor when nothing covers the symbol.</returns>
-    [McpServerTool(Name = "fuse_test", ReadOnly = true)]
     [Description("Run the covering tests for a symbol: the tests that reach it through the persisted tests edges, run at build grade (dotnet test scoped by filter to just those test types, the whole suite never run), with per-test verdicts. Selection-only when no tests edge reaches the symbol. Build-grade runs the real build; the emit fast path is future work. Candidate racing (F2): pass candidates (a JSON array of {id?, file, content} single-file edits, bounded k) to speculatively typecheck all of them over the live resident compilation and get per-candidate diagnostics plus a winner by strict dominance (a lone clean candidate beats any with errors; ties reported); each candidate reuses the shared held compilation (only its own changed file rebinds), racing needs a resident workspace (FUSE_RESIDENT=1) and never applies a candidate.")]
     public static Task<string> FuseTestAsync(
         SemanticIndexer indexer,
@@ -571,7 +568,6 @@ internal static partial class FuseToolOperations
     /// <param name="cancellationToken">A token to cancel the rename.</param>
     /// <param name="runtime">The host-owned compiler cache used for this refactor.</param>
     /// <returns>The staged per-file diffs, or an explicit abstention.</returns>
-    [McpServerTool(Name = "fuse_refactor", ReadOnly = true)]
     [Description("Compiler-executed, verify-gated refactors returned as a staged diff (nothing is written to disk). operation=rename (default): rename a symbol and all its references through Roslyn (a same-named unrelated symbol is not touched). operation=add-parameter: add a trailing parameter to a method and its override/interface family, threading an explicit argument (the `argument` value) into every call site. operation=add-cancellation-token: add a CancellationToken parameter and thread an in-scope token into every call site that has one, listing token-less sites as manual follow-ups. operation=remove-parameter: remove a parameter (named by parameterName) and drop its argument at every call site, abstaining when the parameter is used in a body or a call site passes a non-trivial (possibly side-effecting) argument. operation=reorder-parameters: reorder parameters into `newOrder` (comma-separated names), abstaining if any call site uses positional arguments (only named-argument call sites are safe to reorder). operation=extract-interface: generate an interface from a class's public instance methods and properties (name it with newName, else I<Class>) and make the class implement it. operation=move-type: move a top-level type (symbol) to its own new file named after it, removing it from its current file. operation=apply-codefix: apply the repo's own analyzer code fix for `diagnosticId` in `file`, driving that diagnostic to zero (discovers the analyzers and [ExportCodeFixProvider] fixes from the project's analyzer references). The signature and type operations recompile the solution and return the diff ONLY when no new diagnostic is introduced; otherwise they abstain naming the offending sites (never a mostly-right diff). Rename and the signature ops answer only when the whole solution loads cleanly; abstain otherwise. Review and apply the staged diff with normal editing tools, then run the repository's required gates.")]
     public static Task<string> FuseRefactorAsync(
         [Description("Absolute or relative path to the workspace directory.")] string path = ".",
@@ -800,7 +796,6 @@ internal static partial class FuseToolOperations
     /// <param name="cancellationToken">A token to cancel the check.</param>
     /// <param name="runtime">The host-owned index, compiler, and job services.</param>
     /// <returns>The diagnostics for the changed document, a clean verdict, or an explicit abstention.</returns>
-    [McpServerTool(Name = "fuse_check", ReadOnly = true)]
     [Description("Speculatively typecheck a proposed single-file edit: the compiler errors and warnings it would produce, without writing the file. Verification never shrugs (D11): oracle-grade (sub-second, no build) when the repo is captured at tier-1; otherwise build-grade, running dotnet build scoped to the owning project (tens of seconds) and parsing the same diagnostics; abstains only when even the toolchain cannot run, naming the reason. Every answer is stamped with its grade. Delta mode (S2): pass a session id with no content to get the diagnostics your on-disk edits introduced or resolved since the session baseline (needs a resident workspace; does not run a build); full:true returns the whole current set; markGreen:true resets the baseline to now. Analyzer parity (S4): when a resident workspace serves the root, analyzers:true (the default) also runs the repo's configured analyzers and nullable warnings at their editorconfig severities, so a green check matches CI.")]
     public static Task<string> FuseCheckAsync(
         SemanticIndexer indexer,
@@ -1041,7 +1036,6 @@ internal static partial class FuseToolOperations
     /// <param name="sessionId">Session id; files already sent unchanged in the session are elided.</param>
     /// <param name="cancellationToken">A token to cancel the read.</param>
     /// <returns>The emitted context payload.</returns>
-    [McpServerTool(Name = "fuse_context", ReadOnly = true)]
     [Description("Plan and emit context (source bodies, mixed render tiers, manifest, provenance) for a set of seeds. Feed it the file paths from fuse_find (kind=task) or the names it resolves from wiring kinds. Pass a sessionId to elide files already sent in the session.")]
     public static Task<string> FuseContextAsync(
         SemanticIndexer indexer,
@@ -1130,7 +1124,6 @@ internal static partial class FuseToolOperations
     /// <param name="maxChangedFiles">The maximum changed files before a partial review response.</param>
     /// <param name="cancellationToken">A token to cancel the read.</param>
     /// <returns>The review preamble plus the emitted context payload.</returns>
-    [McpServerTool(Name = "fuse_review", ReadOnly = true)]
     [Description("Review the semantic impact of a change since a git base ref: changed files, the blast radius (callers, DI consumers, route/request handlers, options consumers, tests), and the packed context. The flagship tool for PR/change work.")]
     public static Task<string> FuseReviewAsync(
         SemanticIndexer indexer,
