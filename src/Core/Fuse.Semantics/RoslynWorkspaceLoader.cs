@@ -72,8 +72,8 @@ public sealed class RoslynWorkspaceLoader
     {
         using var workspace = MSBuildWorkspace.Create();
         // MSBuild design-time build problems surface here rather than as exceptions; record them as warnings.
-        workspace.WorkspaceFailed += (_, args) =>
-            diagnostics.Add(new DiagnosticRecord(DiagnosticSeverity.Warning, "msbuild-diagnostic", args.Diagnostic.Message));
+        _ = workspace.RegisterWorkspaceFailedHandler(args =>
+            diagnostics.Add(new DiagnosticRecord(DiagnosticSeverity.Warning, "msbuild-diagnostic", args.Diagnostic.Message)));
 
         IReadOnlyList<Project> projects;
         if (discovery is { Kind: WorkspaceKind.Solution, SolutionPath: { } solutionPath })
@@ -218,6 +218,7 @@ public sealed record LoadedProject(
 /// <param name="SemanticLoadSucceeded">Whether at least one project loaded with a compilation.</param>
 /// <param name="Projects">The loaded projects and their compilations; empty on failure.</param>
 /// <param name="Diagnostics">Diagnostics gathered during loading.</param>
+/// <param name="ProjectReports">The per-project compiler-load outcomes.</param>
 public sealed record RoslynWorkspaceSnapshot(
     bool SemanticLoadSucceeded,
     IReadOnlyList<LoadedProject> Projects,

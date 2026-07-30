@@ -29,7 +29,7 @@ namespace Fuse.Cli.Rpc;
 ///     Method names use the <c>fuse/</c> namespace. A random session token is generated at host start, returned
 ///     from <c>fuse/handshake</c>, and required on every other RPC method. When the process is the
 ///     <c>fuse host</c> entry point, the served repository root is taken from <c>--directory</c> (defaulting to
-///     the current directory) and every RPC method that carries a <paramref name="root" /> rejects a path that
+///     the current directory) and every RPC method that carries a <c>root</c> parameter rejects a path that
 ///     does not match it. The service never throws across the wire for an expected condition; it returns a typed
 ///     DTO so the client can render a clear state rather than parse an error.
 /// </remarks>

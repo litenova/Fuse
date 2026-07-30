@@ -18,12 +18,6 @@ namespace Fuse.Semantics;
 public sealed class DotNetWorkspaceDiscoverer
 {
 
-    /// <summary>
-    ///     Discovers the workspace under a root directory.
-    /// </summary>
-    /// <param name="root">The workspace root.</param>
-    /// <param name="cancellationToken">A token to cancel the discovery.</param>
-    /// <returns>The discovery result describing how the workspace should be loaded.</returns>
     // Path segments that mark a solution or project as a test, fixture, or sample tree rather than the repo's own
     // product surface. A solution nested under one of these must never be loaded as the repo's semantic tier ahead
     // of a root-level solution (R24): on the Fuse repo, that is why discovery once bound to tests/.../SampleShop.sln

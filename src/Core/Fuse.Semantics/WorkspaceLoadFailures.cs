@@ -10,7 +10,7 @@ namespace Fuse.Semantics;
 /// </summary>
 /// <remarks>
 ///     A solution-wide refactor must abstain when a project failed to load (the change could be incomplete), but
-///     <see cref="MSBuildWorkspace" /> raises <see cref="MSBuildWorkspace.WorkspaceFailed" /> for many benign
+///     <see cref="MSBuildWorkspace" /> reports many benign diagnostics through its workspace-failure handler:
 ///     conditions too: an analyzer assembly that cannot be loaded into the workspace, an SDK-resolver note, or a
 ///     missing optional targets file. Treating every event as a failure made the refactorers abstain on any real
 ///     solution. This helper collects only Failure-kind diagnostics, so a refactor proceeds through benign
@@ -19,7 +19,7 @@ namespace Fuse.Semantics;
 public static class WorkspaceLoadFailures
 {
     /// <summary>
-    ///     Subscribes to <see cref="MSBuildWorkspace.WorkspaceFailed" /> and returns the live list that accumulates
+    ///     Registers a workspace-failure handler and returns the live list that accumulates
     ///     only <see cref="WorkspaceDiagnosticKind.Failure" /> messages as the workspace loads.
     /// </summary>
     /// <param name="workspace">The workspace to observe.</param>
@@ -27,11 +27,11 @@ public static class WorkspaceLoadFailures
     public static List<string> Track(MSBuildWorkspace workspace)
     {
         var failures = new List<string>();
-        workspace.WorkspaceFailed += (_, e) =>
+        _ = workspace.RegisterWorkspaceFailedHandler(e =>
         {
             if (e.Diagnostic.Kind == WorkspaceDiagnosticKind.Failure)
                 failures.Add(e.Diagnostic.Message);
-        };
+        });
         return failures;
     }
 }

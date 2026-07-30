@@ -1125,6 +1125,9 @@ public sealed partial class FuseTools
     /// <param name="includeTests">Whether to include related test files.</param>
     /// <param name="format">The output format: xml, markdown, or json.</param>
     /// <param name="sessionId">Session id; files already sent unchanged in the session are elided.</param>
+    /// <param name="handoff">Whether to render a handoff packet instead of review context.</param>
+    /// <param name="checkSession">The check session that gates a handoff packet.</param>
+    /// <param name="maxChangedFiles">The maximum changed files before a partial review response.</param>
     /// <param name="cancellationToken">A token to cancel the read.</param>
     /// <returns>The review preamble plus the emitted context payload.</returns>
     [McpServerTool(Name = "fuse_review", ReadOnly = true)]

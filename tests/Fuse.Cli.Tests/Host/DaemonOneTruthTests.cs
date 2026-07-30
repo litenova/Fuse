@@ -41,6 +41,7 @@ public sealed class DaemonOneTruthTests
     {
         var fuseDll = FuseDll();
         RequiresSdkIntegration.RequireArtifact(fuseDll, "fuse.dll");
+        var executable = fuseDll!;
 
         var work = Path.Combine(Path.GetTempPath(), "fuse-onetruth-it", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(work);
@@ -59,7 +60,7 @@ public sealed class DaemonOneTruthTests
             CreateNoWindow = true,
             WorkingDirectory = work,
         };
-        psi.ArgumentList.Add(fuseDll);
+        psi.ArgumentList.Add(executable);
         psi.ArgumentList.Add("host");
         psi.ArgumentList.Add("--directory");
         psi.ArgumentList.Add(work);
@@ -113,6 +114,7 @@ public sealed class DaemonOneTruthTests
     {
         var fuseDll = FuseDll();
         RequiresSdkIntegration.RequireArtifact(fuseDll, "fuse.dll");
+        var executable = fuseDll!;
 
         var work = Path.Combine(Path.GetTempPath(), "fuse-index-onetruth-it", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(work);
@@ -131,7 +133,7 @@ public sealed class DaemonOneTruthTests
             CreateNoWindow = true,
             WorkingDirectory = work,
         };
-        psi.ArgumentList.Add(fuseDll);
+        psi.ArgumentList.Add(executable);
         psi.ArgumentList.Add("host");
         psi.ArgumentList.Add("--directory");
         psi.ArgumentList.Add(work);

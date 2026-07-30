@@ -26,6 +26,7 @@ All notable changes to Fuse are documented here. The format is based on Keep a C
 
 ### Fixed
 
+- Production builds treat compiler warnings as errors. Obsolete Roslyn event subscriptions, ambiguous XML documentation, and nullable test setup were corrected before enabling the gate.
 - Read-only index opens no longer rerun database pragmas or create schema tables. A contended find request now returns its availability header within the short read timeout. Resident compiler projection uses the same Git blob and SHA-256 identities as the scanner, so its follow-up reconcile does not rewrite unchanged files. Corrupt non-database files reach the derived-data recovery path instead of being described as a generic schema mismatch.
 
 ### Removed

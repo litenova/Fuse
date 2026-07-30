@@ -34,7 +34,7 @@ public static class HostPipeSecurity
     ///     platform default applies.
     /// </summary>
     /// <param name="pipeName">The bare pipe name (without the <c>\\.\pipe\</c> prefix).</param>
-    /// <returns>A server stream ready for <see cref="NamedPipeServerStream.WaitForConnectionAsync" />.</returns>
+    /// <returns>A server stream ready for <c>WaitForConnectionAsync</c>.</returns>
     public static NamedPipeServerStream CreateServerStream(string pipeName)
     {
         if (!OperatingSystem.IsWindows() || !RestrictToCurrentUserOptIn())
