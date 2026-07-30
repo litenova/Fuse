@@ -161,7 +161,26 @@ public sealed class McpServeIntegrationTests
             "fuse_workspace",
             new Dictionary<string, object?> { ["action"] = "index", ["path"] = fixture.ProjectPath },
             cancellationToken: TestCancellation);
-        Assert.StartsWith("Indexed", TextContent(indexResult));
+        Assert.Contains("index job:", TextContent(indexResult));
+        Assert.Contains("index job owner: daemon", TextContent(indexResult));
+
+        string statusText = string.Empty;
+        for (var attempt = 0; attempt < 100; attempt++)
+        {
+            var status = await client.CallToolAsync(
+                "fuse_workspace",
+                new Dictionary<string, object?> { ["action"] = "status", ["path"] = fixture.ProjectPath },
+                cancellationToken: TestCancellation);
+            statusText = TextContent(status);
+            if (statusText.Contains("index job state: Completed", StringComparison.Ordinal))
+                break;
+            if (statusText.Contains("index job state: Failed", StringComparison.Ordinal)
+                || statusText.Contains("index job state: Cancelled", StringComparison.Ordinal))
+                break;
+            await Task.Delay(100, TestCancellation);
+        }
+
+        Assert.Contains("index job state: Completed", statusText);
 
         var beforeEdit = await client.CallToolAsync(
             "fuse_find",
@@ -185,6 +204,30 @@ public sealed class McpServeIntegrationTests
             "fuse_find",
             new Dictionary<string, object?> { ["path"] = fixture.ProjectPath, ["query"] = "GearboxService", ["kind"] = "symbol" },
             cancellationToken: TestCancellation);
+        if (!TextContent(afterEdit).Contains("GearboxService", StringComparison.Ordinal))
+        {
+            statusText = string.Empty;
+            for (var attempt = 0; attempt < 100; attempt++)
+            {
+                var status = await client.CallToolAsync(
+                    "fuse_workspace",
+                    new Dictionary<string, object?> { ["action"] = "status", ["path"] = fixture.ProjectPath },
+                    cancellationToken: TestCancellation);
+                statusText = TextContent(status);
+                if (statusText.Contains("index job state: Completed", StringComparison.Ordinal)
+                    || statusText.Contains("index job state: Failed", StringComparison.Ordinal)
+                    || statusText.Contains("index job state: Cancelled", StringComparison.Ordinal))
+                    break;
+                await Task.Delay(100, TestCancellation);
+            }
+
+            Assert.Contains("index job state: Completed", statusText);
+            afterEdit = await client.CallToolAsync(
+                "fuse_find",
+                new Dictionary<string, object?> { ["path"] = fixture.ProjectPath, ["query"] = "GearboxService", ["kind"] = "symbol" },
+                cancellationToken: TestCancellation);
+        }
+
         Assert.Contains("GearboxService", TextContent(afterEdit));
     }
 

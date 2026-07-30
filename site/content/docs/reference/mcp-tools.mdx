@@ -9,7 +9,7 @@ This page is for engineers writing agent instructions and for experts who need t
 
 ## Purpose and scope
 
-Indexed reads, including `fuse_workspace action=status`, validate or build the persistent index on first use, so an explicit `fuse_workspace action=index` call is optional. The CLI-only `fuse diagnostics` command remains read-only and reports `not_indexed` without creating `.fuse/fuse.db`. The index lives in one SQLite file at the repository root: `.fuse/fuse.db`. Automatic index and reconcile writes modify derived data only. The sole MCP path that writes the working tree is `fuse_workspace action=apply`, which is a dry run unless `write=true`. Token budgets are honored by the plan, and secret redaction runs before any source reaches the payload.
+Indexed read tools build the syntax index on first use. `fuse_workspace action=status` is a no-write lifecycle probe: it reports a cold workspace or an active job without creating `.fuse/fuse.db`. Use `fuse_workspace action=index` to start or join the repository job explicitly. The CLI-only `fuse diagnostics` command also reports `not_indexed` without creating `.fuse/fuse.db`. The index lives in one SQLite file at the repository root: `.fuse/fuse.db`. Automatic index and reconcile writes modify derived data only. The sole MCP path that writes the working tree is `fuse_workspace action=apply`, which is a dry run unless `write=true`. Token budgets are honored by the plan, and secret redaction runs before any source reaches the payload.
 
 Every operation except `fuse_reduce` requires a Git repository identity. Fuse walks upward from `path` to the nearest `.git` directory or file, then uses that repository root for scanning, the daemon, locks, and the database. A folder outside Git returns `workspace_identity_unresolved:` before any workspace operation starts. `fuse_reduce` remains available because it does not use the workspace index.
 
@@ -30,9 +30,9 @@ not how fast it is.
 | **offline** | `fuse_reduce` | No |
 | **repository** | `fuse_workspace action=apply`; `fuse_impact` package-upgrade mode | No, but a Git repository identity is required |
 | **compiler** | `fuse_check`, `fuse_refactor`, `fuse_test` candidate racing | No for compiler verification; the index is optional enrichment only |
-| **indexed** | `fuse_workspace` (`status`, `index`, `map`, `doctor`), `fuse_find`, `fuse_context`, `fuse_impact` symbol mode, `fuse_review`, `fuse_test` covering-test selection | Yes (built on first use for read tools, or warm read when already present) |
+| **indexed** | `fuse_workspace` (`index`, `map`, `doctor`), `fuse_find`, `fuse_context`, `fuse_impact` symbol mode, `fuse_review`, `fuse_test` covering-test selection | Yes (built on first use for read tools, or warm read when already present) |
 
-`fuse_workspace action=status` validates or warms the index. `fuse diagnostics` is the no-write CLI inspection path.
+`fuse_workspace action=status` reports the retained store and job without starting a build. `fuse diagnostics` is the equivalent no-write CLI inspection path.
 
 Compiler-tier tools discover projects and run the toolchain first. `fuse_check` verifies a proposed edit before
 opening the index; repair packets are attached afterward when the store is available, with a named omission note
@@ -73,7 +73,7 @@ availability: index mode semantic; full-text search available; tier-1 build capt
 
 | Value | Meaning |
 |-------|---------|
-| `not_indexed` | No completed index is available. MCP status normally warms first; CLI `fuse diagnostics` can report this without writing. A completed empty repository is `ready` with zero files. |
+| `not_indexed` | No completed index is available. `fuse_workspace action=status` reports this without writing. A completed empty repository is `ready` with zero files. |
 | `building_syntax` | Syntax-first cold start: the syntax tier is live and a semantic upgrade is pending. |
 | `upgrade_pending` | The index exists at syntax or partial tier and a background semantic or tier-1 upgrade is running. |
 | `ready` | The index is current for reads at its loaded tier. |
@@ -81,22 +81,23 @@ availability: index mode semantic; full-text search available; tier-1 build capt
 | `index_rebuilding` | The store failed an integrity check (missing or inconsistent full-text index, or symbols with zero chunks) and is being rebuilt; it is never reported `ready` in this state. |
 | `stale_as_of` | A bulk change outran per-file reconcile and a full replacement is pending. The indexed read coordinator starts that replacement automatically. |
 
-`files_indexed` is omitted only when the store cannot be read (for example an exclusive SQLite lock). `fuse_workspace action=status` warms or validates first; `fuse diagnostics` reports the stored state without starting a build.
+`files_indexed` is omitted only when the store cannot be read (for example an exclusive SQLite lock). `fuse_workspace action=status` reports the stored state and active job without starting a build.
 
 ## fuse_workspace
 
 Workspace status and lifecycle: the loop's first stop and the one explicit tree-write path. Select the operation with `action`.
 
 - **`doctor`**: the semantic load tier, the selected solution (R24), per-project load reasons, the index integrity result (R31), the files skipped during indexing (R35: too large, unreadable), and the running `fuse host` daemons with their served roots and versions (R28).
-- **`status`** (default): validates or warms the repository index, then reports the index mode, verification grade, freshness, and `index_state` (`building_syntax`, `upgrade_pending`, `ready`, `index_busy`, `stale_as_of`), plus `files_indexed` when known.
-- **`index`**: build or refresh the persistent semantic index. The index mode is `semantic` when the workspace loads through MSBuild/Roslyn, `partial` when some projects fall back, and `syntax` when no project loads.
+- **`status`** (default): reports the index mode, verification grade, freshness, storage, daemon owner, and active job without starting a build. When a job is active, `next_action` gives the exact status or cancel call.
+- **`index`**: starts or joins the repository's syntax job. It returns the job id immediately. A request cancellation stops only the caller's wait; call `action=cancel` to stop the shared job.
+- **`cancel`**: requests cancellation of the active repository job. The job remains daemon-owned until it reaches `Cancelled`, `Completed`, or `Failed`.
 - **`map`**: the workspace map of indexed symbols, routes, and counts.
 - **`doctor`**: the per-project semantic-load diagnosis (why a project loaded at the tier it did). The diagnosis is served from the stamp written into the index at index time (R43), so doctor is sub-second and reflects what was actually indexed - it does not re-run the full MSBuild/Roslyn load (measured tens of seconds on a large repo). The summary header uses the same fast `index_meta` read as `status`. Pass `refresh=true` to force a live MSBuild load instead (or when no stamp is present yet, doctor falls back to a live load automatically). The output names its source (`diagnosis source: warm index` or `diagnosis source: live MSBuild load`).
 - **`apply`**: write a proposed single-file edit (`file` plus `content`) to the working tree. This is the server's one explicit tree-write path: it is a dry run that only reports the change unless `write=true`, and it refuses any `file` that resolves outside the workspace root. The write is atomic (a temp file on the same volume is renamed into place, so a reader never sees a half-written file and an interrupted write leaves the original intact) and conflict-checked: pass `expectedHash` (the SHA-256 hex of the content the edit was derived from) and apply refuses with a `validation_error:` conflict rather than clobbering when the file changed since (a concurrent edit landed, or the file was deleted). The conflict is reported even on a dry run.
 
 | Parameter | Type | Default | Meaning |
 |-----------|------|---------|---------|
-| `action` | string | `status` | `status`, `index`, `map`, `doctor`, or `apply` |
+| `action` | string | `status` | `status`, `index`, `cancel`, `map`, `doctor`, or `apply` |
 | `path` | string | `.` | Workspace directory |
 | `detail` | string | `all` | For `map`: `symbols`, `routes`, or `all` |
 | `maxRows` | int | 200 | For `map`: maximum rows per section |

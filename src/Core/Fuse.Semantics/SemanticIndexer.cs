@@ -450,6 +450,40 @@ public sealed class SemanticIndexer
         return await _scanner.ScanWithSkipsAsync(new FileScanRequest(root, scanExtensions), cancellationToken);
     }
 
+    /// <summary>
+    ///     Checks whether the current source inventory matches the hashes persisted in an index without writing it.
+    /// </summary>
+    /// <param name="rootDirectory">The workspace root.</param>
+    /// <param name="store">The readable index store.</param>
+    /// <param name="cancellationToken">A token to cancel scanning or hash comparison.</param>
+    /// <returns>True when every current indexed file and hash matches the stored inventory.</returns>
+    /// <remarks>
+    ///     This is the read-side half of the freshness contract. A caller that receives false must start or join
+    ///     a repository job before returning indexed facts; it must not serve stale rows while a file edit waits
+    ///     to be reconciled.
+    /// </remarks>
+    public async Task<bool> IsInventoryCurrentAsync(
+        string rootDirectory,
+        IWorkspaceIndexStore store,
+        CancellationToken cancellationToken)
+    {
+        var root = Path.GetFullPath(rootDirectory);
+        var stored = await store.GetAllFileHashesAsync(cancellationToken);
+        var scan = await ScanFilesAsync(root, cancellationToken);
+        if (stored.Count != scan.Files.Count)
+            return false;
+
+        foreach (var file in scan.Files)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!stored.TryGetValue(file.NormalizedPath, out var storedHash)
+                || !string.Equals(storedHash, file.ContentHash, StringComparison.Ordinal))
+                return false;
+        }
+
+        return true;
+    }
+
     // R35: record the files skipped during a scan (too large, unreadable) into index_meta so doctor can surface
     // them; a bounded summary keeps the meta value small on a repo with many skips.
     private static async Task StampSkippedFilesAsync(

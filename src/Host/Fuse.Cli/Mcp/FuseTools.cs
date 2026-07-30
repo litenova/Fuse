@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Text;
 using Fuse.Cli;
+using Fuse.Cli.Services;
 using Fuse.Collection.Templates;
 using Fuse.Fusion;
 using Fuse.Indexing;
@@ -25,29 +26,6 @@ namespace Fuse.Cli.Mcp;
 [McpServerToolType]
 public sealed partial class FuseTools
 {
-    /// <summary>
-    ///     Builds or refreshes the persistent semantic index for a workspace.
-    /// </summary>
-    /// <param name="indexer">The semantic indexer.</param>
-    /// <param name="path">The workspace directory.</param>
-    /// <param name="cancellationToken">A token to cancel indexing.</param>
-    /// <returns>A summary of the index pass, or a descriptive error.</returns>
-    // Reached through fuse_workspace (action=index); kept as an internal helper the workspace tool calls.
-    public static async Task<string> FuseIndexAsync(
-        SemanticIndexer indexer,
-        [Description("Absolute or relative path to the workspace directory.")] string path = ".",
-        CancellationToken cancellationToken = default)
-    {
-        var root = WorkspacePathResolver.ResolveRepositoryRoot(path);
-        if (!Directory.Exists(root))
-            return FuseOperationalErrors.FormatWorkspaceNotFound(root);
-
-        var result = await IndexAccess.IndexAsync(indexer, root, cancellationToken);
-        FuseMetrics.RecordIndexMode(root, result.Mode);
-        return $"Indexed [{result.Mode}] {result.FileCount} files, {result.ProjectCount} projects, " +
-               $"{result.SymbolCount} symbols, {result.ChunkCount} chunks, {result.RouteCount} routes.";
-    }
-
     /// <summary>
     ///     Prints a map of the indexed workspace (symbols, routes, counts).
     /// </summary>
@@ -78,17 +56,24 @@ public sealed partial class FuseTools
     ///     <c>write=true</c>.
     /// </summary>
     /// <param name="indexer">The semantic indexer.</param>
-    /// <param name="action">The action: status, index, map, or doctor.</param>
+    /// <param name="jobs">The daemon-aware lifecycle client for index start, status, and cancellation.</param>
+    /// <param name="action">The action: status, index, cancel, map, doctor, or apply.</param>
     /// <param name="path">The workspace directory.</param>
     /// <param name="detail">For the map action: the detail to include (symbols, routes, all).</param>
     /// <param name="maxRows">For the map action: the maximum rows per section.</param>
+    /// <param name="file">For the apply action: the repository-relative file to write.</param>
+    /// <param name="content">For the apply action: the complete replacement content.</param>
+    /// <param name="write">For the apply action: whether to write instead of returning a dry-run report.</param>
+    /// <param name="expectedHash">For the apply action: the SHA-256 hash of the source content used to derive the edit.</param>
+    /// <param name="refresh">For the doctor action: whether to force a live MSBuild diagnosis.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>The action's result, or a descriptive error.</returns>
     [McpServerTool(Name = "fuse_workspace", ReadOnly = false)]
-    [Description("Workspace status and lifecycle (the loop's first stop). action=status (default): the index mode, verification grade, and freshness. action=index: build or refresh the persistent semantic index. action=map: the symbols, routes, and counts. action=doctor: the per-project semantic-load diagnosis. action=apply: write a proposed single-file edit (file + content) to the working tree - the one explicit apply path (Decision D2); it is a dry run that only reports the change unless write=true, and it refuses any path that escapes the workspace root.")]
+    [Description("Workspace status and lifecycle (the loop's first stop). action=status (default): index mode, verification grade, freshness, and active job. action=index: start or join the syntax index job. action=cancel: stop the active index job. action=map: symbols, routes, and counts. action=doctor: daemon, configuration, storage, compiler-target, and job diagnostics. action=apply: write a proposed single-file edit (file + content) to the working tree; it is a dry run unless write=true and refuses paths outside the workspace root.")]
     public static Task<string> FuseWorkspaceAsync(
         SemanticIndexer indexer,
-        [Description("The action: status, index, map, doctor, or apply.")] string action = "status",
+        IndexJobClient jobs,
+        [Description("The action: status, index, cancel, map, doctor, or apply.")] string action = "status",
         [Description("Absolute or relative path to the workspace directory.")] string path = ".",
         [Description("For the map action: detail to include (symbols, routes, all).")] string detail = "all",
         [Description("For the map action: maximum rows per section.")] int maxRows = 200,
@@ -99,10 +84,11 @@ public sealed partial class FuseTools
         [Description("For the doctor action: force a live MSBuild load diagnosis instead of reporting the diagnosis stamped in the warm index (R43). Default false reports from the index in sub-second time when it is present.")] bool refresh = false,
         CancellationToken cancellationToken = default) =>
         ExecuteReadMcpAsync(() => FuseWorkspaceCoreAsync(
-            indexer, action, path, detail, maxRows, file, content, write, expectedHash, refresh, cancellationToken));
+            indexer, jobs, action, path, detail, maxRows, file, content, write, expectedHash, refresh, cancellationToken));
 
     private static async Task<string> FuseWorkspaceCoreAsync(
         SemanticIndexer indexer,
+        IndexJobClient jobs,
         string action,
         string path,
         string detail,
@@ -118,21 +104,48 @@ public sealed partial class FuseTools
         switch (action.Trim().ToLowerInvariant())
         {
             case "index":
-                return await FuseIndexAsync(indexer, root, cancellationToken);
+                return await StartIndexJobAsync(jobs, root, cancellationToken);
+            case "cancel":
+                return await CancelIndexJobAsync(jobs, root, cancellationToken);
             case "map":
                 return await FuseMapAsync(indexer, root, detail, maxRows, cancellationToken);
             case "doctor":
-                return await WorkspaceDoctorAsync(indexer, root, refresh, cancellationToken);
+                return await WorkspaceDoctorAsync(indexer, jobs, root, refresh, cancellationToken);
             case "apply":
                 return await WorkspaceApplyAsync(root, file, content, write, expectedHash, cancellationToken);
             case "status":
             case "":
-                return await WorkspaceStatusAsync(indexer, root, cancellationToken);
+                return await WorkspaceStatusAsync(jobs, root, cancellationToken);
             default:
                 return FuseOperationalErrors.Format(
                     FuseOperationalErrors.ValidationErrorPrefix,
-                    $"unknown workspace action '{action}'. Use status, index, map, doctor, or apply.");
+                    $"unknown workspace action '{action}'. Use status, index, cancel, map, doctor, or apply.");
         }
+    }
+
+    private static async Task<string> StartIndexJobAsync(
+        IndexJobClient jobs,
+        string root,
+        CancellationToken cancellationToken)
+    {
+        if (!Directory.Exists(root))
+            return FuseOperationalErrors.FormatWorkspaceNotFound(root);
+
+        var start = await jobs.StartAsync(
+            new IndexJobRequest(root, IndexDepth.Syntax, Force: false, CaptureBundlePath: null),
+            cancellationToken);
+        return FormatJobSnapshot(start.Result.Snapshot, start.Result.Joined, start.UsesDaemon);
+    }
+
+    private static async Task<string> CancelIndexJobAsync(
+        IndexJobClient jobs,
+        string root,
+        CancellationToken cancellationToken)
+    {
+        var result = await jobs.CancelAsync(root, cancellationToken);
+        return result.Snapshot is null
+            ? $"workspace: {root}{Environment.NewLine}index job: none"
+            : FormatJobSnapshot(result.Snapshot, joined: null, result.UsesDaemon);
     }
 
     // The one explicit tree-write path (Decision D2): write a single file's proposed content, guarded so the
@@ -220,24 +233,46 @@ public sealed partial class FuseTools
         }
     }
 
-    // The status action opens the validated warm index first. A missing, incomplete, or wrong-root manifest starts
-    // the same automatic syntax-first build as every other indexed read.
+    // Status never creates or refreshes the index. It is the lifecycle probe agents use before broad discovery,
+    // so it must reveal a cold workspace and any active shared job without racing a daemon-owned writer.
     private static async Task<string> WorkspaceStatusAsync(
-        SemanticIndexer indexer,
+        IndexJobClient jobs,
         string path,
         CancellationToken cancellationToken)
     {
         var root = WorkspacePathResolver.ResolveRepositoryRoot(path);
-        await using var store = await OpenIndexedAsync(indexer, root, cancellationToken);
+        var job = await jobs.StatusAsync(root, cancellationToken);
+        var databasePath = FuseStorePaths.ResolveDatabasePath(root);
+        if (!File.Exists(databasePath))
+            return AppendJobSnapshot(
+                await BuildFastStatusOutputAsync(root, store: null, state: null, cancellationToken),
+                job.Snapshot,
+                job.UsesDaemon);
+
+        await using var store = new WorkspaceIndexStore(databasePath);
+        if (await store.OpenForReadAsync(cancellationToken) is not WorkspaceIndexReadOpenStatus.Ready)
+            return AppendJobSnapshot(
+                await BuildFastStatusOutputAsync(root, store: null, state: null, cancellationToken),
+                job.Snapshot,
+                job.UsesDaemon);
+
         var state = await store.GetStateAsync(cancellationToken);
-        return await BuildFastStatusOutputAsync(root, store, state, cancellationToken);
+        return AppendJobSnapshot(
+            await BuildFastStatusOutputAsync(root, store, state, cancellationToken),
+            job.Snapshot,
+            job.UsesDaemon);
     }
 
     // The doctor action: the per-project semantic-load diagnosis, so a downgrade names its reason per project.
     // The summary header uses the same fast read-only meta path as status (R16). R43: the diagnosis is served from
     // the diagnosis stamped in the warm index (sub-second, no MSBuild load); a live load runs only when refresh is
     // requested or no stamp is present.
-    private static async Task<string> WorkspaceDoctorAsync(SemanticIndexer indexer, string path, bool refresh, CancellationToken cancellationToken)
+    private static async Task<string> WorkspaceDoctorAsync(
+        SemanticIndexer indexer,
+        IndexJobClient jobs,
+        string path,
+        bool refresh,
+        CancellationToken cancellationToken)
     {
         var root = WorkspacePathResolver.ResolveRepositoryRoot(path);
         await using var warmStore = await OpenIndexedAsync(indexer, root, cancellationToken);
@@ -326,6 +361,37 @@ public sealed partial class FuseTools
         foreach (var daemon in daemons)
             builder.AppendLine($"  PID {daemon.ProcessId} (fuse host {daemon.Version}) serving {daemon.Root}");
 
+        var job = await jobs.StatusAsync(root, cancellationToken);
+        return AppendJobSnapshot(builder.ToString().TrimEnd(), job.Snapshot, job.UsesDaemon);
+    }
+
+    private static string AppendJobSnapshot(string output, IndexJobSnapshot? snapshot, bool usesDaemon)
+    {
+        if (snapshot is null)
+            return output + Environment.NewLine + "index job: none";
+
+        return output + Environment.NewLine + FormatJobSnapshot(snapshot, joined: null, usesDaemon);
+    }
+
+    private static string FormatJobSnapshot(IndexJobSnapshot snapshot, bool? joined, bool usesDaemon)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine($"index job: {snapshot.JobId}");
+        builder.AppendLine($"index job owner: {(usesDaemon ? "daemon" : "in-process")}");
+        if (joined is not null)
+            builder.AppendLine($"index job joined: {joined.Value.ToString().ToLowerInvariant()}");
+        builder.AppendLine($"index job state: {snapshot.State}");
+        builder.AppendLine($"index job phase: {snapshot.Phase} ({snapshot.PhaseNumber}/{snapshot.PhaseCount})");
+        builder.AppendLine(snapshot.TotalUnits is null
+            ? $"index job progress: {snapshot.CompletedUnits} units"
+            : $"index job progress: {snapshot.CompletedUnits}/{snapshot.TotalUnits} ({snapshot.PhasePercent ?? 0:F0}%)");
+        if (!string.IsNullOrWhiteSpace(snapshot.CurrentItem))
+            builder.AppendLine($"index job current item: {snapshot.CurrentItem}");
+        builder.AppendLine($"index storage: database {snapshot.Storage.DatabaseBytes} bytes, WAL {snapshot.Storage.WalBytes} bytes, total {snapshot.Storage.TotalFuseBytes} bytes");
+        if (!string.IsNullOrWhiteSpace(snapshot.ErrorCode))
+            builder.AppendLine($"index job error: {snapshot.ErrorCode}: {snapshot.ErrorMessage}");
+        if (snapshot.State is IndexJobState.Queued or IndexJobState.Running or IndexJobState.Cancelling)
+            builder.AppendLine("next_action: call fuse_workspace with action=status for progress, or action=cancel to stop the job.");
         return builder.ToString().TrimEnd();
     }
 

@@ -185,7 +185,7 @@ Accepts `--path` and `--kind` (`symbol`, `path`, `text`, `all`).
 
 ## fuse diagnostics
 
-Report the index state: schema version, mode, status, record counts, `index_state`, and the store location. This command is deliberately read-only: when `.fuse/fuse.db` is absent it reports `not_indexed` without creating the database. In contrast, MCP `fuse_workspace action=status` validates or warms the repository index before reporting status.
+Report the index state: schema version, mode, status, record counts, `index_state`, and the store location. This command is deliberately read-only: when `.fuse/fuse.db` is absent it reports `not_indexed` without creating the database. MCP `fuse_workspace action=status` likewise reports the retained store and active job without starting a build.
 
 ```text
 fuse diagnostics ./src

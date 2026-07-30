@@ -11,13 +11,20 @@ namespace Fuse.Cli.Services;
 public sealed class IndexJobClient
 {
     private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan StatusTimeout = TimeSpan.FromMilliseconds(500);
     private readonly IWorkspaceIndexJobManager _localJobs;
+    private readonly bool? _daemonEnabled;
 
     /// <summary>Initializes a new CLI index lifecycle client.</summary>
     /// <param name="localJobs">The in-process manager used only when the daemon is disabled.</param>
-    public IndexJobClient(IWorkspaceIndexJobManager localJobs)
+    /// <param name="daemonEnabled">
+    ///     Overrides daemon selection for a caller that owns an in-process test host. Null reads
+    ///     <c>FUSE_DAEMON</c>; false keeps every lifecycle operation in the supplied manager.
+    /// </param>
+    public IndexJobClient(IWorkspaceIndexJobManager localJobs, bool? daemonEnabled = null)
     {
         _localJobs = localJobs;
+        _daemonEnabled = daemonEnabled;
     }
 
     /// <summary>Starts or joins a repository job.</summary>
@@ -94,7 +101,7 @@ public sealed class IndexJobClient
     {
         if (!DaemonDisabled())
         {
-            var remote = await FuseHostClient.TryIndexStatusAsync(root, ConnectTimeout, cancellationToken);
+            var remote = await FuseHostClient.TryIndexStatusAsync(root, StatusTimeout, cancellationToken);
             if (remote is not null)
                 return new IndexJobClientStatusResult(remote, UsesDaemon: true);
         }
@@ -130,8 +137,11 @@ public sealed class IndexJobClient
             UsesDaemon: false);
     }
 
-    private static bool DaemonDisabled()
+    private bool DaemonDisabled()
     {
+        if (_daemonEnabled is not null)
+            return !_daemonEnabled.Value;
+
         var value = Environment.GetEnvironmentVariable("FUSE_DAEMON");
         return value is not null && (value.Equals("0", StringComparison.Ordinal)
             || value.Equals("false", StringComparison.OrdinalIgnoreCase)

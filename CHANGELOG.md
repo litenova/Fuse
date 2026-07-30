@@ -12,6 +12,7 @@ All notable changes to Fuse are documented here. The format is based on Keep a C
 
 - Indexing starts at the syntax tier. `fuse index --semantic` explicitly continues into compiler analysis after syntax rows are available. Matching callers join one daemon-owned job instead of colliding with the SQLite writer.
 - Host protocol 11 replaces `fuse/index` with `fuse/indexStart`, `fuse/indexStatus`, and `fuse/indexCancel`. `fuse/openIndexed` includes the current job snapshot while syntax data is being built.
+- `fuse_workspace action=index` now starts or joins the daemon job, `action=status` reports job details without creating an index, and `action=cancel` requests shared-job cancellation. A source edit starts a refresh job before a read returns indexed facts.
 
 ### Removed
 

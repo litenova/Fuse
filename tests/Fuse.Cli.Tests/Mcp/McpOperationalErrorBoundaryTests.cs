@@ -1,4 +1,5 @@
 using Fuse.Cli.Mcp;
+using Fuse.Cli.Services;
 using Fuse.Retrieval;
 using Fuse.Semantics;
 using Microsoft.Extensions.DependencyInjection;
@@ -13,13 +14,14 @@ public sealed class McpOperationalErrorBoundaryTests : IDisposable
 {
     private readonly ServiceProvider _provider = new ServiceCollection().AddFuseForTests().BuildServiceProvider();
     private SemanticIndexer Indexer => _provider.GetRequiredService<SemanticIndexer>();
+    private IndexJobClient Jobs => new(_provider.GetRequiredService<IWorkspaceIndexJobManager>(), daemonEnabled: false);
     private IChangeSource ChangeSource => _provider.GetRequiredService<IChangeSource>();
 
     [Fact]
     public async Task FuseWorkspace_status_returns_workspace_not_found_instead_of_throwing()
     {
         var missingRoot = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "missing");
-        var result = await FuseTools.FuseWorkspaceAsync(Indexer, action: "status", path: missingRoot);
+        var result = await FuseTools.FuseWorkspaceAsync(Indexer, Jobs, action: "status", path: missingRoot);
         Assert.StartsWith(FuseOperationalErrors.WorkspaceNotFoundPrefix, result);
     }
 

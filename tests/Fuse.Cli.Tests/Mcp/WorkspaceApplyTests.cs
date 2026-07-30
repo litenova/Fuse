@@ -22,7 +22,7 @@ public sealed class WorkspaceApplyTests
         var root = TempRoot();
         try
         {
-            var result = await FuseTools.FuseWorkspaceAsync(null!, "apply", root, file: "src/A.cs", content: "class A {}");
+            var result = await FuseTools.FuseWorkspaceAsync(null!, null!, "apply", root, file: "src/A.cs", content: "class A {}");
             Assert.Contains("dry run", result);
             Assert.Contains("would create", result);
             Assert.False(File.Exists(Path.Combine(root, "src", "A.cs")));
@@ -36,7 +36,7 @@ public sealed class WorkspaceApplyTests
         var root = TempRoot();
         try
         {
-            var result = await FuseTools.FuseWorkspaceAsync(null!, "apply", root, file: "src/A.cs", content: "class A {}", write: true);
+            var result = await FuseTools.FuseWorkspaceAsync(null!, null!, "apply", root, file: "src/A.cs", content: "class A {}", write: true);
             Assert.Contains("applied", result);
             var written = Path.Combine(root, "src", "A.cs");
             Assert.True(File.Exists(written));
@@ -52,7 +52,7 @@ public sealed class WorkspaceApplyTests
         var outside = Path.Combine(Path.GetDirectoryName(root)!, "escaped.txt");
         try
         {
-            var result = await FuseTools.FuseWorkspaceAsync(null!, "apply", root, file: "../escaped.txt", content: "x", write: true);
+            var result = await FuseTools.FuseWorkspaceAsync(null!, null!, "apply", root, file: "../escaped.txt", content: "x", write: true);
             Assert.Contains("refusing to write", result);
             Assert.Contains("outside the workspace root", result);
             Assert.False(File.Exists(outside));
@@ -70,7 +70,7 @@ public sealed class WorkspaceApplyTests
         var root = TempRoot();
         try
         {
-            var result = await FuseTools.FuseWorkspaceAsync(null!, "apply", root, file: "", content: "x", write: true);
+            var result = await FuseTools.FuseWorkspaceAsync(null!, null!, "apply", root, file: "", content: "x", write: true);
             // R15 operational-error taxonomy: a missing file argument is a validation_error, not a bare "Error".
             Assert.StartsWith("validation_error:", result);
         }
@@ -88,7 +88,7 @@ public sealed class WorkspaceApplyTests
             await File.WriteAllTextAsync(target, "class A {}");
             var hash = Sha256Hex("class A {}");
 
-            var result = await FuseTools.FuseWorkspaceAsync(null!, "apply", root, file: "src/A.cs", content: "class A { int x; }", write: true, expectedHash: hash);
+            var result = await FuseTools.FuseWorkspaceAsync(null!, null!, "apply", root, file: "src/A.cs", content: "class A { int x; }", write: true, expectedHash: hash);
 
             Assert.Contains("applied", result);
             Assert.Contains("atomic", result, StringComparison.OrdinalIgnoreCase);
@@ -108,7 +108,7 @@ public sealed class WorkspaceApplyTests
             await File.WriteAllTextAsync(target, "class A { /* changed on disk */ }");
             var staleHash = Sha256Hex("class A {}"); // the content the edit was derived from, now out of date.
 
-            var result = await FuseTools.FuseWorkspaceAsync(null!, "apply", root, file: "src/A.cs", content: "class A { int x; }", write: true, expectedHash: staleHash);
+            var result = await FuseTools.FuseWorkspaceAsync(null!, null!, "apply", root, file: "src/A.cs", content: "class A { int x; }", write: true, expectedHash: staleHash);
 
             Assert.StartsWith("validation_error:", result);
             Assert.Contains("conflict", result, StringComparison.OrdinalIgnoreCase);
@@ -124,7 +124,7 @@ public sealed class WorkspaceApplyTests
         var root = TempRoot();
         try
         {
-            var result = await FuseTools.FuseWorkspaceAsync(null!, "apply", root, file: "src/New.cs", content: "class New {}", write: true, expectedHash: Sha256Hex("something"));
+            var result = await FuseTools.FuseWorkspaceAsync(null!, null!, "apply", root, file: "src/New.cs", content: "class New {}", write: true, expectedHash: Sha256Hex("something"));
             Assert.StartsWith("validation_error:", result);
             Assert.Contains("conflict", result, StringComparison.OrdinalIgnoreCase);
             Assert.False(File.Exists(Path.Combine(root, "src", "New.cs")));
@@ -144,7 +144,7 @@ public sealed class WorkspaceApplyTests
 
             // Even a dry run reports the conflict (the check runs before the dry-run report), so the agent learns
             // to re-read before it flips write=true.
-            var result = await FuseTools.FuseWorkspaceAsync(null!, "apply", root, file: "src/A.cs", content: "class A {}", write: false, expectedHash: Sha256Hex("class A {}"));
+            var result = await FuseTools.FuseWorkspaceAsync(null!, null!, "apply", root, file: "src/A.cs", content: "class A {}", write: false, expectedHash: Sha256Hex("class A {}"));
             Assert.Contains("conflict", result, StringComparison.OrdinalIgnoreCase);
         }
         finally { Directory.Delete(root, recursive: true); }

@@ -221,8 +221,8 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
     }
 
     /// <summary>
-    ///     Prepares the semantic index for store-backed reads (R19): open, reconcile, syntax-first cold start, and
-    ///     background semantic upgrade run under the daemon's single-writer <see cref="IndexCoordinator" />.
+    ///     Prepares the syntax index for store-backed reads. A cold, incomplete, or inventory-stale store starts
+    ///     or joins the daemon-owned syntax job; a current syntax store remains readable while semantic work runs.
     ///     Non-owner MCP clients call this before opening the store read-only locally.
     /// </summary>
     /// <param name="sessionToken">The session token from <c>fuse/handshake</c>.</param>
@@ -245,7 +245,9 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
             if (await store.OpenForReadAsync(CancellationToken.None) is WorkspaceIndexReadOpenStatus.Ready)
             {
                 var state = await store.GetStateAsync(CancellationToken.None);
-                return new OpenIndexedResultDto("ready", null, state.FileCount, state.Mode, job);
+                var manifest = await WorkspaceIndexManifest.ValidateAsync(resolved, store, CancellationToken.None);
+                if (manifest.Ready && await _indexer.IsInventoryCurrentAsync(resolved, store, CancellationToken.None))
+                    return new OpenIndexedResultDto("ready", null, state.FileCount, state.Mode, job);
             }
         }
         catch (Exception ex) when (ex is IOException or Microsoft.Data.Sqlite.SqliteException)
@@ -258,7 +260,7 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
             CancellationToken.None);
         return new OpenIndexedResultDto(
             "index_rebuilding",
-            "syntax index is building; call fuse/indexStatus for progress",
+            "syntax index is refreshing; call fuse/indexStatus for progress",
             0,
             null,
             started.Snapshot);
