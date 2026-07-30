@@ -1,6 +1,9 @@
 using DotMake.CommandLine;
 using Fuse.Cli;
 using Fuse.Cli.Services;
+using Fuse.Collection;
+using Fuse.Collection.FileSystem;
+using Fuse.Semantics;
 
 namespace Fuse.Cli.Commands;
 
@@ -11,6 +14,7 @@ namespace Fuse.Cli.Commands;
 public sealed class InitCommand
 {
     private readonly IConsoleUI _consoleUI;
+    private readonly DotNetWorkspaceDiscoverer _workspaceDiscoverer;
 
     /// <summary>
     ///     Initializes a new instance of the <see cref="InitCommand" /> class for CLI option binding only.
@@ -19,7 +23,7 @@ public sealed class InitCommand
     ///     Used by DotMake.CommandLine to bind options; the console UI is <see langword="null" />, so this instance
     ///     must not run.
     /// </remarks>
-    public InitCommand() : this(null!)
+    public InitCommand() : this(null!, null!)
     {
     }
 
@@ -27,9 +31,11 @@ public sealed class InitCommand
     ///     Initializes a new instance of the <see cref="InitCommand" /> class.
     /// </summary>
     /// <param name="consoleUI">The console UI for status output.</param>
-    public InitCommand(IConsoleUI consoleUI)
+    /// <param name="workspaceDiscoverer">The service that finds one unambiguous starter workspace.</param>
+    public InitCommand(IConsoleUI consoleUI, DotNetWorkspaceDiscoverer workspaceDiscoverer)
     {
         _consoleUI = consoleUI;
+        _workspaceDiscoverer = workspaceDiscoverer;
     }
 
     /// <summary>
@@ -41,32 +47,38 @@ public sealed class InitCommand
     ///     Creates <c>fuse.json</c> in the current working directory as a side effect. If the file already exists,
     ///     nothing is written and an error is reported through the console UI.
     /// </remarks>
-    public Task RunAsync(CliContext context)
+    public async Task RunAsync(CliContext context)
     {
-        var targetPath = Path.Combine(System.IO.Directory.GetCurrentDirectory(), "fuse.json");
+        var currentDirectory = System.IO.Directory.GetCurrentDirectory();
+        var root = WorkspaceIdentityResolver.TryResolveRepositoryRoot(currentDirectory, out var repositoryRoot)
+            ? repositoryRoot
+            : currentDirectory;
+        var targetPath = Path.Combine(root, WorkspaceConfiguration.FileName);
         if (File.Exists(targetPath))
         {
             _consoleUI.WriteError("fuse.json already exists in the current directory.");
-            return Task.CompletedTask;
+            return;
         }
 
-        var template = """
-            {
-              "directory": ".",
-              "output": "./fuse-output",
-              "format": "xml",
-              "tokenizer": "o200k_base",
-              "noManifest": false,
-              "provenance": false
-            }
-            """;
+        string? workspace = null;
+        try
+        {
+            var discovery = await _workspaceDiscoverer.DiscoverAsync(root, context.CancellationToken);
+            if (discovery.Kind == WorkspaceKind.Solution && discovery.SolutionPath is not null)
+                workspace = Path.GetRelativePath(root, discovery.SolutionPath);
+            else if (discovery.Kind == WorkspaceKind.Projects && discovery.ProjectPaths.Count == 1)
+                workspace = Path.GetRelativePath(root, discovery.ProjectPaths[0]);
+        }
+        catch (WorkspaceConfigurationException ex)
+        {
+            _consoleUI.WriteStep($"Workspace was not pinned: {ex.Message}");
+        }
 
-        File.WriteAllText(targetPath, template);
+        File.WriteAllText(targetPath, WorkspaceConfiguration.CreateTemplate(workspace));
         _consoleUI.WriteSuccess($"Created {targetPath}");
         GitIgnoreHelper.TryEnsureFuseEntry(
             System.IO.Directory.GetCurrentDirectory(),
             _consoleUI.WriteStep,
             _consoleUI.WriteStep);
-        return Task.CompletedTask;
     }
 }

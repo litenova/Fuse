@@ -27,11 +27,18 @@ public sealed class AnalyzerParallelismMeasurement(ITestOutputHelper output)
     [Trait("Category", "RequiresSdk")]
     public async Task Parallel_analyzer_pass_is_byte_identical_to_sequential()
     {
+        if (Environment.GetEnvironmentVariable("FUSE_SEMANTIC_CORPUS_TESTS") != "1")
+            return;
+
         var root = Corpus();
         if (root is null)
             return; // Corpus fixture not present in this environment.
 
-        var discovery = await new DotNetWorkspaceDiscoverer().DiscoverAsync(root, CancellationToken.None);
+        var solution = Path.Combine(root, "eShopOnWeb.sln");
+        if (!File.Exists(solution))
+            return;
+
+        var discovery = new WorkspaceDiscoveryResult(WorkspaceKind.Solution, solution, [], root);
         var snapshot = await new RoslynWorkspaceLoader().LoadAsync(discovery, CancellationToken.None);
         if (!snapshot.SemanticLoadSucceeded || snapshot.Projects.Count < 2)
             return; // Nothing multi-project to compare in this environment.

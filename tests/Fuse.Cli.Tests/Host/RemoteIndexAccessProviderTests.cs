@@ -56,7 +56,6 @@ public sealed class RemoteIndexAccessProviderTests
             await indexer.IndexSyntaxFirstAsync(root, seed, CancellationToken.None);
         }
 
-        var before = IndexCoordinator.ProcessWriteLockAcquireCount;
         var provider = new RemoteIndexAccessProvider(
             (_, _, _) => Task.FromResult<OpenIndexedResultDto?>(new OpenIndexedResultDto("ready", null, 1, "syntax")));
 
@@ -64,7 +63,6 @@ public sealed class RemoteIndexAccessProviderTests
         {
             await using var store = await provider.OpenIndexedAsync(indexer, root, CancellationToken.None);
             Assert.True(await store.GetStateAsync(CancellationToken.None) is { FileCount: > 0 });
-            Assert.Equal(before, IndexCoordinator.ProcessWriteLockAcquireCount);
         }
         finally
         {

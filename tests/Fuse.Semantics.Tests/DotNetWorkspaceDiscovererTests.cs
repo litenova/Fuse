@@ -1,3 +1,4 @@
+using Fuse.Collection;
 using Fuse.Semantics;
 using Xunit;
 
@@ -50,7 +51,7 @@ public sealed class DotNetWorkspaceDiscovererTests : IDisposable
     }
 
     [Fact]
-    public async Task MultipleRootSolutions_PicksByNameOrder_WithNote()
+    public async Task MultipleRootSolutions_RequiresExplicitWorkspace()
     {
         // R24: several distinct root-level solutions are resolved by a documented rule (name order) and the choice
         // is surfaced, rather than silently dropping to projects mode.
@@ -58,12 +59,11 @@ public sealed class DotNetWorkspaceDiscovererTests : IDisposable
         Write("B.sln", "bbb");
         Write("src/App/App.csproj", "<Project/>");
 
-        var result = await _discoverer.DiscoverAsync(_root, CancellationToken.None);
+        var exception = await Assert.ThrowsAsync<WorkspaceConfigurationException>(
+            () => _discoverer.DiscoverAsync(_root, CancellationToken.None));
 
-        Assert.Equal(WorkspaceKind.Solution, result.Kind);
-        Assert.EndsWith("A.sln", result.SolutionPath);
-        Assert.NotNull(result.SelectionNote);
-        Assert.Contains("multiple root-level solutions", result.SelectionNote, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("workspace selection is ambiguous", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("workspace", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -83,17 +83,42 @@ public sealed class DotNetWorkspaceDiscovererTests : IDisposable
     }
 
     [Fact]
-    public async Task FuseJsonSolutionOverride_PinsTarget()
+    public async Task FuseJsonWorkspaceOverride_PinsTarget()
     {
         Write("App.sln", "app");
         Write("Custom.sln", "custom");
-        Write("fuse.json", "{ \"solution\": \"Custom.sln\" }");
+        Write("fuse.json", "{ \"workspace\": \"Custom.sln\" }");
 
         var result = await _discoverer.DiscoverAsync(_root, CancellationToken.None);
 
         Assert.Equal(WorkspaceKind.Solution, result.Kind);
         Assert.EndsWith("Custom.sln", result.SolutionPath);
-        Assert.Contains("pinned by fuse.json", result.SelectionNote!, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("workspace pinned by fuse.json", result.SelectionNote!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task PrefersSingleRootSolutionFilter()
+    {
+        Write("App.sln", "solution");
+        Write("App.slnf", "{ }");
+
+        var result = await _discoverer.DiscoverAsync(_root, CancellationToken.None);
+
+        Assert.Equal(WorkspaceKind.Solution, result.Kind);
+        Assert.EndsWith("App.slnf", result.SolutionPath);
+    }
+
+    [Fact]
+    public async Task PinnedProjectLoadsProjectWorkspace()
+    {
+        Write("src/App/App.csproj", "<Project/>");
+        Write("fuse.json", "{ \"workspace\": \"src/App/App.csproj\" }");
+
+        var result = await _discoverer.DiscoverAsync(_root, CancellationToken.None);
+
+        Assert.Equal(WorkspaceKind.Projects, result.Kind);
+        Assert.Single(result.ProjectPaths);
+        Assert.EndsWith("App.csproj", result.ProjectPaths[0]);
     }
 
     [Fact]
