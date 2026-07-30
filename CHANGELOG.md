@@ -34,6 +34,7 @@ All notable changes to Fuse are documented here. The format is based on Keep a C
 - The daemon watcher now ignores `.git` metadata. Git commands used by inventory no longer trigger a second refresh job after each completed index.
 - Direct CLI impact and review-handoff calls now use the host-owned index runtime. Concurrent reads no longer create conflicting isolated job managers.
 - Retained completed, cancelled, and failed jobs now preserve their terminal elapsed duration instead of continuing to age in `fuse index status`.
+- Refactor operations now use an already-loaded host warm-solution cache before MSBuild registration. A daemon-held compiler snapshot remains available when local SDK discovery cannot run.
 - Read-only index opens no longer rerun database pragmas or create schema tables. A contended find request now returns its availability header within the short read timeout. Resident compiler projection uses the same Git blob and SHA-256 identities as the scanner, so its follow-up reconcile does not rewrite unchanged files. Corrupt non-database files reach the derived-data recovery path instead of being described as a generic schema mismatch.
 
 ### Removed

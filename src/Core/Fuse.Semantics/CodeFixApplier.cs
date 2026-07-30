@@ -50,13 +50,14 @@ public sealed class CodeFixApplier
         if (string.IsNullOrWhiteSpace(diagnosticId) || string.IsNullOrWhiteSpace(file))
             return CodeFixResult.Abstain("provide a diagnostic id and a file to fix");
 
-        try { MsBuildLocatorRegistration.EnsureRegistered(); }
-        catch (Exception ex) { return CodeFixResult.Abstain($"no MSBuild/SDK found ({ex.Message}); cannot apply the fix"); }
-
         CachedSolution loaded;
         try
         {
             loaded = await _cache.OpenAsync(solutionOrProjectPath, cancellationToken);
+        }
+        catch (MsBuildLocatorUnavailableException ex)
+        {
+            return CodeFixResult.Abstain($"no MSBuild/SDK found ({ex.Message}); cannot apply the fix");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

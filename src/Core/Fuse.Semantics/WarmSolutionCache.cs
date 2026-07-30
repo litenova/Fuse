@@ -325,7 +325,15 @@ public sealed class WarmSolutionCache : IDisposable
     // its own abstain message.
     private static async Task<LoadedWorkspace> DefaultLoadAsync(string full, CancellationToken cancellationToken)
     {
-        EnsureLocatorRegistered();
+        try
+        {
+            EnsureLocatorRegistered();
+        }
+        catch (Exception ex)
+        {
+            throw new MsBuildLocatorUnavailableException(ex);
+        }
+
         var workspace = MSBuildWorkspace.Create();
         var failures = WorkspaceLoadFailures.Track(workspace);
         Solution solution;

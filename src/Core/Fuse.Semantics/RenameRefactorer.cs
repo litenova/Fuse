@@ -43,9 +43,6 @@ public sealed class RenameRefactorer
         if (string.IsNullOrWhiteSpace(symbolName) || string.IsNullOrWhiteSpace(newName))
             return RenameResult.Abstain("provide a symbol name and a new name");
 
-        try { MsBuildLocatorRegistration.EnsureRegistered(); }
-        catch (Exception ex) { return RenameResult.Abstain($"no MSBuild/SDK found ({ex.Message}); cannot rename"); }
-
         // Load through the warm-solution cache (R42): a held, still-fresh solution is reused; otherwise a fresh
         // MSBuildWorkspace is opened and cached. Only real load failures abstain; benign warnings (analyzer/
         // SDK-resolver notes) are ignored. See WorkspaceLoadFailures.
@@ -53,6 +50,10 @@ public sealed class RenameRefactorer
         try
         {
             loaded = await _cache.OpenAsync(solutionOrProjectPath, cancellationToken);
+        }
+        catch (MsBuildLocatorUnavailableException ex)
+        {
+            return RenameResult.Abstain($"no MSBuild/SDK found ({ex.Message}); cannot rename");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

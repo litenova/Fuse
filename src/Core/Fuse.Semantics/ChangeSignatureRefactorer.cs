@@ -80,13 +80,14 @@ public sealed class ChangeSignatureRefactorer
     private async Task<(Solution? Solution, string? Reason)> LoadSolutionAsync(
         string solutionOrProjectPath, CancellationToken cancellationToken)
     {
-        try { MsBuildLocatorRegistration.EnsureRegistered(); }
-        catch (Exception ex) { return (null, $"no MSBuild/SDK found ({ex.Message}); cannot change the signature"); }
-
         CachedSolution loaded;
         try
         {
             loaded = await _cache.OpenAsync(solutionOrProjectPath, cancellationToken);
+        }
+        catch (MsBuildLocatorUnavailableException ex)
+        {
+            return (null, $"no MSBuild/SDK found ({ex.Message}); cannot change the signature");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
