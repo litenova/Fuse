@@ -26,6 +26,8 @@ Cli.Ext.ConfigureServices(services =>
     services.AddTransient<McpCommand>();
     services.AddTransient<InstallCommand>();
     services.AddSingleton<McpInstallService>();
+    services.AddSingleton<McpDoctorService>();
+    services.AddTransient<McpDoctorCommand>();
     services.AddTransient<McpServeCommand>();
     services.AddTransient<ReduceCommand>();
 });

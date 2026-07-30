@@ -19,10 +19,10 @@ public sealed class McpInstallService
     /// </summary>
     internal const string UserProfileOverrideEnvironmentVariable = "FUSE_MCP_INSTALL_HOME";
 
-    private const string ServerName = "fuse";
+    internal const string ServerName = "fuse";
 
-    // The client launches `fuse mcp serve` with no environment block: agent-first defaults (shared daemon,
-    // auto-update, background upgrade, build capture) ship in the binary. Opt-outs are documented under Advanced.
+    // The client launches `fuse mcp serve` with no environment block. The shared daemon and syntax-first index
+    // behavior ship in the binary; compiler analysis starts only from an explicit semantic request.
     private static readonly string[] ServeArguments = ["mcp", "serve"];
 
     /// <summary>
@@ -496,6 +496,47 @@ public sealed class McpInstallService
         };
     }
 
+    /// <summary>
+    ///     Resolves the instruction file managed for a client and scope.
+    /// </summary>
+    /// <param name="client">The MCP client.</param>
+    /// <param name="scope">The selected installation scope.</param>
+    /// <param name="projectRoot">The repository root used for project scope.</param>
+    /// <returns>The managed instruction path, or null when the client has no documented instruction file at that scope.</returns>
+    internal static string? GetInstructionPath(McpInstallClient client, McpInstallScope scope, string projectRoot) => client switch
+    {
+        McpInstallClient.Claude => scope == McpInstallScope.User
+            ? Path.Combine(GetUserProfileDirectory(), ".claude", "CLAUDE.md")
+            : Path.Combine(projectRoot, "CLAUDE.md"),
+        McpInstallClient.Cursor => scope == McpInstallScope.Project
+            ? Path.Combine(projectRoot, ".cursor", "rules", "fuse.mdc")
+            : null,
+        McpInstallClient.Copilot => scope == McpInstallScope.Project
+            ? Path.Combine(projectRoot, ".github", "copilot-instructions.md")
+            : null,
+        McpInstallClient.OpenCode => scope == McpInstallScope.User
+            ? Path.Combine(GetConfigHomeDirectory(), "opencode", "AGENTS.md")
+            : Path.Combine(projectRoot, "AGENTS.md"),
+        McpInstallClient.Kilo => scope == McpInstallScope.User
+            ? Path.Combine(GetConfigHomeDirectory(), "kilo", "AGENTS.md")
+            : Path.Combine(projectRoot, "AGENTS.md"),
+        McpInstallClient.Codex => scope == McpInstallScope.User
+            ? Path.Combine(GetClientHomeDirectory("CODEX_HOME", ".codex"), "AGENTS.md")
+            : Path.Combine(projectRoot, "AGENTS.md"),
+        McpInstallClient.Grok => scope == McpInstallScope.Project
+            ? Path.Combine(projectRoot, "AGENTS.md")
+            : null,
+        _ => null,
+    };
+
+    /// <summary>Checks whether an instruction file contains the current managed guidance block.</summary>
+    /// <param name="content">The instruction file content, or null when the file is absent.</param>
+    /// <returns>True when the v4.4 managed block has both markers.</returns>
+    internal static bool HasCurrentManagedRuleBlock(string? content) =>
+        !string.IsNullOrEmpty(content)
+        && content.Contains(RuleBeginMarker, StringComparison.Ordinal)
+        && content.Contains(RuleEndMarker, StringComparison.Ordinal);
+
     private static string DescribeScope(McpInstallScope scope) =>
         scope == McpInstallScope.User ? "user scope, all projects" : "project";
 
@@ -535,7 +576,10 @@ public sealed class McpInstallService
         return alternatives.FirstOrDefault(File.Exists) ?? defaultPath;
     }
 
-    private static string DescribeClient(McpInstallClient client) => client switch
+    /// <summary>Returns the display name used in client-facing installation diagnostics.</summary>
+    /// <param name="client">The supported MCP client.</param>
+    /// <returns>The documented client display name.</returns>
+    internal static string DescribeClient(McpInstallClient client) => client switch
     {
         McpInstallClient.Claude => "Claude Code",
         McpInstallClient.Cursor => "Cursor",
@@ -547,10 +591,11 @@ public sealed class McpInstallService
         _ => client.ToString(),
     };
 
-    // Idempotency markers for the managed rule block in freeform instruction files. A re-run replaces the region
-    // between them; a future remove can excise it cleanly.
-    private const string RuleBeginMarker = "<!-- fuse:begin (managed by `fuse mcp install --rules`; edit outside these markers) -->";
-    private const string RuleEndMarker = "<!-- fuse:end -->";
+    // The v4.4 marker is intentionally short and versioned. UpsertMarkedBlock also recognizes the previous
+    // managed marker so a new install replaces it without touching user-authored text around the block.
+    internal const string RuleBeginMarker = "<!-- fuse:begin v4.4 -->";
+    internal const string RuleEndMarker = "<!-- fuse:end -->";
+    private const string RuleBeginPrefix = "<!-- fuse:begin";
 
     /// <summary>
     ///     Writes the Fuse usage rule into the given client's instruction file, scope permitting.
@@ -660,8 +705,10 @@ public sealed class McpInstallService
         if (File.Exists(path))
         {
             var existing = File.ReadAllText(path);
-            var begin = existing.IndexOf(RuleBeginMarker, StringComparison.Ordinal);
-            var end = existing.IndexOf(RuleEndMarker, StringComparison.Ordinal);
+            var begin = existing.IndexOf(RuleBeginPrefix, StringComparison.Ordinal);
+            var end = begin < 0
+                ? -1
+                : existing.IndexOf(RuleEndMarker, begin + RuleBeginPrefix.Length, StringComparison.Ordinal);
             if (begin >= 0 && end > begin)
             {
                 // Replace the existing managed region in place, leaving surrounding content untouched.
@@ -696,7 +743,10 @@ public sealed class McpInstallService
             "alwaysApply: true",
             "---",
             "",
+            RuleBeginMarker,
             FuseAgentGuidance.RuleBody) + "\n";
+
+        content = content.TrimEnd('\n') + "\n" + RuleEndMarker + "\n";
 
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, content);
@@ -762,7 +812,10 @@ public sealed class McpInstallService
         return Path.Combine(configHome, "Code", "User");
     }
 
-    private static string? FindExecutableOnPath(string name)
+    /// <summary>Finds an executable on the current process PATH.</summary>
+    /// <param name="name">The executable base name.</param>
+    /// <returns>The resolved executable path, or null when PATH does not contain it.</returns>
+    internal static string? FindExecutableOnPath(string name)
     {
         var pathValue = Environment.GetEnvironmentVariable("PATH");
         if (string.IsNullOrWhiteSpace(pathValue))

@@ -47,7 +47,8 @@ CLI commands that open the store (`fuse find`, `fuse index`, `fuse diagnostics`)
 | `fuse capture [path]` | Create a portable build-capture bundle | no | no |
 | `fuse verify [path] --ci-parity` | Report or run locally reproducible CI steps | no | no |
 | `fuse init` | Write a configuration file | no | no |
-| `fuse mcp install` | Write MCP client registration for launching `fuse mcp serve`; optional `--rules` and `--with-hooks` write separate artifacts | no | no |
+| `fuse mcp install` | Write MCP client registration and managed guidance for launching `fuse mcp serve`; `--no-rules` skips guidance and `--with-hooks` writes Claude hooks | no | no |
+| `fuse mcp doctor` | Inspect MCP registration, managed guidance, daemon reachability, and index job state | no | no |
 | `fuse mcp serve` | Run the MCP server | n/a | first-use |
 | `fuse host` | Run the long-lived host service | n/a | yes |
 | `fuse update` | Update the global Fuse tool after stopping a narrow peer set | no | no |
@@ -217,4 +218,4 @@ fuse reduce --files src/OrderService.cs --level skeleton
 
 ## fuse init, fuse mcp, fuse host
 
-`fuse init` writes the root `fuse.json` with the v4.4 schema, an optional `workspace` path, and an empty `ignore` array. `workspace` accepts a `.sln`, `.slnx`, `.slnf`, or `.csproj` below the repository root. Fuse refuses an ambiguous compiler target until this property is set. `fuse mcp install` writes the selected client's MCP registration only. `--rules` also writes `AGENTS.md`, `CLAUDE.md`, or the client's documented instruction file; it does not install a skill. `--with-hooks` writes project-scoped Claude Code hooks and is refused with user scope. `fuse mcp serve` runs the stdio server (see [Connect your coding agent](/docs/start/connect-your-ai)). `fuse host` runs the long-lived repository host and refuses a path with no Git identity.
+`fuse init` writes the root `fuse.json` with the v4.4 schema, an optional `workspace` path, and an empty `ignore` array. `workspace` accepts a `.sln`, `.slnx`, `.slnf`, or `.csproj` below the repository root. Fuse refuses an ambiguous compiler target until this property is set. `fuse mcp install` writes the selected client's MCP registration and its versioned managed guidance by default. `--no-rules` writes registration only. `--with-hooks` writes project-scoped Claude Code hooks and is refused with user scope. `fuse mcp doctor` reports client configuration, executable paths, managed-block state, daemon protocol, repository identity, and index jobs. `fuse mcp serve` runs the stdio server (see [Connect your coding agent](/docs/start/connect-your-ai)). `fuse host` runs the long-lived repository host and refuses a path with no Git identity.

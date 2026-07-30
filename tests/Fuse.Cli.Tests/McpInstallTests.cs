@@ -766,6 +766,32 @@ public sealed class McpInstallTests
     }
 
     [Fact]
+    public async Task InstallAsync_WriteRules_UpgradesLegacyManagedBlockAndPreservesUserText()
+    {
+        var root = CreateTempDirectory();
+        var path = Path.Combine(root, "CLAUDE.md");
+        await File.WriteAllTextAsync(
+            path,
+            "# Local guidance\n\n<!-- fuse:begin (managed by `fuse mcp install --rules`; edit outside these markers) -->\nold guidance\n<!-- fuse:end -->\n\nKeep this text.\n");
+
+        await new McpInstallService().InstallAsync(
+            [McpInstallClient.Claude],
+            McpInstallScope.Project,
+            root,
+            "fuse",
+            writeRules: true,
+            new RecordingConsoleUI(),
+            CancellationToken.None);
+
+        var content = await File.ReadAllTextAsync(path);
+        Assert.Contains("# Local guidance", content);
+        Assert.Contains("Keep this text.", content);
+        Assert.Contains("<!-- fuse:begin v4.4 -->", content);
+        Assert.DoesNotContain("old guidance", content);
+        Assert.Equal(1, content.Split("<!-- fuse:begin").Length - 1);
+    }
+
+    [Fact]
     public async Task InstallAsync_WriteRules_UserScope_SkipsCursorAndCopilot()
     {
         var root = CreateTempDirectory();
@@ -838,6 +864,32 @@ public sealed class McpInstallTests
             error => error.Message.Contains("command", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public void Install_AcceptsNoRulesAndDefaultsToManagedGuidance()
+    {
+        var result = DotMake.CommandLine.Cli.Parse<Fuse.Cli.FuseCliCommand>(["mcp", "install", "--no-rules", "--scope", "user"]);
+
+        Assert.DoesNotContain(result.ParseResult.Errors, error => error.Message.Contains("no-rules", StringComparison.OrdinalIgnoreCase));
+        Assert.False(new InstallCommand().NoRules);
+    }
+
+    [Fact]
+    public void Install_RejectsRemovedRulesOption()
+    {
+        var result = DotMake.CommandLine.Cli.Parse<Fuse.Cli.FuseCliCommand>(["mcp", "install", "--rules"]);
+
+        Assert.Contains(result.ParseResult.Errors, error => error.Message.Contains("rules", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void McpDoctor_AcceptsJsonAndHookOptions()
+    {
+        var result = DotMake.CommandLine.Cli.Parse<Fuse.Cli.FuseCliCommand>(
+            ["mcp", "doctor", "--client", "codex", "--with-hooks", "--json"]);
+
+        Assert.Empty(result.ParseResult.Errors);
+    }
+
     [Theory]
     [InlineData("opencode")]
     [InlineData("kilo")]
@@ -862,17 +914,14 @@ public sealed class McpInstallTests
 
     private static void AssertProperAgentGuidance(string content)
     {
-        Assert.Contains("For a pull request or branch review with a Git base, start with `fuse_review`", content);
-        Assert.Contains("`fuse_find kind=task`", content);
-        Assert.Contains("`fuse_find kind=symbol|path|text`", content);
-        Assert.Contains("It cannot verify a coordinated multi-file overlay", content);
-        Assert.Contains("does not replace required build, test, format, or lint commands", content);
-        Assert.Contains("An `upgrade_pending` syntax index remains usable", content);
-        Assert.Contains("`workspace_identity_unresolved`", content);
-        Assert.Contains("`fuse_reduce` remains available", content);
-        Assert.DoesNotContain("Start with `fuse_workspace`", content);
-        Assert.DoesNotContain("an `index_state:` other than `ready`", content);
-        Assert.DoesNotContain("Use built-in grep and file reads for exact string or symbol lookups", content);
+        Assert.Contains("For repository code tasks:", content);
+        Assert.Contains("Call fuse_workspace with action=status before broad discovery.", content);
+        Assert.Contains("Call fuse_find before broad file search", content);
+        Assert.Contains("Call fuse_find with kind=task for open-ended localization.", content);
+        Assert.Contains("Call fuse_impact before changing a public signature.", content);
+        Assert.Contains("Call fuse_check after a proposed single-file edit.", content);
+        Assert.Contains("Call fuse_review before handoff.", content);
+        Assert.Contains("Do not repeat a refused query.", content);
     }
 
     private static string CreateTempDirectory()

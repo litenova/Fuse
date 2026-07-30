@@ -9,11 +9,12 @@ namespace Fuse.Cli.Commands;
 /// </summary>
 [CliCommand(
     Name = "install",
-    Description = "Write MCP client registration for launching 'fuse mcp serve'. Does not install the Fuse binary, rules, hooks, or an index unless their separate options are used.",
+    Description = "Write MCP client registration and managed Fuse guidance for launching 'fuse mcp serve'.",
     Parent = typeof(McpCommand))]
 public sealed class InstallCommand
 {
     private readonly IConsoleUI _consoleUI;
+    private readonly McpDoctorService _mcpDoctorService;
     private readonly McpInstallService _mcpInstallService;
 
     /// <summary>
@@ -23,7 +24,7 @@ public sealed class InstallCommand
     ///     Used by DotMake.CommandLine to bind options; the console UI is <see langword="null" />, so this instance
     ///     must not run.
     /// </remarks>
-    public InstallCommand() : this(null!, null!)
+    public InstallCommand() : this(null!, null!, null!)
     {
     }
 
@@ -32,10 +33,12 @@ public sealed class InstallCommand
     /// </summary>
     /// <param name="consoleUI">The console UI for status output.</param>
     /// <param name="mcpInstallService">The service that writes MCP client configuration.</param>
-    public InstallCommand(IConsoleUI consoleUI, McpInstallService mcpInstallService)
+    /// <param name="mcpDoctorService">The service that verifies the resulting registration without writing files.</param>
+    public InstallCommand(IConsoleUI consoleUI, McpInstallService mcpInstallService, McpDoctorService mcpDoctorService)
     {
         _consoleUI = consoleUI;
         _mcpInstallService = mcpInstallService;
+        _mcpDoctorService = mcpDoctorService;
     }
 
     /// <summary>
@@ -57,12 +60,12 @@ public sealed class InstallCommand
     public string? Command { get; set; }
 
     /// <summary>
-    ///     When set, also writes a short rule biasing the agent toward the <c>fuse_*</c> tools into each client's
-    ///     documented instruction file. At project scope, also appends <c>.fuse/</c> to <c>.gitignore</c> when no
-    ///     equivalent entry exists.
+    ///     When set, skips the managed Fuse guidance that is otherwise written to each configured client's
+    ///     documented instruction file. At project scope, the default guidance write also appends <c>.fuse/</c>
+    ///     to <c>.gitignore</c> when no equivalent entry exists.
     /// </summary>
-    [CliOption(Required = false, Description = "Also write client-specific Fuse instructions (AGENTS.md, CLAUDE.md, or the client's documented equivalent). Does not install a skill.")]
-    public bool Rules { get; set; }
+    [CliOption(Name = "--no-rules", Required = false, Description = "Register MCP only. Do not write managed Fuse instructions to AGENTS.md, CLAUDE.md, or the client's documented equivalent.")]
+    public bool NoRules { get; set; }
 
     /// <summary>
     ///     When set, also writes Fuse's ambient-verification hooks (S3) into the project's Claude Code
@@ -108,7 +111,7 @@ public sealed class InstallCommand
             scope,
             projectDirectory: null,
             fuseCommand: Command,
-            writeRules: Rules,
+            writeRules: !NoRules,
             _consoleUI,
             context.CancellationToken);
 
@@ -129,9 +132,18 @@ public sealed class InstallCommand
         if (WithHooks)
             WriteClaudeHooks();
 
-        if (!Rules)
+        var doctor = await _mcpDoctorService.DiagnoseAsync(
+            clients,
+            scope,
+            projectDirectory: null,
+            includeHooks: WithHooks,
+            cancellationToken: context.CancellationToken);
+        if (doctor.RestartRequired)
+            _consoleUI.WriteStep("MCP doctor: restart the configured client to load its updated registration and guidance.");
+
+        if (NoRules)
             _consoleUI.WriteStep(
-                "Agent instructions were not written. Use --rules to add the managed Fuse block to AGENTS.md, CLAUDE.md, or the selected client's documented instruction file. MCP server instructions are still advertised when the client connects.");
+                "Managed agent instructions were skipped by --no-rules. MCP server instructions are still advertised when the client connects.");
     }
 
     // Writes (or idempotently updates) the project's .claude/settings.json with Fuse's ambient-verification hooks.
@@ -187,7 +199,7 @@ public sealed class InstallCommand
         return clients.Count > 0;
     }
 
-    private static bool TryParseScope(string value, out McpInstallScope scope)
+    internal static bool TryParseScope(string value, out McpInstallScope scope)
     {
         switch (value.Trim().ToLowerInvariant())
         {

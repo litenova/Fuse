@@ -23,15 +23,17 @@ From a .NET project inside a Git repository:
 
 ```bash
 dotnet tool install -g Fuse
-fuse mcp install --rules
+fuse mcp install
 ```
 
 The installer supports Claude Code, Cursor, GitHub Copilot, OpenCode, Kilo Code, Codex,
 and Grok Build. Use `--client <name>` to configure one client; the default `all` configures
-all seven for the selected scope. `fuse mcp install` writes MCP client registration only.
-`--rules` also writes the client's documented instruction file, such as `AGENTS.md` or
-`CLAUDE.md`; it does not install a skill. `--with-hooks` separately writes project-scoped
-Claude Code hooks. See [Connect your coding agent](https://fuse.codes/docs/start/connect-your-ai)
+all seven for the selected scope. `fuse mcp install` writes MCP registration and a short,
+versioned managed block in the client's documented instruction file, such as `AGENTS.md` or
+`CLAUDE.md`. Pass `--no-rules` to register MCP without the managed block. `--with-hooks`
+separately writes project-scoped Claude Code hooks. Run `fuse mcp doctor` after installation
+to inspect registration, managed guidance, daemon reachability, and index state. See [Connect
+your coding agent](https://fuse.codes/docs/start/connect-your-ai)
 for the exact file and scope matrix.
 
 Reload your MCP client, then ask:
