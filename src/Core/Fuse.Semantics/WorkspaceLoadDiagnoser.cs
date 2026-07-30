@@ -73,6 +73,19 @@ internal sealed class WorkspaceLoadDiagnoser
             discovery.SelectionNote);
     }
 
+    // Syntax indexing deliberately does not select a compiler workspace. In particular, repositories with several
+    // solution filters must still get a usable syntax index; ambiguity matters only when a compiler-backed request
+    // explicitly asks Fuse to choose a target.
+    internal static LoadDiagnosis BuildSyntaxFirst(RoslynWorkspaceSnapshot snapshot) =>
+        new(
+            "syntax",
+            0,
+            0,
+            [],
+            snapshot.Diagnostics,
+            null,
+            "compiler analysis has not been requested");
+
     internal static LoadDiagnosis BuildFromCapture(WorkspaceDiscoveryResult discovery, CaptureResult capture)
     {
         var reports = capture.Projects

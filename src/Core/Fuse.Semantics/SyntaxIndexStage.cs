@@ -38,7 +38,7 @@ internal sealed class SyntaxIndexStage
             return 0;
 
         var content = await File.ReadAllTextAsync(Path.Combine(root, file.Path), cancellationToken);
-        var extracted = provider.Extract(file.NormalizedPath, content);
+        var extracted = RetainDeclarationsForDetail(file, provider.Extract(file.NormalizedPath, content));
         await store.UpsertSymbolsAsync(extracted.Symbols, cancellationToken);
         await store.UpsertChunksAsync(RetainChunksForDetail(file, extracted.Chunks).ToList(), cancellationToken);
         if (string.Equals(file.Extension, ".cs", StringComparison.OrdinalIgnoreCase))
@@ -88,7 +88,7 @@ internal sealed class SyntaxIndexStage
                 return;
 
             var content = await File.ReadAllTextAsync(Path.Combine(root, file.Path), token);
-            var extracted = provider.Extract(file.NormalizedPath, content);
+            var extracted = RetainDeclarationsForDetail(file, provider.Extract(file.NormalizedPath, content));
             var routes = file.Extension == ".cs"
                 ? _routeExtractor.Extract(file.NormalizedPath, content).ToList()
                 : [];
@@ -283,7 +283,7 @@ internal sealed class SyntaxIndexStage
                 return;
 
             var content = await File.ReadAllTextAsync(Path.Combine(root, file.Path), token);
-            var extracted = provider.Extract(file.NormalizedPath, content);
+            var extracted = RetainDeclarationsForDetail(file, provider.Extract(file.NormalizedPath, content));
             var routes = file.Extension == ".cs"
                 ? _routeExtractor.Extract(file.NormalizedPath, content).ToList()
                 : [];
@@ -346,7 +346,7 @@ internal sealed class SyntaxIndexStage
                 continue;
             }
 
-            var extracted = _syntaxSymbols.Extract(file.NormalizedPath, syntaxRoot);
+            var extracted = RetainDeclarationsForDetail(file, _syntaxSymbols.Extract(file.NormalizedPath, syntaxRoot));
             foreach (var chunk in RetainChunksForDetail(file, extracted.Chunks))
                 chunks.Add(dropChunkSymbolIds ? chunk with { SymbolId = null } : chunk);
             routes.AddRange(_routeExtractor.Extract(file.NormalizedPath, syntaxRoot));
@@ -373,6 +373,31 @@ internal sealed class SyntaxIndexStage
             return null;
         }
     }
+
+    // Generated files are useful for exact type lookup, but member declarations from generated sources can number
+    // in the hundreds of thousands. Keep only type-level facts and their signature chunks. Routes remain separate
+    // because generated endpoint declarations are still part of the useful discovery surface.
+    private static SyntaxExtractionResult RetainDeclarationsForDetail(
+        IndexedFileRecord file,
+        SyntaxExtractionResult extracted)
+    {
+        if (!file.IsGenerated || file.DetailLevel != IndexDetailLevel.Declarations)
+            return extracted;
+
+        var symbols = extracted.Symbols
+            .Where(symbol => IsTypeDeclaration(symbol.Kind))
+            .ToList();
+        var symbolIds = symbols
+            .Select(symbol => symbol.SymbolId)
+            .ToHashSet(StringComparer.Ordinal);
+        var chunks = extracted.Chunks
+            .Where(chunk => chunk.SymbolId is not null && symbolIds.Contains(chunk.SymbolId))
+            .ToList();
+        return new SyntaxExtractionResult(symbols, chunks);
+    }
+
+    private static bool IsTypeDeclaration(string kind) => kind is
+        "class" or "interface" or "struct" or "record" or "enum" or "delegate" or "type";
 
     private static string EncodePendingPaths(IEnumerable<string> paths) =>
         Convert.ToBase64String(Encoding.UTF8.GetBytes(string.Join('\0', paths)));

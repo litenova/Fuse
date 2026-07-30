@@ -141,8 +141,16 @@ public sealed class SyntaxIndexerTests : IAsyncLifetime
 
         var symbols = await _store.FindSymbolsByNameAsync("GeneratedModel", 10, CancellationToken.None);
         Assert.Contains(symbols, symbol => symbol.FilePath.EndsWith("generated/GeneratedModel.g.cs", StringComparison.Ordinal));
+        var generatedMembers = await _store.FindSymbolsByNameAsync("Render", 10, CancellationToken.None);
+        Assert.DoesNotContain(
+            generatedMembers,
+            symbol => symbol.FilePath.EndsWith("generated/GeneratedModel.g.cs", StringComparison.Ordinal));
         Assert.Equal(0, await CountAsync("SELECT count(*) FROM chunk_fts WHERE chunk_fts MATCH '\"GENERATED_BODY_MARKER\"';"));
         Assert.Equal(0, await CountAsync("SELECT count(*) FROM chunks WHERE signature LIKE '%GENERATED_BODY_MARKER%';"));
+        Assert.Equal(1, await CountAsync(
+            "SELECT count(*) FROM symbols WHERE file_id = (SELECT file_id FROM files WHERE normalized_path = 'generated/GeneratedModel.g.cs');"));
+        Assert.Equal(1, await CountAsync(
+            "SELECT count(*) FROM chunks WHERE file_id = (SELECT file_id FROM files WHERE normalized_path = 'generated/GeneratedModel.g.cs');"));
         Assert.Equal("declarations", await ScalarTextAsync("SELECT index_detail FROM files WHERE normalized_path = 'generated/GeneratedModel.g.cs';"));
         Assert.Equal("inventory_only", await ScalarTextAsync("SELECT index_detail FROM files WHERE normalized_path = 'generated/Oversized.g.cs';"));
         var detailLimited = await _store.GetMetaAsync(WorkspaceIndexStore.DetailLimitedFilesMetaKey, CancellationToken.None);

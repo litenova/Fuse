@@ -66,6 +66,51 @@ public sealed class SemanticIndexerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task IndexSyntaxFirstAsync_DoesNotRequireAnUnambiguousCompilerWorkspace()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "fuse-semantic-index-tests", Guid.NewGuid().ToString("N"));
+        var databasePath = Path.Combine(root, ".fuse", "fuse.db");
+        Directory.CreateDirectory(root);
+        await File.WriteAllTextAsync(
+            Path.Combine(root, "Widget.cs"),
+            "namespace Demo; public sealed class Widget { }");
+        // Discovery correctly refuses this repository for compiler work. The syntax pass must not call it.
+        await File.WriteAllTextAsync(Path.Combine(root, "Product.slnf"), "{ \"name\": \"product\" }");
+        await File.WriteAllTextAsync(Path.Combine(root, "Tests.slnf"), "{ \"name\": \"tests\" }");
+
+        try
+        {
+            await Assert.ThrowsAsync<WorkspaceConfigurationException>(
+                () => new DotNetWorkspaceDiscoverer().DiscoverAsync(root, CancellationToken.None));
+
+            await using (var store = new WorkspaceIndexStore(databasePath))
+            {
+                await store.InitializeAsync(CancellationToken.None);
+
+                var result = await CreateIndexer().IndexSyntaxFirstAsync(root, store, CancellationToken.None);
+
+                Assert.Equal("syntax", result.Mode);
+                Assert.True((await WorkspaceIndexManifest.ValidateAsync(root, store, CancellationToken.None)).Ready);
+                var diagnosis = await store.GetMetaAsync(WorkspaceIndexStore.LoadDiagnosisMetaKey, CancellationToken.None);
+                Assert.Contains("\"tier\":\"syntax\"", diagnosis, StringComparison.Ordinal);
+                Assert.DoesNotContain("Product.slnf", diagnosis, StringComparison.Ordinal);
+            }
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(root))
+                    Directory.Delete(root, recursive: true);
+            }
+            catch (IOException)
+            {
+                // Best-effort cleanup of this test's exact temporary database directory.
+            }
+        }
+    }
+
+    [Fact]
     public async Task IndexSyntaxFirstAsync_Reports_inventory_and_incremental_syntax_progress()
     {
         var indexer = CreateIndexer();

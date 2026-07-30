@@ -164,9 +164,12 @@ public sealed class SemanticIndexer
         // Syntax is now the completed default index depth. Compiler work starts only after an explicit semantic
         // request, so this store is not waiting for an automatic background upgrade.
         await store.SetMetaAsync(SemanticPendingMetaKey, "0", cancellationToken);
-        // Stamp a syntax-tier diagnosis. Discovery is file based and does not load MSBuild.
-        var discovery = await _discoverer.DiscoverAsync(root, cancellationToken);
-        await _finalizer.StampLoadDiagnosisAsync(store, BuildDiagnosisFromSnapshot(discovery, snapshot), cancellationToken);
+        // Syntax jobs do not select a compiler target. A repository with multiple solution filters is still
+        // indexable at this depth; only an explicit semantic request needs workspace selection.
+        await _finalizer.StampLoadDiagnosisAsync(
+            store,
+            WorkspaceLoadDiagnoser.BuildSyntaxFirst(snapshot),
+            cancellationToken);
         // Stamp the Fuse build even on the syntax-first pass so a partial index also carries provenance.
         await store.SetMetaAsync(WorkspaceIndexStore.FuseVersionMetaKey, FuseBuildInfo.Current, cancellationToken);
         // R22: stamp the extraction-contract version so index reuse is gated on what was extracted, not the product
