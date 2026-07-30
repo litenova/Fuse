@@ -18,8 +18,8 @@ namespace Fuse.Cli.Tests;
 internal static class TestStoreIsolation
 {
     /// <summary>
-///     Runs once at assembly load, before any test: points the machine-wide store fallback at a throwaway
-///     directory so temporary fixtures never touch a developer's derived index.
+    ///     Runs once at assembly load, before any test: points the machine-wide store fallback at a throwaway
+    ///     directory so temporary fixtures never touch a developer's derived index.
     /// </summary>
     [ModuleInitializer]
     internal static void Initialize()

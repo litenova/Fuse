@@ -271,7 +271,8 @@ internal sealed class SemanticIndexWriter
         files
             .Select(file => (fileToProject.TryGetValue(file.NormalizedPath, out var projectPath)
                 ? file with { ProjectPath = projectPath }
-                : file) with { Language = _syntaxProviders.ForExtension(file.Extension)?.Language })
+                : file) with
+            { Language = _syntaxProviders.ForExtension(file.Extension)?.Language })
             .ToList();
 
     private static bool HasLoadWarnings(RoslynWorkspaceSnapshot snapshot) =>
