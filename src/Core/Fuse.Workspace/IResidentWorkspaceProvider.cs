@@ -60,8 +60,9 @@ public interface IResidentWorkspaceProvider
     ///     since it must not run a build).
     /// </summary>
     /// <param name="root">The absolute workspace root.</param>
+    /// <param name="cancellationToken">A token to cancel the diagnostic walk.</param>
     /// <returns>The current whole-state diagnostics, or null when no resident workspace serves the root.</returns>
-    IReadOnlyList<CheckDiagnostic>? TryGetCurrentDiagnostics(string root) => null;
+    IReadOnlyList<CheckDiagnostic>? TryGetCurrentDiagnostics(string root, CancellationToken cancellationToken) => null;
 
     /// <summary>
     ///     Speculatively typechecks a proposed single-file edit against the resident workspace and, when requested,

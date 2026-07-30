@@ -604,7 +604,7 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
         // The current whole-state diagnostics come from a live resident workspace (the same process-wide provider
         // the MCP fuse_check delta mode reads); delta mode must not run a build, so with no resident workspace this
         // returns an empty, non-resident delta and the hook stays silent.
-        var current = ResidentWorkspaces.TryGetCurrentDiagnostics(resolved);
+        var current = ResidentWorkspaces.TryGetCurrentDiagnostics(resolved, LifetimeToken);
         if (current is null)
             return new CheckDeltaDto(false, [], []);
 

@@ -170,7 +170,7 @@ public sealed class FuseCheckDeltaModeTests : IDisposable
             string queried, string relativeFilePath, string newContent, CancellationToken cancellationToken) =>
             Matches(queried) ? [] : null;
 
-        public IReadOnlyList<CheckDiagnostic>? TryGetCurrentDiagnostics(string queried) =>
+        public IReadOnlyList<CheckDiagnostic>? TryGetCurrentDiagnostics(string queried, CancellationToken cancellationToken) =>
             Matches(queried) ? Current : null;
 
         private bool Matches(string queried) =>

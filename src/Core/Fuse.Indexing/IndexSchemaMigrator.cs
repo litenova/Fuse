@@ -74,7 +74,10 @@ internal sealed class IndexSchemaMigrator
         }
         finally
         {
-            await ExecuteAsync(connection, null, "PRAGMA foreign_keys = ON;", CancellationToken.None);
+            // A cancelled rebuild still returns this connection to a pooled store. Restoring the connection-local
+            // foreign-key setting is a bounded safety cleanup, not more index work, so it gets its own short token.
+            using var restoreForeignKeys = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+            await ExecuteAsync(connection, null, "PRAGMA foreign_keys = ON;", restoreForeignKeys.Token);
         }
 
         // SQLite persists auto-vacuum mode only after VACUUM. Rebuilds are the one index path allowed to do this

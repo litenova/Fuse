@@ -140,7 +140,7 @@ public sealed class FuseResources
             return error;
 
         var toolRuntime = ResolveRuntime(runtime, indexer);
-        var current = toolRuntime.ResidentWorkspaces.TryGetCurrentDiagnostics(root);
+        var current = toolRuntime.ResidentWorkspaces.TryGetCurrentDiagnostics(root, cancellationToken);
         if (current is null)
             return "no diff: no resident workspace serves this root (start the server with FUSE_RESIDENT=1); the diff never runs a build.";
 
@@ -201,7 +201,7 @@ public sealed class FuseResources
             return error;
 
         var toolRuntime = ResolveRuntime(runtime, indexer);
-        var current = toolRuntime.ResidentWorkspaces.TryGetCurrentDiagnostics(root);
+        var current = toolRuntime.ResidentWorkspaces.TryGetCurrentDiagnostics(root, cancellationToken);
         var builder = new StringBuilder();
         if (current is not null)
         {

@@ -58,12 +58,12 @@ public sealed class ResidentWorkspaceService : IResidentWorkspaceProvider, IDisp
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<CheckDiagnostic>? TryGetCurrentDiagnostics(string root)
+    public IReadOnlyList<CheckDiagnostic>? TryGetCurrentDiagnostics(string root, CancellationToken cancellationToken)
     {
         if (!Matches(root))
             return null;
         lock (_gate)
-            return _workspace.GetDiagnostics(CancellationToken.None);
+            return _workspace.GetDiagnostics(cancellationToken);
     }
 
     /// <inheritdoc />

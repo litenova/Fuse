@@ -886,7 +886,7 @@ public sealed partial class FuseTools
         bool markGreen,
         CancellationToken cancellationToken)
     {
-        var current = runtime.ResidentWorkspaces.TryGetCurrentDiagnostics(root);
+        var current = runtime.ResidentWorkspaces.TryGetCurrentDiagnostics(root, cancellationToken);
         if (current is null)
         {
             return "cannot compute delta (abstain): no resident workspace serves this root, and delta mode does not run a build. "
@@ -1285,7 +1285,7 @@ public sealed partial class FuseTools
         CancellationToken cancellationToken)
     {
         var gateLine = "compiler status: not gated (no resident check session; run fuse_check --delta or re-check before merge).";
-        var current = runtime.ResidentWorkspaces.TryGetCurrentDiagnostics(root);
+        var current = runtime.ResidentWorkspaces.TryGetCurrentDiagnostics(root, cancellationToken);
         if (!string.IsNullOrWhiteSpace(checkSession) && current is not null)
         {
             await using var gateStore = await OpenIndexedAsync(runtime, indexer, root, cancellationToken);

@@ -130,8 +130,8 @@ public sealed class ResidentWorkspaceRegistry : IResidentWorkspaceProvider, IDis
         Resolve(root)?.TryCheckOverlay(root, relativeFilePath, newContent, cancellationToken);
 
     /// <inheritdoc />
-    public IReadOnlyList<CheckDiagnostic>? TryGetCurrentDiagnostics(string root) =>
-        Resolve(root)?.TryGetCurrentDiagnostics(root);
+    public IReadOnlyList<CheckDiagnostic>? TryGetCurrentDiagnostics(string root, CancellationToken cancellationToken) =>
+        Resolve(root)?.TryGetCurrentDiagnostics(root, cancellationToken);
 
     /// <inheritdoc />
     public Task<IReadOnlyList<CheckDiagnostic>?> TryCheckOverlayAsync(
