@@ -19,13 +19,15 @@ public sealed class FuseMcpRuntime
     /// <param name="indexJobs">The process-owned repository job manager.</param>
     /// <param name="warmSolutions">The process-owned held MSBuild solution cache.</param>
     /// <param name="pooledCheckWorkers">The process-owned compiler-check worker pool.</param>
+    /// <param name="processRunner">The host-owned runner for compiler child processes.</param>
     public FuseMcpRuntime(
         IIndexAccessProvider indexAccess,
         IResidentWorkspaceProvider residentWorkspaces,
         IndexCoordinator indexCoordinator,
         IWorkspaceIndexJobManager indexJobs,
         WarmSolutionCache warmSolutions,
-        PooledCheckWorker pooledCheckWorkers)
+        PooledCheckWorker pooledCheckWorkers,
+        IProcessRunner processRunner)
     {
         IndexAccess = indexAccess;
         ResidentWorkspaces = residentWorkspaces;
@@ -33,6 +35,7 @@ public sealed class FuseMcpRuntime
         IndexJobs = indexJobs;
         WarmSolutions = warmSolutions;
         PooledCheckWorkers = pooledCheckWorkers;
+        ProcessRunner = processRunner;
     }
 
     /// <summary>The local or remote index access path selected for this host.</summary>
@@ -53,6 +56,9 @@ public sealed class FuseMcpRuntime
     /// <summary>The process-owned pool of compiler capture check workers.</summary>
     public PooledCheckWorker PooledCheckWorkers { get; }
 
+    /// <summary>The process-owned runner that terminates child process trees on cancellation.</summary>
+    public IProcessRunner ProcessRunner { get; }
+
     /// <summary>
     ///     Creates an isolated runtime for direct unit calls to a tool method. Production hosts must obtain the
     ///     runtime from dependency injection so their jobs and resident state share one lifetime.
@@ -72,6 +78,7 @@ public sealed class FuseMcpRuntime
             coordinator,
             jobs,
             new WarmSolutionCache(),
-            new PooledCheckWorker());
+            new PooledCheckWorker(),
+            new OwnedProcessRunner());
     }
 }

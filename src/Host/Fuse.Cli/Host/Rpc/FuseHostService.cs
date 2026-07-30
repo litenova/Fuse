@@ -57,6 +57,7 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
     private readonly string? _servedRoot;
     private readonly long _startTimestamp;
     private readonly TaskCompletionSource _shutdownRequested = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly CancellationTokenSource _lifetime = new();
     private readonly object _payloadLock = new();
     private readonly HashSet<string> _payloadPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly Fuse.Workspace.IResidentWorkspaceProvider _residentWorkspaces;
@@ -66,6 +67,8 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
     private int _disposed;
 
     private Fuse.Workspace.IResidentWorkspaceProvider ResidentWorkspaces => _residentWorkspaces;
+
+    private CancellationToken LifetimeToken => _lifetime.Token;
 
     /// <summary>
     ///     Initializes a new instance of the <see cref="FuseHostService" /> class.
@@ -119,7 +122,8 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
             indexCoordinator,
             indexJobs,
             new WarmSolutionCache(),
-            new PooledCheckWorker());
+            new PooledCheckWorker(),
+            new OwnedProcessRunner());
         _sessionToken = FuseHostSessionToken.Generate();
         _servedRoot = servedRoot is not null
             ? NormalizeRoot(servedRoot)
@@ -196,7 +200,7 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
 
         return _indexJobs.StartOrJoinAsync(
             new IndexJobRequest(resolved, depth, force, captureBundlePath),
-            CancellationToken.None);
+            LifetimeToken);
     }
 
     /// <summary>Returns the active or last completed job for a repository root.</summary>
@@ -222,7 +226,7 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
     {
         FuseHostSessionToken.Validate(_sessionToken, sessionToken);
         ValidateServedRoot(root);
-        return _indexJobs.CancelAsync(Path.GetFullPath(root), CancellationToken.None);
+        return _indexJobs.CancelAsync(Path.GetFullPath(root), LifetimeToken);
     }
 
     /// <summary>
@@ -247,11 +251,11 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
         try
         {
             await using var store = new WorkspaceIndexStore(FuseStorePaths.ResolveDatabasePath(resolved));
-            if (await store.OpenForReadAsync(CancellationToken.None) is WorkspaceIndexReadOpenStatus.Ready)
+            if (await store.OpenForReadAsync(LifetimeToken) is WorkspaceIndexReadOpenStatus.Ready)
             {
-                var state = await store.GetStateAsync(CancellationToken.None);
-                var manifest = await WorkspaceIndexManifest.ValidateAsync(resolved, store, CancellationToken.None);
-                if (manifest.Ready && await _indexer.IsInventoryCurrentAsync(resolved, store, CancellationToken.None))
+                var state = await store.GetStateAsync(LifetimeToken);
+                var manifest = await WorkspaceIndexManifest.ValidateAsync(resolved, store, LifetimeToken);
+                if (manifest.Ready && await _indexer.IsInventoryCurrentAsync(resolved, store, LifetimeToken))
                     return new OpenIndexedResultDto("ready", null, state.FileCount, state.Mode, job);
             }
         }
@@ -262,7 +266,7 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
 
         var started = await _indexJobs.StartOrJoinAsync(
             new IndexJobRequest(resolved, IndexDepth.Syntax, Force: false, CaptureBundlePath: null),
-            CancellationToken.None);
+            LifetimeToken);
         return new OpenIndexedResultDto(
             "index_rebuilding",
             "syntax index is refreshing; call fuse/indexStatus for progress",
@@ -299,15 +303,15 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
         if (!Directory.Exists(resolved))
             return new GraphDto([], [], directories ? "Directories" : "Files");
 
-        await using var store = await OpenIndexedForHostAsync(resolved, CancellationToken.None);
+        await using var store = await OpenIndexedForHostAsync(resolved, LifetimeToken);
 
-        var files = await store.FindFilesByPathAsync(string.Empty, ListLimit, CancellationToken.None);
-        var tokenByPath = await store.GetFileTokenEstimatesAsync(CancellationToken.None);
-        var edges = await store.GetFileDependencyEdgesAsync(CancellationToken.None);
+        var files = await store.FindFilesByPathAsync(string.Empty, ListLimit, LifetimeToken);
+        var tokenByPath = await store.GetFileTokenEstimatesAsync(LifetimeToken);
+        var edges = await store.GetFileDependencyEdgesAsync(LifetimeToken);
 
         // Declared symbol names per file, for the node label and hover.
         var typesByPath = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-        foreach (var symbol in await store.ListSymbolsAsync(ListLimit, CancellationToken.None))
+        foreach (var symbol in await store.ListSymbolsAsync(ListLimit, LifetimeToken))
         {
             if (!typesByPath.TryGetValue(symbol.FilePath, out var names))
                 typesByPath[symbol.FilePath] = names = [];
@@ -417,7 +421,7 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
         if (!Directory.Exists(resolved))
             return new ScopeResultDto((mode ?? "search").Trim().ToLowerInvariant(), [], 0, null);
 
-        await using var store = await OpenIndexedForHostAsync(resolved, CancellationToken.None);
+        await using var store = await OpenIndexedForHostAsync(resolved, LifetimeToken);
 
         var (normalizedMode, plan) = await PlanScopeAsync(store, resolved, mode, seed, query, since, maxTokens);
 
@@ -425,7 +429,7 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
         if (plan.Items.Count > 0)
         {
             var renderer = new SemanticContextRenderer(_reductionPipeline, new SourceContentProvider(new PhysicalFileSystem()));
-            var rendered = await renderer.RenderAsync(plan, resolved, CancellationToken.None);
+            var rendered = await renderer.RenderAsync(plan, resolved, LifetimeToken);
             var content = SemanticContextEmitter.Emit(plan, rendered, ContextOutputFormat.Xml, resolved);
 
             var dir = PayloadDirectory;
@@ -469,7 +473,7 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
         if (!Directory.Exists(resolved))
             return new ExplainResultDto((mode ?? "search").Trim().ToLowerInvariant(), []);
 
-        await using var store = await OpenIndexedForHostAsync(resolved, CancellationToken.None);
+        await using var store = await OpenIndexedForHostAsync(resolved, LifetimeToken);
 
         var (normalizedMode, plan) = await PlanScopeAsync(store, resolved, mode, seed, query, since, 0);
         var files = plan.Items
@@ -498,9 +502,9 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
         if (!Directory.Exists(resolved))
             return new DiagnosticsDto([], [], [], []);
 
-        await using var store = await OpenIndexedForHostAsync(resolved, CancellationToken.None);
+        await using var store = await OpenIndexedForHostAsync(resolved, LifetimeToken);
 
-        var files = await store.FindFilesByPathAsync(string.Empty, ListLimit, CancellationToken.None);
+        var files = await store.FindFilesByPathAsync(string.Empty, ListLimit, LifetimeToken);
 
         // Read each indexed file's content once to locate the secret spans the reduction path would redact (mapped
         // to zero-based editor ranges) and to flag machine-generated C#. Read failures skip the file.
@@ -534,7 +538,7 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
             }
         }
 
-        var tokenByPath = await store.GetFileTokenEstimatesAsync(CancellationToken.None);
+        var tokenByPath = await store.GetFileTokenEstimatesAsync(LifetimeToken);
         var hotspots = tokenByPath
             .Select(kv => new HotspotDiagnosticDto(kv.Key, kv.Value))
             .OrderByDescending(h => h.TokenCost)
@@ -544,7 +548,7 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
         // Graph gaps: indexed files that no typed dependency edge touches (often reflection-only or dead code the
         // syntax tier cannot connect).
         var connected = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var edge in await store.GetFileDependencyEdgesAsync(CancellationToken.None))
+        foreach (var edge in await store.GetFileDependencyEdgesAsync(LifetimeToken))
         {
             connected.Add(edge.FromPath);
             connected.Add(edge.ToPath);
@@ -572,6 +576,7 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
         FuseHostSessionToken.Validate(_sessionToken, sessionToken);
         _logger.LogInformation("Shutdown requested by client.");
         DeleteTrackedPayloads();
+        _lifetime.Cancel();
         _shutdownRequested.TrySetResult();
     }
 
@@ -603,11 +608,11 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
         if (current is null)
             return new CheckDeltaDto(false, [], []);
 
-        await using var store = await OpenStoreAsync(resolved);
-        var baseline = await store.GetCheckSessionBaselineAsync(session, CancellationToken.None);
+        await using var store = await OpenStoreAsync(resolved, LifetimeToken);
+        var baseline = await store.GetCheckSessionBaselineAsync(session, LifetimeToken);
         if (baseline is null)
         {
-            await store.SaveCheckSessionBaselineAsync(session, resolved, current, CancellationToken.None);
+            await store.SaveCheckSessionBaselineAsync(session, resolved, current, LifetimeToken);
             return new CheckDeltaDto(true, [], []);
         }
 
@@ -641,7 +646,7 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
         ValidateServedRoot(root);
         var resolved = Path.GetFullPath(root);
         var diagnostics = await ResidentWorkspaces.TryCheckOverlayAsync(
-            resolved, relativeFilePath, newContent, includeAnalyzers, CancellationToken.None);
+            resolved, relativeFilePath, newContent, includeAnalyzers, LifetimeToken);
         return diagnostics is null
             ? new CheckOverlayResultDto(false, [])
             : new CheckOverlayResultDto(true, diagnostics.Select(ToCheckDiagnosticDto).ToList());
@@ -654,7 +659,7 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
         FuseHostSessionToken.Validate(_sessionToken, sessionToken);
         ValidateServedRoot(root);
         BudgetFor(root).ActivateWarm();
-        return new DoctorResultDto(await Fuse.Cli.Commands.DoctorCommand.BuildLiveReportAsync(_indexer, Path.GetFullPath(root), CancellationToken.None));
+        return new DoctorResultDto(await Fuse.Cli.Commands.DoctorCommand.BuildLiveReportAsync(_indexer, Path.GetFullPath(root), LifetimeToken));
     }
 
     /// <summary>Runs a staged compiler refactor through this root's held warm solution cache.</summary>
@@ -667,7 +672,7 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
         var output = await FuseTools.FuseRefactorCoreAsync(
             root, request.Symbol, request.NewName, request.Operation, request.ContainingType, request.ParameterType,
             request.ParameterName, request.Argument, request.NewOrder, request.DiagnosticId, request.File,
-            CancellationToken.None, routeToHost: false);
+            LifetimeToken, routeToHost: false);
         return new RefactorResultDto(output);
     }
 
@@ -681,7 +686,8 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
         BudgetFor(root).ActivateCapture();
         var result = await FuseTools.TryOracleFromCaptureBundleAsync(
             _runtime,
-            Path.GetFullPath(root), relativeFilePath, newContent, new BuildCaptureClient(), CancellationToken.None);
+            Path.GetFullPath(root), relativeFilePath, newContent,
+            new BuildCaptureClient(processRunner: _runtime.ProcessRunner), LifetimeToken);
         return result is { Verified: true }
             ? new CaptureCheckResultDto(true, null, result.Diagnostics.Select(ToCheckDiagnosticDto).ToList())
             : new CaptureCheckResultDto(false, result?.Reason, []);
@@ -757,8 +763,16 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
-        DeleteTrackedPayloads();
-        await _indexJobs.DisposeAsync();
+        _lifetime.Cancel();
+        try
+        {
+            DeleteTrackedPayloads();
+            await _indexJobs.DisposeAsync();
+        }
+        finally
+        {
+            _lifetime.Dispose();
+        }
     }
 
     private Task<WorkspaceIndexStore> OpenIndexedForHostAsync(string root, CancellationToken cancellationToken) =>
@@ -791,14 +805,14 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
     private async Task<IndexResultDto> BuildIndexResultDtoAsync(
         string resolved, SemanticIndexResult pass, long elapsedMs)
     {
-        await using var store = await _indexCoordinator.OpenForReadOnlyAsync(resolved, CancellationToken.None);
-        var state = await store.GetStateAsync(CancellationToken.None);
-        var languages = (await store.GetLanguageCountsAsync(CancellationToken.None))
+        await using var store = await _indexCoordinator.OpenForReadOnlyAsync(resolved, LifetimeToken);
+        var state = await store.GetStateAsync(LifetimeToken);
+        var languages = (await store.GetLanguageCountsAsync(LifetimeToken))
             .Select(l => new LanguageCountDto(l.Language, l.Count))
             .ToList();
-        var fuseVersion = await store.GetMetaAsync(WorkspaceIndexStore.FuseVersionMetaKey, CancellationToken.None)
+        var fuseVersion = await store.GetMetaAsync(WorkspaceIndexStore.FuseVersionMetaKey, LifetimeToken)
                           ?? FuseBuildInfo.Current;
-        var manifest = await WorkspaceIndexManifest.ValidateAsync(resolved, store, CancellationToken.None);
+        var manifest = await WorkspaceIndexManifest.ValidateAsync(resolved, store, LifetimeToken);
 
         _logger.LogInformation("Index {Root}: [{Mode}] {Files} files, {Symbols} symbols, {Routes} routes.",
             resolved, pass.Mode, pass.FileCount, pass.SymbolCount, pass.RouteCount);
@@ -816,10 +830,10 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
     }
 
     // Opens the store for check-session baseline persistence (daemon-owned small writes).
-    private static async Task<WorkspaceIndexStore> OpenStoreAsync(string root)
+    private static async Task<WorkspaceIndexStore> OpenStoreAsync(string root, CancellationToken cancellationToken)
     {
         var store = new WorkspaceIndexStore(FuseStorePaths.ResolveDatabasePath(root));
-        await store.InitializeAsync(CancellationToken.None);
+        await store.InitializeAsync(cancellationToken);
         return store;
     }
 
@@ -837,23 +851,23 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
             case "changes":
                 return ("changes", await engine.ReviewAsync(
                     new ReviewRequest(root, string.IsNullOrWhiteSpace(since) ? "HEAD" : since!, MaxTokens: budget),
-                    CancellationToken.None));
+                    LifetimeToken));
 
             case "focus":
                 var seeds = new List<ContextSeed>();
                 if (!string.IsNullOrWhiteSpace(seed))
                     seeds.Add(new ContextSeed(LooksLikePath(seed!) ? ContextSeedKind.File : ContextSeedKind.Symbol, seed!));
                 return ("focus", await engine.PlanContextAsync(
-                    new ContextRequest(root, seeds, MaxTokens: budget), CancellationToken.None));
+                    new ContextRequest(root, seeds, MaxTokens: budget), LifetimeToken));
 
             default:
-                var located = await engine.LocalizeAsync(new LocalizationRequest(root, Query: query), CancellationToken.None);
+                var located = await engine.LocalizeAsync(new LocalizationRequest(root, Query: query), LifetimeToken);
                 var fileSeeds = located.Candidates
                     .Where(c => !string.IsNullOrEmpty(c.Path))
                     .Select(c => new ContextSeed(ContextSeedKind.File, c.Path))
                     .ToList();
                 return ("search", await engine.PlanContextAsync(
-                    new ContextRequest(root, fileSeeds, MaxTokens: budget), CancellationToken.None));
+                    new ContextRequest(root, fileSeeds, MaxTokens: budget), LifetimeToken));
         }
     }
 

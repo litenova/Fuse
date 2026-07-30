@@ -80,6 +80,8 @@ public sealed class OwnedProcessRunner : IProcessRunner
         }
 
         _processStarted?.Invoke(process.Id);
+        if (startInfo.RedirectStandardInput)
+            process.StandardInput.Close();
         var standardOutput = process.StandardOutput.ReadToEndAsync(cancellationToken);
         var standardError = process.StandardError.ReadToEndAsync(cancellationToken);
         using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

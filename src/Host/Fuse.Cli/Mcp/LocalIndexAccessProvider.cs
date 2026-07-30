@@ -35,9 +35,9 @@ public sealed class LocalIndexAccessProvider : IIndexAccessProvider
         if (started.Conflict)
             throw new IndexBusyException();
 
-        var syntaxReady = _jobs.WaitForSyntaxReadyAsync(root, CancellationToken.None);
+        var syntaxReady = _jobs.WaitForSyntaxReadyAsync(root, cancellationToken);
         var deadline = Task.Delay(
-            TimeSpan.FromMilliseconds(ColdStartCoordinator.DeadlineMilliseconds()),
+            TimeSpan.FromMilliseconds(ColdReadDeadline.DeadlineMilliseconds()),
             cancellationToken);
         if (await Task.WhenAny(syntaxReady, deadline) != syntaxReady)
         {

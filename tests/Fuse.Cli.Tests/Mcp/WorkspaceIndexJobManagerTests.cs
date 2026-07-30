@@ -153,6 +153,24 @@ public sealed class WorkspaceIndexJobManagerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Shutdown_cancels_active_job_before_returning()
+    {
+        var executor = new BlockingExecutor();
+        await using var manager = new WorkspaceIndexJobManager(executor);
+
+        await manager.StartOrJoinAsync(Request(IndexDepth.Syntax), CancellationToken.None);
+        await executor.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        await manager.ShutdownAsync(timeout.Token);
+
+        var terminal = manager.GetStatus(_root);
+        Assert.NotNull(terminal);
+        Assert.Equal(IndexJobState.Cancelled, terminal.State);
+        Assert.True(executor.CancellationObserved.Task.IsCompleted);
+    }
+
+    [Fact]
     public async Task Progress_snapshot_never_moves_back_to_an_earlier_phase()
     {
         var executor = new OutOfOrderProgressExecutor();

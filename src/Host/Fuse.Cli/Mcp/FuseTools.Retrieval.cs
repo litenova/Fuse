@@ -1442,7 +1442,7 @@ public sealed partial class FuseTools
         if (residentDiagnostics is not null)
             oracle = Fuse.Indexing.CheckResult.Ok(residentDiagnostics);
 
-        var client = new Fuse.Semantics.BuildCaptureClient();
+        var client = new Fuse.Semantics.BuildCaptureClient(processRunner: runtime.ProcessRunner);
 
         if (oracle is null && Commands.McpServeCommand.IsDaemonEnabled())
         {
@@ -1473,7 +1473,7 @@ public sealed partial class FuseTools
             return (CheckResult.Abstain("no project found to build (no oracle-grade capture and no buildable project)."), 0);
 
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-        var buildResult = await new Fuse.Semantics.BuildGradeChecker().CheckAsync(
+        var buildResult = await new Fuse.Semantics.BuildGradeChecker(processRunner: runtime.ProcessRunner).CheckAsync(
             root, discovery.ProjectPaths, file, content, cancellationToken);
         return (buildResult, stopwatch.ElapsedMilliseconds);
     }

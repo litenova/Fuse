@@ -176,7 +176,8 @@ public sealed class McpServeCommand
     {
         try
         {
-            await jobs.ShutdownAsync(CancellationToken.None);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await jobs.ShutdownAsync(timeout.Token);
         }
         catch (ObjectDisposedException)
         {

@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text;
 using System.Text.RegularExpressions;
 using Fuse.Indexing;
 
@@ -42,6 +41,7 @@ public sealed class BuildGradeChecker
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private readonly TimeSpan _timeout;
+    private readonly IProcessRunner _processRunner;
 
     /// <summary>
     ///     Initializes a new instance of the <see cref="BuildGradeChecker" /> class.
@@ -50,7 +50,12 @@ public sealed class BuildGradeChecker
     ///     The maximum time to allow the scoped build; a build that outruns it is classified as an abstention with
     ///     a timeout reason (a build-grade verify never blocks forever). Defaults to 240 seconds.
     /// </param>
-    public BuildGradeChecker(TimeSpan? timeout = null) => _timeout = timeout ?? TimeSpan.FromSeconds(240);
+    /// <param name="processRunner">The host-owned runner that kills the build process tree when its token is cancelled.</param>
+    public BuildGradeChecker(TimeSpan? timeout = null, IProcessRunner? processRunner = null)
+    {
+        _timeout = timeout ?? TimeSpan.FromSeconds(240);
+        _processRunner = processRunner ?? new OwnedProcessRunner();
+    }
 
     /// <summary>
     ///     Runs a build-grade check of a proposed single-file edit.
@@ -252,29 +257,10 @@ public sealed class BuildGradeChecker
         psi.ArgumentList.Add("-nologo");
         psi.ArgumentList.Add("-v:minimal");
 
-        using var process = new Process { StartInfo = psi };
-        var output = new StringBuilder();
-        process.OutputDataReceived += (_, e) => { if (e.Data is not null) output.AppendLine(e.Data); };
-        process.ErrorDataReceived += (_, e) => { if (e.Data is not null) output.AppendLine(e.Data); };
-        process.Start();
-        // Close the child's stdin so it gets EOF, never the parent's inherited stdin (the live MCP client pipe
-        // inside `fuse mcp serve`), which could otherwise block the build. dotnet build never reads stdin here.
-        process.StandardInput.Close();
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(_timeout);
-        try
-        {
-            await process.WaitForExitAsync(timeoutCts.Token);
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
-            return (-1, true, output.ToString());
-        }
-
-        return (process.ExitCode, false, output.ToString());
+        var execution = await _processRunner.RunAsync(psi, _timeout, cancellationToken);
+        return (
+            execution.ExitCode ?? -1,
+            execution.TimedOut,
+            string.Concat(execution.StandardOutput, Environment.NewLine, execution.StandardError));
     }
 }

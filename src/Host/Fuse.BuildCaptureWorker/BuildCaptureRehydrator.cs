@@ -15,6 +15,15 @@ namespace Fuse.BuildCaptureWorker;
 /// </summary>
 public sealed class BuildCaptureRehydrator
 {
+    private readonly IProcessRunner _processRunner;
+
+    /// <summary>
+    ///     Initializes a build-capture rehydrator with an owned process runner for its compiler build.
+    /// </summary>
+    /// <param name="processRunner">The runner that terminates this worker's build tree on cancellation or timeout.</param>
+    public BuildCaptureRehydrator(IProcessRunner? processRunner = null) =>
+        _processRunner = processRunner ?? new OwnedProcessRunner();
+
     /// <summary>
     ///     Builds the target and rehydrates its C# compilations, reporting each project's outcome.
     /// </summary>
@@ -615,7 +624,7 @@ public sealed class BuildCaptureRehydrator
     // builds incrementally and emits NO Csc invocations, so the rehydrator would see an empty log and fail with
     // "the build log recorded no C# compiler invocations". Forcing a non-incremental build makes every project
     // compile, so the binlog always carries the Csc calls tier-1 needs (the cost is a full compile per capture).
-    private static async Task<(int ExitCode, bool TimedOut, string? FirstError)> RunBuildAsync(
+    private async Task<(int ExitCode, bool TimedOut, string? FirstError)> RunBuildAsync(
         string buildTarget, string binlogPath, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var psi = new ProcessStartInfo("dotnet")
@@ -632,27 +641,15 @@ public sealed class BuildCaptureRehydrator
         psi.ArgumentList.Add("-nologo");
         psi.ArgumentList.Add("-v:quiet");
 
-        using var process = new Process { StartInfo = psi };
-        var output = new System.Text.StringBuilder();
-        process.OutputDataReceived += (_, e) => { if (e.Data is not null) output.AppendLine(e.Data); };
-        process.Start();
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(timeout);
-        try
-        {
-            await process.WaitForExitAsync(timeoutCts.Token);
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
+        var execution = await _processRunner.RunAsync(psi, timeout, cancellationToken);
+        var output = string.Concat(execution.StandardOutput, Environment.NewLine, execution.StandardError);
+        if (!execution.Started)
+            return (-1, false, execution.StartError);
+        if (execution.TimedOut)
             return (-1, true, null);
-        }
 
-        var match = System.Text.RegularExpressions.Regex.Match(output.ToString(), @"error\s+([A-Z]{2,}\d{3,})");
-        return (process.ExitCode, false, match.Success ? match.Groups[1].Value : null);
+        var match = System.Text.RegularExpressions.Regex.Match(output, @"error\s+([A-Z]{2,}\d{3,})");
+        return (execution.ExitCode ?? -1, false, match.Success ? match.Groups[1].Value : null);
     }
 
     private static void TryDelete(string path)
