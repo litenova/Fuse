@@ -26,6 +26,7 @@ public sealed class SemanticIndexer
     private readonly SyntaxIndexStage _syntaxStage;
     private readonly DirtyFileReconciler _dirtyFileReconciler;
     private readonly SemanticIndexWriter _semanticIndexWriter;
+    private readonly WorkspaceLoadDiagnoser _loadDiagnoser;
     // R42: the host-owned warm-solution cache lets a second doctor in a session skip the full MSBuild load.
     private readonly WarmSolutionCache _warmSolutions;
 
@@ -109,6 +110,7 @@ public sealed class SemanticIndexer
         _syntaxStage = new SyntaxIndexStage(_syntaxProviders, syntaxSymbols, routeExtractor);
         _dirtyFileReconciler = new DirtyFileReconciler(_inventory, _syntaxStage, _finalizer);
         _semanticIndexWriter = new SemanticIndexWriter(_semanticGraph, _syntaxStage, _syntaxProviders);
+        _loadDiagnoser = new WorkspaceLoadDiagnoser(_discoverer, _loader, _warmSolutions);
     }
 
     /// <summary>
@@ -184,84 +186,24 @@ public sealed class SemanticIndexer
     /// <param name="cancellationToken">A token to cancel the load.</param>
     /// <returns>The load diagnosis: the tier, per-project reports, and load diagnostics.</returns>
     public async Task<LoadDiagnosis> DiagnoseLoadAsync(string rootDirectory, CancellationToken cancellationToken)
-    {
-        var root = Path.GetFullPath(rootDirectory);
-        var discovery = await _discoverer.DiscoverAsync(root, cancellationToken);
-
-        // R42: reuse the warm, daemon-held solution for the common single-solution repo, so a second doctor in a
-        // session (or a doctor after a refactor) skips the full MSBuild load. A locator/open failure falls back to
-        // the loader's graceful syntax/diagnostic handling; the multi-project and syntax-only kinds use the loader.
-        RoslynWorkspaceSnapshot snapshot;
-        if (discovery is { Kind: WorkspaceKind.Solution, SolutionPath: { } solutionPath })
-        {
-            try
-            {
-                var cached = await _warmSolutions.OpenAsync(solutionPath, cancellationToken);
-                snapshot = await RoslynWorkspaceLoader.SnapshotFromSolutionAsync(cached.Solution, cached.LoadFailures, cancellationToken);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                snapshot = await _loader.LoadAsync(discovery, cancellationToken);
-            }
-        }
-        else
-        {
-            snapshot = await _loader.LoadAsync(discovery, cancellationToken);
-        }
-
-        return BuildDiagnosisFromSnapshot(discovery, snapshot);
-    }
+        => await _loadDiagnoser.DiagnoseAsync(Path.GetFullPath(rootDirectory), cancellationToken);
 
     // The tier from a project-report set: oracle requires every loaded project to be error-free; a project loaded
     // with compile errors is graph-grade (retrieval only), and any project that did not load at all drops the tier
     // further. Shared so the live diagnosis and the persisted-at-index-time diagnosis (R43) compute one tier.
     internal static string ComputeTier(bool semanticLoadSucceeded, int loaded, int total, bool anyErrors)
-    {
-        if (!semanticLoadSucceeded || loaded == 0)
-            return "syntax";
-        if (loaded < total || anyErrors)
-            return "graph-grade (partial)";
-        return "oracle-grade (all projects loaded clean)";
-    }
-
-    private static string? DescribeSelectedSolution(WorkspaceDiscoveryResult discovery) =>
-        discovery.Kind == WorkspaceKind.Solution
-            ? discovery.SolutionPath
-            : discovery.Kind == WorkspaceKind.Projects ? $"{discovery.ProjectPaths.Count} project(s), no single solution" : null;
+        => WorkspaceLoadDiagnoser.ComputeTier(semanticLoadSucceeded, loaded, total, anyErrors);
 
     // Builds the load diagnosis from an MSBuild/Roslyn load snapshot (the live doctor path and the persisted-at-
     // index-time diagnosis on the MSBuildWorkspace index path).
     internal static LoadDiagnosis BuildDiagnosisFromSnapshot(WorkspaceDiscoveryResult discovery, RoslynWorkspaceSnapshot snapshot)
-    {
-        var loaded = snapshot.ProjectReports.Count(p => p.Loaded);
-        var total = snapshot.ProjectReports.Count;
-        var anyErrors = snapshot.ProjectReports.Any(p => p.Loaded && p.Reason.Contains("error", StringComparison.OrdinalIgnoreCase));
-        var tier = ComputeTier(snapshot.SemanticLoadSucceeded, loaded, total, anyErrors);
-        return new LoadDiagnosis(
-            tier, loaded, total, snapshot.ProjectReports, snapshot.Diagnostics, DescribeSelectedSolution(discovery), discovery.SelectionNote);
-    }
+        => WorkspaceLoadDiagnoser.BuildFromSnapshot(discovery, snapshot);
 
     // Builds the load diagnosis from a tier-1 build capture (the default index path). Every captured project
     // produced a compilation (a project that failed to build does not rehydrate), so all are loaded; a project with
     // residual compile errors is graph-grade, matching the per-project reason strings the MSBuild loader produces.
     internal static LoadDiagnosis BuildDiagnosisFromCapture(WorkspaceDiscoveryResult discovery, Fuse.Indexing.CaptureResult capture)
-    {
-        var reports = capture.Projects
-            .Select(p => new ProjectLoadReport(
-                p.Name,
-                p.FilePath,
-                Loaded: true,
-                p.ErrorCount > 0 ? "loaded with compile errors (graph-grade, not oracle-grade)" : "loaded"))
-            .ToList();
-        var anyErrors = capture.Projects.Any(p => p.ErrorCount > 0);
-        var tier = ComputeTier(semanticLoadSucceeded: reports.Count > 0, loaded: reports.Count, total: reports.Count, anyErrors);
-        var diagnostics = new List<DiagnosticRecord>
-        {
-            new(DiagnosticSeverity.Info, "build-capture", $"Tier-1 build capture: {capture.Projects.Count} project(s)."),
-        };
-        return new LoadDiagnosis(
-            tier, reports.Count, reports.Count, reports, diagnostics, DescribeSelectedSolution(discovery), discovery.SelectionNote);
-    }
+        => WorkspaceLoadDiagnoser.BuildFromCapture(discovery, capture);
 
     /// <summary>
     ///     Indexes the workspace at the syntax tier only, skipping the MSBuild/Roslyn load, so a first call
