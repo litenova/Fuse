@@ -560,7 +560,16 @@ public sealed partial class FuseTools
     /// <param name="path">The workspace directory.</param>
     /// <param name="symbol">The simple name of the symbol to rename.</param>
     /// <param name="newName">The new name.</param>
+    /// <param name="operation">The requested compiler refactor operation.</param>
+    /// <param name="containingType">The declaring type used to disambiguate a signature operation.</param>
+    /// <param name="parameterType">The new parameter type for an add-parameter operation.</param>
+    /// <param name="parameterName">The parameter name for a signature operation.</param>
+    /// <param name="argument">The call-site argument added by an add-parameter operation.</param>
+    /// <param name="newOrder">The comma-separated parameter order for a reorder operation.</param>
+    /// <param name="diagnosticId">The diagnostic identifier for an apply-codefix operation.</param>
+    /// <param name="file">The repository-relative file for an apply-codefix operation.</param>
     /// <param name="cancellationToken">A token to cancel the rename.</param>
+    /// <param name="runtime">The host-owned compiler cache used for this refactor.</param>
     /// <returns>The staged per-file diffs, or an explicit abstention.</returns>
     [McpServerTool(Name = "fuse_refactor", ReadOnly = true)]
     [Description("Compiler-executed, verify-gated refactors returned as a staged diff (nothing is written to disk). operation=rename (default): rename a symbol and all its references through Roslyn (a same-named unrelated symbol is not touched). operation=add-parameter: add a trailing parameter to a method and its override/interface family, threading an explicit argument (the `argument` value) into every call site. operation=add-cancellation-token: add a CancellationToken parameter and thread an in-scope token into every call site that has one, listing token-less sites as manual follow-ups. operation=remove-parameter: remove a parameter (named by parameterName) and drop its argument at every call site, abstaining when the parameter is used in a body or a call site passes a non-trivial (possibly side-effecting) argument. operation=reorder-parameters: reorder parameters into `newOrder` (comma-separated names), abstaining if any call site uses positional arguments (only named-argument call sites are safe to reorder). operation=extract-interface: generate an interface from a class's public instance methods and properties (name it with newName, else I<Class>) and make the class implement it. operation=move-type: move a top-level type (symbol) to its own new file named after it, removing it from its current file. operation=apply-codefix: apply the repo's own analyzer code fix for `diagnosticId` in `file`, driving that diagnostic to zero (discovers the analyzers and [ExportCodeFixProvider] fixes from the project's analyzer references). The signature and type operations recompile the solution and return the diff ONLY when no new diagnostic is introduced; otherwise they abstain naming the offending sites (never a mostly-right diff). Rename and the signature ops answer only when the whole solution loads cleanly; abstain otherwise. Review and apply the staged diff with normal editing tools, then run the repository's required gates.")]
@@ -576,9 +585,11 @@ public sealed partial class FuseTools
         [Description("The parameter names in the desired order, comma-separated (reorder-parameters).")] string newOrder = "",
         [Description("The diagnostic id to fix (apply-codefix), for example IDE0090 or a repo analyzer id.")] string diagnosticId = "",
         [Description("The repo-relative file to apply the code fix in (apply-codefix).")] string file = "",
-        CancellationToken cancellationToken = default) =>
+        CancellationToken cancellationToken = default,
+        FuseMcpRuntime? runtime = null) =>
         FuseOperationalErrors.ExecuteMcpAsync(() => FuseRefactorCoreAsync(
-            path, symbol, newName, operation, containingType, parameterType, parameterName, argument, newOrder, diagnosticId, file, cancellationToken));
+            path, symbol, newName, operation, containingType, parameterType, parameterName, argument, newOrder, diagnosticId, file, cancellationToken,
+            runtime: runtime));
 
     internal static async Task<string> FuseRefactorCoreAsync(
         string path,
@@ -593,7 +604,8 @@ public sealed partial class FuseTools
         string diagnosticId,
         string file,
         CancellationToken cancellationToken,
-        bool routeToHost = true)
+        bool routeToHost = true,
+        FuseMcpRuntime? runtime = null)
     {
         var root = WorkspacePathResolver.ResolveRepositoryRoot(path);
         if (routeToHost && Commands.McpServeCommand.IsDaemonEnabled())
@@ -610,13 +622,14 @@ public sealed partial class FuseTools
             return "cannot refactor: no solution or project found. fuse_refactor abstains.";
 
         var containing = string.IsNullOrWhiteSpace(containingType) ? null : containingType;
+        var warmSolutions = runtime?.WarmSolutions;
         switch (operation.Trim().ToLowerInvariant())
         {
             case "add-parameter":
                 if (string.IsNullOrWhiteSpace(symbol) || string.IsNullOrWhiteSpace(parameterType) || string.IsNullOrWhiteSpace(parameterName))
                     return "Error: add-parameter needs the method (symbol), parameterType, and parameterName.";
                 return RenderChangeSignature(
-                    await new Fuse.Semantics.ChangeSignatureRefactorer().AddParameterAsync(
+                    await new Fuse.Semantics.ChangeSignatureRefactorer(warmSolutions).AddParameterAsync(
                         target, symbol, containing, parameterType, parameterName, argument, cancellationToken),
                     $"add parameter '{parameterType} {parameterName}' to {symbol}");
 
@@ -625,7 +638,7 @@ public sealed partial class FuseTools
                     return "Error: add-cancellation-token needs the method (symbol).";
                 var tokenName = string.IsNullOrWhiteSpace(parameterName) ? "cancellationToken" : parameterName;
                 return RenderChangeSignature(
-                    await new Fuse.Semantics.ChangeSignatureRefactorer().ThreadCancellationTokenAsync(
+                    await new Fuse.Semantics.ChangeSignatureRefactorer(warmSolutions).ThreadCancellationTokenAsync(
                         target, symbol, containing, tokenName, cancellationToken),
                     $"thread a CancellationToken '{tokenName}' through {symbol}");
 
@@ -633,7 +646,7 @@ public sealed partial class FuseTools
                 if (string.IsNullOrWhiteSpace(symbol) || string.IsNullOrWhiteSpace(parameterName))
                     return "Error: remove-parameter needs the method (symbol) and parameterName.";
                 return RenderChangeSignature(
-                    await new Fuse.Semantics.ChangeSignatureRefactorer().RemoveParameterAsync(
+                    await new Fuse.Semantics.ChangeSignatureRefactorer(warmSolutions).RemoveParameterAsync(
                         target, symbol, containing, parameterName, cancellationToken),
                     $"remove parameter '{parameterName}' from {symbol}");
 
@@ -642,7 +655,7 @@ public sealed partial class FuseTools
                     return "Error: reorder-parameters needs the method (symbol) and newOrder (comma-separated parameter names).";
                 var order = newOrder.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
                 return RenderChangeSignature(
-                    await new Fuse.Semantics.ChangeSignatureRefactorer().ReorderParametersAsync(
+                    await new Fuse.Semantics.ChangeSignatureRefactorer(warmSolutions).ReorderParametersAsync(
                         target, symbol, containing, order, cancellationToken),
                     $"reorder parameters of {symbol}");
 
@@ -650,7 +663,7 @@ public sealed partial class FuseTools
                 if (string.IsNullOrWhiteSpace(symbol))
                     return "Error: extract-interface needs the class (symbol).";
                 return RenderTypeRefactor(
-                    await new Fuse.Semantics.TypeRefactorer().ExtractInterfaceAsync(
+                    await new Fuse.Semantics.TypeRefactorer(warmSolutions).ExtractInterfaceAsync(
                         target, symbol, string.IsNullOrWhiteSpace(newName) ? null : newName, cancellationToken),
                     $"extract interface from {symbol}");
 
@@ -658,7 +671,7 @@ public sealed partial class FuseTools
                 if (string.IsNullOrWhiteSpace(symbol))
                     return "Error: move-type needs the type (symbol).";
                 return RenderTypeRefactor(
-                    await new Fuse.Semantics.TypeRefactorer().MoveTypeToOwnFileAsync(target, symbol, cancellationToken),
+                    await new Fuse.Semantics.TypeRefactorer(warmSolutions).MoveTypeToOwnFileAsync(target, symbol, cancellationToken),
                     $"move {symbol} to its own file");
 
             case "apply-codefix":
@@ -667,7 +680,7 @@ public sealed partial class FuseTools
                 var (fixResolved, _, fixError) = WorkspacePathResolver.ResolveWorkspacePath(root, file, "refactor");
                 if (!fixResolved)
                     return fixError!;
-                var fixResult = await new Fuse.Semantics.CodeFixApplier().ApplyCodeFixAsync(target, diagnosticId, file, cancellationToken);
+                var fixResult = await new Fuse.Semantics.CodeFixApplier(warmSolutions).ApplyCodeFixAsync(target, diagnosticId, file, cancellationToken);
                 if (!fixResult.Changed)
                     return $"cannot apply the fix for {diagnosticId} in {file}: {fixResult.Reason}";
                 var fixBuilder = new StringBuilder();
@@ -682,7 +695,7 @@ public sealed partial class FuseTools
             case "":
                 if (string.IsNullOrWhiteSpace(symbol) || string.IsNullOrWhiteSpace(newName))
                     return "Error: provide the symbol to rename and the new name.";
-                var result = await new Fuse.Semantics.RenameRefactorer().RenameAsync(target, symbol, newName, cancellationToken);
+                var result = await new Fuse.Semantics.RenameRefactorer(warmSolutions).RenameAsync(target, symbol, newName, cancellationToken);
                 if (!result.Renamed)
                     return $"cannot rename: {result.Reason}";
 

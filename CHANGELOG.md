@@ -21,6 +21,7 @@ All notable changes to Fuse are documented here. The format is based on Keep a C
 - `fuse mcp install` now writes the v4.4 managed agent guidance by default. `--no-rules` skips that block, while `--with-hooks` remains explicit. Re-running installation replaces only the marker-delimited Fuse block and preserves surrounding user content.
 - Daemon and MCP startup no longer load an MSBuild solution in the background. Compiler state starts only for an explicit semantic index or a compiler-backed request.
 - File-specific `fuse_check` resolves SDK default compile items and explicit linked `Compile` items before compiler work. It verifies every project that owns a linked source file in sequence, and no longer selects a full solution for a single-file check.
+- Refactor requests now use the daemon's host-owned warm-solution cache. Repeated rename, signature, type, and code-fix requests no longer create an independent compiler-state cache per MCP call.
 
 ### Fixed
 

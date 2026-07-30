@@ -672,7 +672,7 @@ public sealed class FuseHostService : IAsyncDisposable, IDisposable
         var output = await FuseTools.FuseRefactorCoreAsync(
             root, request.Symbol, request.NewName, request.Operation, request.ContainingType, request.ParameterType,
             request.ParameterName, request.Argument, request.NewOrder, request.DiagnosticId, request.File,
-            LifetimeToken, routeToHost: false);
+            LifetimeToken, routeToHost: false, runtime: _runtime);
         return new RefactorResultDto(output);
     }
 
