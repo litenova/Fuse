@@ -249,9 +249,27 @@ public sealed class IndexConcurrencyIntegrationTests : IAsyncLifetime, IDisposab
             runtime: Runtime)).ToArray();
 
         var results = await Task.WhenAll(tasks);
-        Assert.All(results, r => Assert.Contains("Widget", r));
+
+        // Reaching here at all is the deadlock assertion. Every result must then be either the indexed answer or
+        // one of the documented deferrals: a read that races this process's own reconcile abstains with the
+        // availability header rather than blocking, so requiring all eight to carry the symbol would assert
+        // against the contract and fail intermittently under load.
+        Assert.All(results, result => Assert.True(
+            result.Contains("Widget", StringComparison.Ordinal) || IsDocumentedDeferral(result),
+            $"a concurrent find returned neither the indexed answer nor a documented deferral: {result}"));
+
+        // At least one call must return the real answer, so the test still proves concurrent reads are served.
+        Assert.Contains(results, result => result.Contains("Widget", StringComparison.Ordinal));
         Assert.DoesNotContain(results, r => r.StartsWith(FuseOperationalErrors.InternalErrorPrefix));
     }
+
+    // The deferral shapes a read may return while the index is contended or refreshing: the structured
+    // availability header (R20) or an operational index-state prefix.
+    private static bool IsDocumentedDeferral(string result) =>
+        result.StartsWith("index_state:", StringComparison.Ordinal)
+        || result.StartsWith(FuseOperationalErrors.IndexBusyPrefix, StringComparison.Ordinal)
+        || result.StartsWith(FuseOperationalErrors.IndexRebuildingPrefix, StringComparison.Ordinal)
+        || result.StartsWith(FuseOperationalErrors.IndexNotBuiltPrefix, StringComparison.Ordinal);
 
     [Fact]
     public async Task Warm_reads_complete_while_coordinator_write_lock_is_held()
