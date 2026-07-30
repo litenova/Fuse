@@ -85,7 +85,7 @@ public sealed class V3GoldenOutputTests : IAsyncLifetime
     [Fact]
     public async Task MapIsStable()
     {
-        var output = await new WorkspaceMapRenderer(_store).RenderAsync(MapDetail.All, 200, CancellationToken.None);
+        var output = await new WorkspaceMapRenderer(_store, _store).RenderAsync(MapDetail.All, 200, CancellationToken.None);
 
         GoldenOutputAssert.AssertMatches("v3-map", output);
     }

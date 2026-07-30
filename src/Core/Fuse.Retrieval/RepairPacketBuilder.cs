@@ -20,13 +20,13 @@ public sealed partial class RepairPacketBuilder
 {
     private const int MaxCandidates = 5;
     private const int MaxMembers = 30;
-    private readonly IWorkspaceIndexStore _store;
+    private readonly IWorkspaceIndexQueryStore _store;
 
     /// <summary>
     ///     Initializes a new instance of the <see cref="RepairPacketBuilder" /> class.
     /// </summary>
     /// <param name="store">The workspace index store the packet's suggestions are drawn from.</param>
-    public RepairPacketBuilder(IWorkspaceIndexStore store) => _store = store;
+    public RepairPacketBuilder(IWorkspaceIndexQueryStore store) => _store = store;
 
     /// <summary>
     ///     Builds a repair packet for a diagnostic, or returns null when no concrete suggestion is possible.

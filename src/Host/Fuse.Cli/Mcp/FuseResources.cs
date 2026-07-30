@@ -45,7 +45,7 @@ public sealed class FuseResources
         if (!TryResolveRoot(path, out var root, out var error))
             return error;
         await using var store = await OpenIndexedAsync(ResolveRuntime(runtime, indexer), indexer, root, cancellationToken);
-        var renderer = new WorkspaceMapRenderer(store);
+        var renderer = new WorkspaceMapRenderer(store, store);
         return await renderer.RenderAsync(MapDetail.All, maxRows: 200, cancellationToken);
     }
 

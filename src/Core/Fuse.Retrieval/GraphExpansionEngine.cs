@@ -16,7 +16,7 @@ namespace Fuse.Retrieval;
 /// </remarks>
 public sealed class GraphExpansionEngine
 {
-    private readonly IWorkspaceIndexStore _store;
+    private readonly IWorkspaceIndexGraphStore _store;
     private readonly EdgeWeightProvider _weights;
 
     /// <summary>
@@ -24,7 +24,7 @@ public sealed class GraphExpansionEngine
     /// </summary>
     /// <param name="store">The index store to traverse.</param>
     /// <param name="weights">The edge weight provider.</param>
-    public GraphExpansionEngine(IWorkspaceIndexStore store, EdgeWeightProvider weights)
+    public GraphExpansionEngine(IWorkspaceIndexGraphStore store, EdgeWeightProvider weights)
     {
         _store = store;
         _weights = weights;

@@ -44,7 +44,7 @@ public sealed class WorkspaceMapRendererTests : IAsyncLifetime
     [Fact]
     public async Task RendersSymbolsAndRoutes()
     {
-        var renderer = new WorkspaceMapRenderer(_store);
+        var renderer = new WorkspaceMapRenderer(_store, _store);
 
         var map = await renderer.RenderAsync(MapDetail.All, 200, CancellationToken.None);
 
@@ -58,7 +58,7 @@ public sealed class WorkspaceMapRendererTests : IAsyncLifetime
     [Fact]
     public async Task SymbolsDetailOmitsRoutesSection()
     {
-        var renderer = new WorkspaceMapRenderer(_store);
+        var renderer = new WorkspaceMapRenderer(_store, _store);
 
         var map = await renderer.RenderAsync(MapDetail.Symbols, 200, CancellationToken.None);
 

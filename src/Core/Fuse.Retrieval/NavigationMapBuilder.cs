@@ -27,9 +27,9 @@ internal sealed class NavigationMapBuilder
         "merge", "branch", "pull", "request", "review",
     };
 
-    private readonly IWorkspaceIndexStore _store;
+    private readonly IWorkspaceIndexQueryStore _store;
 
-    public NavigationMapBuilder(IWorkspaceIndexStore store) => _store = store;
+    public NavigationMapBuilder(IWorkspaceIndexQueryStore store) => _store = store;
 
     /// <summary>
     ///     Builds a navigation map for a request that did not localize confidently.

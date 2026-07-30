@@ -47,7 +47,7 @@ public sealed partial class FuseTools
     {
         var toolRuntime = ResolveRuntime(runtime, indexer);
         await using var store = await OpenIndexedAsync(toolRuntime, indexer, path, cancellationToken);
-        var renderer = new WorkspaceMapRenderer(store);
+        var renderer = new WorkspaceMapRenderer(store, store);
         return await renderer.RenderAsync(ParseDetail(detail), maxRows, cancellationToken);
     }
 
