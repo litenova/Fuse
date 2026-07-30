@@ -1,9 +1,9 @@
 ---
-title: Reproduce the Benchmark
-description: The Fuse benchmark is public and reproducible from this repository. Clone the pinned corpus, install the fuse tool, and regenerate any recorded row on a clean machine.
+title: Benchmark source and recorded results
+description: The Fuse benchmark source, corpus manifest, and recorded results live outside the packaged product.
 ---
 
-The Fuse benchmark is public and reproducible from this repository. The harness, the pinned corpus manifest, the extraction and verification method, the license posture, and the recorded result files all sit under `tests/benchmarks/`, so the benchmark and the code it measures never drift. Reproduction needs only the published `fuse` tool and the in-repo manifest. Nothing here redistributes any corpus repository's source; the benchmark publishes references (a name, a URL, a pinned commit) and scripts, and a reproducer clones each repository itself under that repository's own license.
+The Fuse benchmark source is retained in this repository, separate from the packaged product. `Fuse.Benchmarks.slnx` contains the harness and its tests; `tests/benchmarks/` contains the pinned corpus manifest, method, license posture, and archived result files. Fuse 4.4 intentionally does not ship `fuse eval`, so normal tool installation cannot regenerate these files. Nothing here redistributes any corpus repository's source; the benchmark publishes references (a name, a URL, a pinned commit) and scripts, and a reproducer clones each repository itself under that repository's own license.
 
 ## What the benchmark measures
 
@@ -15,15 +15,11 @@ The Fuse benchmark is public and reproducible from this repository. The harness,
 
 `tests/benchmarks/corpus-v2.json` pins 24 open-source .NET libraries, each by name, clone URL, and commit. Their per-repository licenses and the redistribution posture are in `tests/benchmarks/corpus-licenses.md` (12 MIT, 6 Apache 2.0, 3 BSD 3-Clause, 1 MS-PL, and 2 source-available repositories, AutoMapper and MediatR, which a reproducer accepts under those terms or excludes).
 
-## Reproduce a corpus-health row on a clean machine
+## Inspect a corpus-health row on a clean machine
 
 Prerequisites: the .NET SDK the corpus needs, `git`, and disk for a NuGet cache and worktrees.
 
-1. Install the `fuse` global tool (or build it from this repository with `dotnet build Fuse.slnx -c Release`):
-
-   ```bash
-   dotnet tool install -g fuse
-   ```
+1. Open `Fuse.Benchmarks.slnx` to inspect the isolated benchmark source. The product solution and package deliberately exclude it.
 
 2. Provision the corpus repositories at their pinned commits under a working directory, one clone per manifest entry checked out at its `commit`:
 
@@ -33,15 +29,7 @@ Prerequisites: the .NET SDK the corpus needs, `git`, and disk for a NuGet cache 
    git -C <corpus>/<name> checkout <commit>
    ```
 
-3. Run the health suite against the provisioned corpus, using a warm NuGet cache to keep restores offline where possible:
-
-   ```bash
-   NUGET_PACKAGES=<cache> fuse eval corpus-health \
-     --manifest corpus-v2.json --corpus <corpus> --restore \
-     --verify-tasks 5 --repo-timeout 20
-   ```
-
-4. Compare `results/corpus-health.json` (the index tier classification and verified-task counts) and `results/corpus-tasks-v2.json` (the persisted fail-to-pass tasks) against the published row. A single-repository run (`--repo <name>`) reproduces just that row; for example, a fresh clone of Scrutor at its pinned commit reproduces its row exactly (semantic index, its verified oracle tasks).
+3. Compare `results/corpus-health.json` (the index tier classification and verified-task counts) and `results/corpus-tasks-v2.json` (the persisted fail-to-pass tasks) against the published row. The files are recorded evidence, not output from the packaged Fuse CLI.
 
 ## Leaderboard (recorded runs only)
 

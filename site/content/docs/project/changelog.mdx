@@ -28,7 +28,7 @@ The MCP server exposes a loop-shaped surface of eight tools (`fuse_workspace`, `
 
 The persistent index is a single SQLite database at `.fuse/fuse.db` (WAL mode), built through MSBuild and Roslyn with a syntax-only fallback and re-indexed incrementally per changed file. See [Store internals](/docs/internals/caching-internals) and [Operator guide](/docs/internals/operator).
 
-The benchmark suites are run by a C# eval driver (`fuse eval semantics|review|localize|ranking|checkgate|loop|agent|reduce|performance`); the numbers and figure are regenerated from `tests/benchmarks/results`. See [Benchmarks](/docs/project/benchmarks).
+The benchmark source is isolated in `Fuse.Benchmarks.slnx`; the recorded numbers and figure live under `tests/benchmarks/results`. The packaged Fuse 4.4 tool does not include an evaluation command. See [Benchmarks](/docs/project/benchmarks).
 
 Fuse ships under the Apache License, Version 2.0. The `Fuse` .NET global tool is framework-dependent and requires a compatible .NET runtime. Runtime-specific release archives and installer downloads are self-contained and bundle the runtime. Install paths are documented under [Install](/docs/start/install).
 

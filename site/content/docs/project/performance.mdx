@@ -3,7 +3,7 @@ title: Performance and latency
 description: Measured cold start, warm read latency, and verify-path timing for Fuse, sourced from the recorded benchmark result files.
 ---
 
-Fuse builds the persistent index once and reads it warm across calls. This page publishes measured latencies as a regression fence: every number is traceable to a recorded result file under `tests/benchmarks/results`, regenerated with `fuse eval performance`, `fuse resident-latency`, and `fuse testexec`. Timings are environment-dependent; read them as within-environment SLOs, not cross-machine guarantees.
+Fuse builds the persistent index once and reads it warm across calls. This page publishes archived measurements from `tests/benchmarks/results`. Fuse 4.4 does not ship `fuse eval`, `fuse resident-latency`, or `fuse testexec`; their source and recorded output remain in the separate `Fuse.Benchmarks.slnx` solution. Timings are environment-dependent; read them as within-environment SLOs, not cross-machine guarantees.
 
 ## Warm persistent index
 
@@ -93,17 +93,9 @@ Roslyn structural analysis is always included; there is no trimmed or regex-only
 
 The self-contained runtime binaries are published ReadyToRun (R50), so a one-shot runtime-binary CLI invocation pays less JIT warmup on cold start. Measured on win-x64 (`fuse --version`, environment-dependent): ReadyToRun ~150 ms versus ~188 ms without it (best 146 vs 181 ms). The configured ambient hooks use the framework-dependent `fuse` tool, so each event still starts that command even though it asks the warm daemon for diagnostics. R57 measured Release `fuse check --delta --fast` at 155 to 171 ms with no host and 239 to 294 ms with a serving host; the latter includes process startup plus the pipe round trip. Full AOT is not used (its native link is unavailable in the build environment); the long-lived daemon pays JIT once per session and is unaffected either way.
 
-## How these are regenerated
+## Recorded-result maintenance
 
-```bash
-fuse eval performance --repo NodaTime     # warm reads + cold start -> performance.json
-fuse eval performance --repo eShopOnWeb    # second scale point -> performance-eshop.json
-fuse eval profile-v42 --repo NodaTime      # index hot-path profile -> profile-v42.json
-fuse testexec                              # build-grade test execution -> testexec.json
-fuse resident-latency                      # verify verbs -> resident-latency.json
-```
-
-`profile-v42.json` records SQL and Roslyn frame attribution on the warm index path (`WorkspaceIndexStore`, `SemanticIndexer`) for store-split planning. It is maintainer evidence for R8/R9, not a published latency SLO; compare wall-clock numbers to `performance.json` for the same verbs.
+Benchmark source, corpus manifests, and recorded result files live outside the product solution in `Fuse.Benchmarks.slnx`. The packaged tool has no evaluation command, and ordinary release validation does not execute the benchmark harness. `profile-v42.json` records SQL and Roslyn frame attribution on the warm index path (`WorkspaceIndexStore`, `SemanticIndexer`) for store-split planning. It is maintainer evidence for R8/R9, not a published latency SLO; compare wall-clock numbers to `performance.json` for the same verbs.
 
 Token efficiency (median tokens a review returns) is on [Benchmarks](/docs/project/benchmarks). Test-selection latency is the covering-tests query inside `fuse_impact`; a standalone timer for it is follow-up work.
 

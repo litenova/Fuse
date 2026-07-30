@@ -34,6 +34,7 @@ All notable changes to Fuse are documented here. The format is based on Keep a C
 
 ### Removed
 
+- The packaged CLI no longer includes `fuse eval`, `fuse resident-latency`, or `fuse testexec`. Benchmark source and recorded results remain in the separate `Fuse.Benchmarks.slnx` solution and are not part of normal product validation.
 - `fuse localize` and `fuse resolve` are removed. Use `fuse find <query> --kind task` for task localization and `fuse find <query> --kind service|request|route|config|symbol` for exact lookup and wiring resolution.
 - The `git_cochange` table, collector, retrieval prior, ranking diagnostic configuration, and `FUSE_COCHANGE` setting are removed. The recorded historical ranking results remain in the repository.
 - `FUSE_BUILD_CAPTURE` no longer selects an index path. Build capture is invoked only by portable capture and compiler-backed verification.
