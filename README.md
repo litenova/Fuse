@@ -1,3 +1,5 @@
+[![MCP Toplist](https://mcptoplist.com/badge/io.github.Litenova-Solutions%2Ffuse.svg)](https://mcptoplist.com/server/io.github.Litenova-Solutions%2Ffuse)
+
 <!-- mcp-name: io.github.Litenova-Solutions/fuse -->
 
 <p align="center">
