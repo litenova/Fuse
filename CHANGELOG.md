@@ -2,6 +2,12 @@
 
 All notable changes to Fuse are documented here. The format is based on Keep a Changelog. Fuse 4.0.0 is the first public release; it carries the whole product and there is no prior public version to migrate from.
 
+## [Unreleased]
+
+### Changed
+
+- The live load diagnosis (`fuse doctor --refresh`, and the MCP/daemon doctor paths that funnel through it) now reconciles a project that the in-process load reports with compile errors against a scoped real `dotnet build` of that project. When the scoped build reports zero errors, the project is promoted to a clean load and the workspace load tier is reported as oracle-grade, with an info-level `tier-reconciled` diagnostic. This fixes the case where an in-process design-time build is missing a newer-SDK source generator (for example a .NET 10 Razor source generator on the bundled Roslyn) and produces phantom compile errors that a real CLI build does not. The reconciler runs only when a project's load reason is "loaded with errors"; a clean snapshot is returned unchanged.
+
 ## [4.4.0] - 2026-07-30
 
 ### Added

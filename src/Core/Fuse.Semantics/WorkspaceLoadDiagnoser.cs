@@ -10,15 +10,18 @@ internal sealed class WorkspaceLoadDiagnoser
     private readonly DotNetWorkspaceDiscoverer _discoverer;
     private readonly RoslynWorkspaceLoader _loader;
     private readonly WarmSolutionCache _warmSolutions;
+    private readonly BuildTierReconciler _reconciler;
 
     internal WorkspaceLoadDiagnoser(
         DotNetWorkspaceDiscoverer discoverer,
         RoslynWorkspaceLoader loader,
-        WarmSolutionCache warmSolutions)
+        WarmSolutionCache warmSolutions,
+        IProcessRunner? processRunner = null)
     {
         _discoverer = discoverer;
         _loader = loader;
         _warmSolutions = warmSolutions;
+        _reconciler = new BuildTierReconciler(processRunner ?? new OwnedProcessRunner());
     }
 
     internal async Task<LoadDiagnosis> DiagnoseAsync(string root, CancellationToken cancellationToken)
@@ -43,7 +46,38 @@ internal sealed class WorkspaceLoadDiagnoser
             snapshot = await _loader.LoadAsync(discovery, cancellationToken);
         }
 
+        // The in-process design-time load may be incomplete for some projects (for example a Razor/Blazor
+        // project whose source generator did not load in-process), so its tier is reconciled with the real
+        // toolchain before the diagnosis is reported: a project that builds clean with the SDK's correct
+        // generator versions earns a clean load even when its in-process compilation carried phantom errors.
+        snapshot = await ReconcileAsync(root, snapshot, cancellationToken);
         return BuildFromSnapshot(discovery, snapshot);
+    }
+
+    // Reconciles a load snapshot's per-project tier reports with the real toolchain (a scoped dotnet build of any
+    // project whose in-process compilation reported errors), returning the snapshot with the promoted reports and
+    // the reconciliation diagnostics merged in. A snapshot with no error-loaded projects is returned unchanged.
+    internal async Task<RoslynWorkspaceSnapshot> ReconcileAsync(
+        string root, RoslynWorkspaceSnapshot snapshot, CancellationToken cancellationToken)
+    {
+        if (snapshot.ProjectReports.All(report =>
+                !report.Loaded || report.Reason != RoslynWorkspaceLoader.LoadsWithErrorsReason))
+        {
+            return snapshot;
+        }
+
+        var (reports, reconciliationDiagnostics) =
+            await _reconciler.ReconcileAsync(root, snapshot, cancellationToken);
+        if (reconciliationDiagnostics.Count == 0)
+        {
+            return snapshot;
+        }
+
+        return snapshot with
+        {
+            ProjectReports = reports,
+            Diagnostics = snapshot.Diagnostics.Concat(reconciliationDiagnostics).ToList()
+        };
     }
 
     internal static string ComputeTier(bool semanticLoadSucceeded, int loaded, int total, bool anyErrors)
@@ -93,7 +127,7 @@ internal sealed class WorkspaceLoadDiagnoser
                 project.Name,
                 project.FilePath,
                 Loaded: true,
-                project.ErrorCount > 0 ? "loaded with compile errors (graph-grade, not oracle-grade)" : "loaded"))
+                project.ErrorCount > 0 ? RoslynWorkspaceLoader.LoadsWithErrorsReason : RoslynWorkspaceLoader.CleanLoadReason))
             .ToList();
         var anyErrors = capture.Projects.Any(project => project.ErrorCount > 0);
         var diagnostics = new List<DiagnosticRecord>

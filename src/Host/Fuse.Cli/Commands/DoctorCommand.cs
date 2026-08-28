@@ -135,7 +135,11 @@ public sealed class DoctorCommand
             builder.AppendLine("per project:");
             foreach (var project in projects)
             {
-                var mark = project.Loaded ? "ok" : "downgraded";
+                // A project that merely produced a compilation is not necessarily oracle-grade: one that loaded with
+                // compile errors is graph-grade and the oracle tools abstain for it. Only a clean load earns [ok];
+                // a loaded-with-errors project shows [downgraded] (matching its reason) so the downgrade is visible
+                // rather than hidden behind an [ok] mark.
+                var mark = project.Loaded && project.Reason == RoslynWorkspaceLoader.CleanLoadReason ? "ok" : "downgraded";
                 builder.AppendLine($"  [{mark}] {project.Name}: {project.Reason}");
             }
         }
@@ -180,7 +184,10 @@ public sealed class DoctorCommand
         {
             builder.AppendLine("per project:");
             foreach (var project in diagnosis.Projects)
-                builder.AppendLine($"  [{(project.Loaded ? "ok" : "downgraded")}] {project.Name}: {project.Reason}");
+            {
+                var mark = project.Loaded && project.Reason == RoslynWorkspaceLoader.CleanLoadReason ? "ok" : "downgraded";
+                builder.AppendLine($"  [{mark}] {project.Name}: {project.Reason}");
+            }
         }
         var errors = diagnosis.Diagnostics.Where(d => d.Severity is DiagnosticSeverity.Error or DiagnosticSeverity.Warning).ToList();
         if (errors.Count > 0)
