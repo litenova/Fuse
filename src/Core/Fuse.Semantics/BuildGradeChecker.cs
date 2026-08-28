@@ -334,4 +334,48 @@ public sealed class BuildGradeChecker
             execution.TimedOut,
             string.Concat(execution.StandardOutput, Environment.NewLine, execution.StandardError));
     }
+
+    /// <summary>
+    ///     Runs a scoped <c>dotnet build</c> of one project (in a temporary mirror, tree-safe) and returns the
+    ///     number of error-severity diagnostics the real toolchain reports, or null when the build could not run
+    ///     (timeout, a failure with no parseable compiler diagnostics, or a missing toolchain). This is the
+    ///     ground truth the load-tier reconciliation uses: a project whose in-process design-time compilation is
+    ///     incomplete (for example a Razor/Blazor project whose generator did not load in-process) can still build
+    ///     clean with the real SDK, and that clean build is the honest basis for its tier.
+    /// </summary>
+    /// <param name="rootDirectory">The repository root the project path is relative to.</param>
+    /// <param name="projectPath">The absolute path to the project file to build.</param>
+    /// <param name="cancellationToken">Cancels the scoped build.</param>
+    /// <returns>The error count of the scoped build, or null when the toolchain could not verify.</returns>
+    internal async Task<int?> CountProjectErrorsAsync(string rootDirectory, string projectPath, CancellationToken cancellationToken)
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "fuse-build-grade", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var tempProjectFile = MirrorWorkspace(rootDirectory, projectPath, tempRoot, cancellationToken);
+            var (exitCode, timedOut, output) = await RunBuildAsync(tempProjectFile, cancellationToken);
+            if (timedOut)
+                return null;
+
+            var errorCount = DiagnosticLine.Matches(output).Count(m => m.Groups["sev"].Value == "error");
+            // A nonzero exit with no compiler diagnostics anywhere means the toolchain itself did not produce
+            // compiler output (a restore/NU failure), so the tier cannot be verified from this build.
+            if (exitCode != 0 && !DiagnosticLine.IsMatch(output))
+                return null;
+
+            return errorCount;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+        finally
+        {
+            try { Directory.Delete(tempRoot, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        }
+    }
 }
