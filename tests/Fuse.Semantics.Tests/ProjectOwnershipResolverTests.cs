@@ -66,6 +66,118 @@ public sealed class ProjectOwnershipResolverTests : IDisposable
     }
 
     [Fact]
+    public async Task A_web_sdk_project_owns_its_default_razor_markup_files()
+    {
+        Write("WebApp/WebApp.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk.Web">
+              <PropertyGroup>
+                <TargetFramework>net10.0</TargetFramework>
+              </PropertyGroup>
+            </Project>
+            """);
+        Write("WebApp/Pages/Index.razor", "<h1>Hello</h1>");
+        Write("WebApp/Components/Counter.razor", "<p>0</p>");
+        Write("WebApp/Program.cs", "var app = WebApplication.Create();");
+
+        var ownership = await new ProjectOwnershipResolver().ResolveAsync(_root, "WebApp/Pages/Index.razor", CancellationToken.None);
+
+        Assert.Equal([Path.Combine(_root, "WebApp", "WebApp.csproj")], ownership.ProjectPaths);
+    }
+
+    [Fact]
+    public async Task A_web_sdk_project_owns_its_default_cshtml_view_files()
+    {
+        Write("MvcApp/MvcApp.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk.Web">
+              <PropertyGroup>
+                <TargetFramework>net10.0</TargetFramework>
+              </PropertyGroup>
+            </Project>
+            """);
+        Write("MvcApp/Views/Home/Index.cshtml", "<h1>Home</h1>");
+
+        var ownership = await new ProjectOwnershipResolver().ResolveAsync(_root, "MvcApp/Views/Home/Index.cshtml", CancellationToken.None);
+
+        Assert.Equal([Path.Combine(_root, "MvcApp", "MvcApp.csproj")], ownership.ProjectPaths);
+    }
+
+    [Fact]
+    public async Task A_razor_sdk_library_owns_its_default_razor_components()
+    {
+        Write("BlazorLib/BlazorLib.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk.Razor">
+              <PropertyGroup>
+                <TargetFramework>net10.0</TargetFramework>
+              </PropertyGroup>
+            </Project>
+            """);
+        Write("BlazorLib/Components/Greeting.razor", "<p>Hi</p>");
+
+        var ownership = await new ProjectOwnershipResolver().ResolveAsync(_root, "BlazorLib/Components/Greeting.razor", CancellationToken.None);
+
+        Assert.Equal([Path.Combine(_root, "BlazorLib", "BlazorLib.csproj")], ownership.ProjectPaths);
+    }
+
+    [Fact]
+    public async Task A_plain_class_library_does_not_own_razor_markup_files()
+    {
+        // The plain Microsoft.NET.Sdk adds no default Razor Content items, so a .razor file that happens to sit in
+        // its directory is not compiled by it and must not be owned by it.
+        Write("ClassLib/ClassLib.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>net10.0</TargetFramework>
+              </PropertyGroup>
+            </Project>
+            """);
+        Write("ClassLib/Components/Stray.razor", "<p>orphan</p>");
+        Write("ClassLib/Lib.cs", "namespace ClassLib; public sealed class Lib;");
+
+        var ownership = await new ProjectOwnershipResolver().ResolveAsync(_root, "ClassLib/Components/Stray.razor", CancellationToken.None);
+
+        Assert.Empty(ownership.ProjectPaths);
+    }
+
+    [Fact]
+    public async Task Disabling_default_razor_items_releases_razor_markup_ownership()
+    {
+        Write("WebApp/WebApp.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk.Web">
+              <PropertyGroup>
+                <TargetFramework>net10.0</TargetFramework>
+                <EnableDefaultRazorCompileItems>false</EnableDefaultRazorCompileItems>
+              </PropertyGroup>
+              <ItemGroup>
+                <Compile Include="Program.cs" />
+              </ItemGroup>
+            </Project>
+            """);
+        Write("WebApp/Pages/Index.razor", "<h1>Hello</h1>");
+
+        var ownership = await new ProjectOwnershipResolver().ResolveAsync(_root, "WebApp/Pages/Index.razor", CancellationToken.None);
+
+        Assert.Empty(ownership.ProjectPaths);
+    }
+
+    [Fact]
+    public async Task A_razor_project_still_owns_its_default_csharp_files()
+    {
+        // Owning Razor markup must not disturb the ordinary .cs ownership path.
+        Write("WebApp/WebApp.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk.Web">
+              <PropertyGroup>
+                <TargetFramework>net10.0</TargetFramework>
+              </PropertyGroup>
+            </Project>
+            """);
+        Write("WebApp/Program.cs", "var app = WebApplication.Create();");
+
+        var ownership = await new ProjectOwnershipResolver().ResolveAsync(_root, "WebApp/Program.cs", CancellationToken.None);
+
+        Assert.Equal([Path.Combine(_root, "WebApp", "WebApp.csproj")], ownership.ProjectPaths);
+    }
+
+    [Fact]
     public async Task Rejects_a_path_that_escapes_the_repository_root()
     {
         var exception = await Assert.ThrowsAsync<ArgumentException>(
