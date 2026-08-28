@@ -93,7 +93,7 @@ internal sealed class WorkspaceLoadDiagnoser
                 project.Name,
                 project.FilePath,
                 Loaded: true,
-                project.ErrorCount > 0 ? "loaded with compile errors (graph-grade, not oracle-grade)" : "loaded"))
+                project.ErrorCount > 0 ? RoslynWorkspaceLoader.LoadsWithErrorsReason : RoslynWorkspaceLoader.CleanLoadReason))
             .ToList();
         var anyErrors = capture.Projects.Any(project => project.ErrorCount > 0);
         var diagnostics = new List<DiagnosticRecord>

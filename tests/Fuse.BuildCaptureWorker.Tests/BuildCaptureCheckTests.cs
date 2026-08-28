@@ -1,4 +1,7 @@
+using System.Collections.Immutable;
 using Fuse.BuildCaptureWorker;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Xunit;
 
 namespace Fuse.BuildCaptureWorker.Tests;
@@ -57,5 +60,64 @@ public sealed class BuildCaptureCheckTests
         {
             try { Directory.Delete(work, recursive: true); } catch (IOException) { }
         }
+    }
+
+    // R1 delta check: the speculative check reports only the diagnostics an edit INTRODUCED, not the ones the
+    // base compilation already carried. This is what makes a no-op edit on a project with pre-existing errors
+    // (for example the phantom CS0115/CS0120 a rehydrated Blazor code-behind shows when the Razor source
+    // generator fails to load) report clean, while a genuinely breaking edit is still flagged. A raw Roslyn
+    // compilation is used so the test runs without MSBuild or a build-capture closure.
+    [Fact]
+    public void Check_reports_only_the_diagnostics_the_edit_introduced()
+    {
+        var runner = new SpeculativeCheckRunner();
+
+        // A base compilation with a pre-existing error in Widget.cs: Spin returns a string where int is
+        // declared. The base already reports CS0023 on that document, so it is NOT something an edit introduced.
+        var baseTree = CSharpSyntaxTree.ParseText(
+            "namespace Sample; public sealed class Widget { public int Spin() => \"nope\"; }",
+            path: "Widget.cs");
+        var compilation = CSharpCompilation.Create(
+            "Sample",
+            [baseTree],
+            TrustedPlatformReferences(),
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+        Assert.True(
+            compilation.GetSemanticModel(baseTree).GetDiagnostics().Any(d => d.Id == "CS0029"),
+            "the base compilation must carry a pre-existing error for this test to be meaningful");
+
+        // A no-op edit (the identical content) must introduce zero diagnostics and report clean.
+        var noOp = runner.Check(
+            [compilation], "Widget.cs",
+            "namespace Sample; public sealed class Widget { public int Spin() => \"nope\"; }",
+            CancellationToken.None);
+        Assert.True(noOp.Verified);
+        Assert.True(noOp.IsClean, "a no-op edit over a pre-existing error must report clean (delta-based check)");
+        Assert.Empty(noOp.Diagnostics);
+
+        // A genuinely breaking edit introduces a NEW error (a missing member, CS1061) on top of the pre-existing
+        // one; the check must surface that introduced error and report not clean.
+        var breaking = runner.Check(
+            [compilation], "Widget.cs",
+            "namespace Sample; public sealed class Widget { public int Spin() => Missing(); }",
+            CancellationToken.None);
+        Assert.True(breaking.Verified);
+        Assert.False(breaking.IsClean, "an edit that introduces a new error must report not clean");
+        Assert.Contains(breaking.Diagnostics, d => d.Id == "CS0103");
+    }
+
+    // The runtime's trusted platform assemblies as metadata references, so a snippet binds the BCL without a
+    // project file - the standard no-MSBuild way to compile in-process.
+    private static ImmutableArray<MetadataReference> TrustedPlatformReferences()
+    {
+        var tpa = (AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string) ?? string.Empty;
+        var builder = ImmutableArray.CreateBuilder<MetadataReference>();
+        foreach (var path in tpa.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (path.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) && File.Exists(path))
+                builder.Add(MetadataReference.CreateFromFile(path));
+        }
+
+        return builder.ToImmutable();
     }
 }

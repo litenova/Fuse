@@ -17,6 +17,18 @@ namespace Fuse.Semantics;
 /// </remarks>
 public sealed class RoslynWorkspaceLoader
 {
+    /// <summary>
+    ///     The per-project reason a project loaded with a clean compilation. The only outcome that counts as
+    ///     fully loaded for the oracle tier.
+    /// </summary>
+    public const string CleanLoadReason = "loaded";
+
+    /// <summary>
+    ///     The per-project reason a project loaded but whose compilation carries errors. Such a project is
+    ///     graph-grade (retrieval only), not oracle-grade; the compiler-backed oracle tools abstain for it.
+    /// </summary>
+    public const string LoadsWithErrorsReason = "loaded with compile errors (graph-grade, not oracle-grade)";
+
     private readonly ILogger<RoslynWorkspaceLoader>? _logger;
 
     /// <summary>
@@ -164,9 +176,7 @@ public sealed class RoslynWorkspaceLoader
             // approximation so fuse doctor and the oracle availability contract can distinguish the tiers.
             var hasErrors = compilation.GetDiagnostics(cancellationToken)
                 .Any(d => d.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error);
-            var report = hasErrors
-                ? "loaded with compile errors (graph-grade, not oracle-grade)"
-                : "loaded";
+            var report = hasErrors ? LoadsWithErrorsReason : CleanLoadReason;
             loadedProjects.Add(new LoadedProject(
                 Name: project.Name,
                 FilePath: filePath,
